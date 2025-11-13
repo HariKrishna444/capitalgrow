@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>User Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <div class="dashboard-container">
+    <header>
+      <h1>Welcome, <span id="usernameDisplay">User</span>!</h1>
+      <button id="logoutBtn">Logout</button>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Current Time</h2>
+        <p id="clock">--:--:--</p>
+      </section>
+
+      <section class="card">
+        <h2>Dashboard Overview</h2>
+        <p>This is your personalized dashboard. You can add widgets, charts, and recent activities here.</p>
+      </section>
+
+      <section class="card">
+        <h2>Notifications</h2>
+        <ul id="notifications">
+          <li>Welcome to your dashboard!</li>
+          <li>Your last login was just now.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
