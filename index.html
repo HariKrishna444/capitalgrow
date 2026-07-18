@@ -1,33 +1,1982 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login Page</title>
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FMEA — Faculty Marks Entry &amp; Approval</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --ink:#1B2A4A;
+  --ink-2:#233457;
+  --parchment:#EFE8D9;
+  --parchment-2:#E5DCC6;
+  --card:#F7F2E7;
+  --brass:#A8832F;
+  --brass-light:#C9A24A;
+  --seal-green:#2F5233;
+  --seal-red:#8B2E2E;
+  --text:#24211C;
+  --text-soft:#5B5546;
+  --rule:#C9BFA4;
+  --rule-light:#E3DAC3;
+  --radius:2px;
+}
+
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;
+  background:var(--parchment);
+  color:var(--text);
+  font-family:'Source Serif 4', Georgia, serif;
+  line-height:1.55;
+}
+h1,h2,h3,h4{
+  font-family:'Fraunces', Georgia, serif;
+  color:var(--ink);
+  margin:0;
+  letter-spacing:-0.01em;
+  font-weight:600;
+}
+.mono{font-family:'IBM Plex Mono', monospace;}
+.hidden{display:none !important;}
+button{font-family:inherit;cursor:pointer;}
+input,select,textarea{font-family:inherit;}
+
+/* ---------------- LOGIN ---------------- */
+.login-view{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:32px;
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 37px, rgba(233,225,201,0.05) 37px 38px),
+    radial-gradient(circle at 82% 8%, rgba(200,162,74,0.14), transparent 42%),
+    linear-gradient(160deg, var(--ink) 0%, var(--ink-2) 55%, #16233F 100%);
+}
+.login-card{
+  max-width:480px;
+  width:100%;
+  color:var(--parchment);
+}
+.eyebrow{
+  display:inline-flex;
+  font-family:'IBM Plex Mono', monospace;
+  font-size:11px;
+  letter-spacing:0.16em;
+  text-transform:uppercase;
+  color:var(--brass-light);
+  border:1px solid rgba(201,162,74,0.5);
+  padding:5px 12px;
+  border-radius:2px;
+}
+.login-card h1{
+  color:#FBF7EC;
+  font-size:clamp(28px,4.4vw,38px);
+  margin-top:18px;
+  line-height:1.1;
+}
+.login-sub{
+  margin-top:14px;
+  color:#D8D0BC;
+  font-size:15px;
+  max-width:46ch;
+}
+.persona-list{
+  margin-top:30px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.persona-group-label{
+  margin-top:14px;
+  font-size:10.5px;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--brass-light);
+  opacity:0.85;
+}
+.persona-group-label:first-child{margin-top:0;}
+.persona-btn{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  background:rgba(247,242,231,0.05);
+  border:1px solid rgba(201,162,74,0.28);
+  color:#EFE8D9;
+  padding:14px 16px;
+  text-align:left;
+  border-radius:2px;
+  transition:background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+.persona-btn:hover{
+  background:rgba(201,162,74,0.12);
+  border-color:var(--brass-light);
+  transform:translateX(2px);
+}
+.persona-btn .p-name{
+  font-family:'Fraunces', serif;
+  font-weight:600;
+  font-size:16px;
+  display:block;
+}
+.persona-btn .p-desc{
+  font-size:12.5px;
+  color:#B9AF93;
+  margin-top:3px;
+  display:block;
+}
+.persona-btn .p-code{
+  font-family:'IBM Plex Mono', monospace;
+  font-size:11px;
+  letter-spacing:0.08em;
+  color:var(--brass-light);
+  border:1px solid var(--brass-light);
+  padding:3px 9px;
+  border-radius:2px;
+  flex-shrink:0;
+}
+
+/* ---------------- SHELL ---------------- */
+.shell{min-height:100vh;display:flex;flex-direction:column;}
+.topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 22px;
+  height:60px;
+  background:var(--ink);
+  color:var(--parchment);
+  border-bottom:2px solid var(--brass);
+  position:relative;
+  z-index:20;
+}
+.brand{display:flex;align-items:baseline;gap:10px;}
+.brand-mark{
+  font-family:'Fraunces', serif;
+  font-weight:700;
+  font-size:19px;
+  letter-spacing:0.03em;
+  color:#FBF7EC;
+}
+.brand-sub{font-size:11px;color:#B9AF93;letter-spacing:0.05em;}
+.topbar-right{display:flex;align-items:center;gap:14px;position:relative;}
+.bell-btn{
+  background:none;border:none;color:#D8D0BC;
+  position:relative;padding:6px;display:flex;
+}
+.bell-btn:hover{color:var(--brass-light);}
+.bell-count{
+  position:absolute;top:0;right:0;
+  background:var(--seal-red);color:#fff;
+  font-family:'IBM Plex Mono', monospace;
+  font-size:9px;line-height:1;
+  padding:2px 4px;border-radius:8px;
+}
+.notif-panel{
+  position:absolute;top:46px;right:60px;
+  width:320px;max-height:380px;overflow-y:auto;
+  background:var(--card);color:var(--text);
+  border:1px solid var(--rule);
+  box-shadow:0 10px 30px rgba(0,0,0,0.25);
+  z-index:30;
+}
+.notif-item{
+  padding:12px 14px;border-bottom:1px solid var(--rule-light);
+  font-size:13px;
+}
+.notif-item:last-child{border-bottom:none;}
+.notif-item .n-title{font-weight:600;color:var(--seal-red);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;}
+.notif-item .n-body{margin-top:4px;color:var(--text-soft);}
+.notif-item .n-time{margin-top:6px;font-size:10.5px;color:#8a8267;font-family:'IBM Plex Mono',monospace;}
+.notif-empty{padding:20px;text-align:center;color:var(--text-soft);font-size:13px;}
+.user-chip{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
+.user-name{font-size:13px;color:#FBF7EC;}
+.role-tag{font-size:10px;color:var(--brass-light);letter-spacing:0.06em;}
+.ghost-btn{
+  background:transparent;border:1px solid rgba(201,162,74,0.4);
+  color:#D8D0BC;padding:7px 13px;font-size:12px;border-radius:2px;
+  transition:all 0.15s ease;
+}
+.ghost-btn:hover{border-color:var(--brass-light);color:var(--brass-light);}
+
+.body-shell{flex:1;display:flex;}
+.sidebar{
+  width:220px;flex-shrink:0;
+  background:var(--parchment-2);
+  border-right:1px solid var(--rule);
+  padding:22px 0;
+}
+.nav-item{
+  display:block;width:100%;text-align:left;
+  background:none;border:none;
+  padding:11px 22px;
+  font-family:'IBM Plex Mono', monospace;
+  font-size:12.5px;letter-spacing:0.03em;
+  color:var(--text-soft);
+  border-left:3px solid transparent;
+}
+.nav-item:hover{color:var(--ink);background:rgba(168,131,47,0.08);}
+.nav-item.active{
+  color:var(--ink);font-weight:600;
+  border-left-color:var(--brass);
+  background:rgba(168,131,47,0.1);
+}
+.content{flex:1;padding:32px 36px 60px;max-width:1080px;}
+
+/* ---------------- SHARED COMPONENTS ---------------- */
+.page-head{margin-bottom:24px;}
+.page-eyebrow{
+  font-family:'IBM Plex Mono', monospace;font-size:11px;
+  letter-spacing:0.14em;text-transform:uppercase;color:var(--brass);
+}
+.page-head h2{font-size:26px;margin-top:6px;}
+.page-head p{color:var(--text-soft);margin-top:8px;max-width:60ch;font-size:15px;}
+
+.card{
+  background:var(--card);border:1px solid var(--rule);
+  padding:20px 22px;margin-bottom:16px;
+}
+.card-row{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;
+}
+.section-title{font-size:17px;font-family:'Fraunces',serif;font-weight:600;color:var(--ink);}
+.section-meta{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-soft);margin-top:4px;}
+
+.status-pill{
+  font-family:'IBM Plex Mono', monospace;font-size:10.5px;
+  letter-spacing:0.05em;text-transform:uppercase;
+  padding:4px 10px;border-radius:20px;display:inline-block;border:1px solid transparent;
+}
+.status-draft{background:#E3DAC3;color:var(--text-soft);border-color:var(--rule);}
+.status-submitted{background:#DDE6F0;color:#2E5C8A;border-color:#B7CBE0;}
+.status-coordinated{background:#E1EEE2;color:#3E6E5B;border-color:#BFDCC2;}
+.status-verified{background:#F1E6C9;color:var(--brass);border-color:#E1CE93;}
+.status-approved{background:#DCEADD;color:var(--seal-green);border-color:#B9D3BA;}
+.status-sentback{background:#F3DEDE;color:var(--seal-red);border-color:#E4B9B9;}
+
+.btn{
+  border:1px solid var(--ink);background:var(--ink);color:#FBF7EC;
+  padding:9px 16px;font-size:13px;border-radius:2px;
+  font-family:'Source Serif 4', serif; font-weight:600;
+  transition:opacity 0.15s ease;
+}
+.btn:hover{opacity:0.85;}
+.btn:disabled{opacity:0.4;cursor:not-allowed;}
+.btn-outline{
+  background:transparent;color:var(--ink);border:1px solid var(--ink);
+}
+.btn-brass{background:var(--brass);border-color:var(--brass);color:#FBF7EC;}
+.btn-green{background:var(--seal-green);border-color:var(--seal-green);color:#fff;}
+.btn-red{background:transparent;border-color:var(--seal-red);color:var(--seal-red);}
+.btn-red:hover{background:var(--seal-red);color:#fff;}
+.btn-sm{padding:6px 12px;font-size:12px;}
+
+table.data-table{
+  width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px;
+}
+.data-table thead th{
+  font-family:'IBM Plex Mono', monospace;font-size:10.5px;
+  letter-spacing:0.06em;text-transform:uppercase;color:var(--text-soft);
+  text-align:left;padding:9px 10px;border-bottom:1px solid var(--rule);
+}
+.data-table tbody td{padding:9px 10px;border-bottom:1px solid var(--rule-light);vertical-align:middle;}
+.data-table tbody tr:last-child td{border-bottom:none;}
+.data-table input[type=number]{
+  width:64px;padding:5px 7px;border:1px solid var(--rule);
+  background:#fff;font-size:13px;border-radius:2px;
+}
+.data-table input[type=number]:focus{outline:2px solid var(--brass-light);outline-offset:1px;}
+.data-table input.invalid{border-color:var(--seal-red);background:#FBEFEF;}
+.total-cell{font-family:'IBM Plex Mono', monospace;font-weight:600;color:var(--ink);}
+
+.empty-state{
+  padding:40px 20px;text-align:center;color:var(--text-soft);
+  border:1px dashed var(--rule);background:var(--card);
+}
+.empty-state .em-title{font-family:'Fraunces',serif;color:var(--ink);font-size:17px;margin-bottom:6px;}
+
+/* modal */
+.modal-backdrop{
+  position:fixed;inset:0;background:rgba(20,26,40,0.55);
+  display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;
+}
+.modal-box{
+  background:var(--parchment);border:1px solid var(--rule);
+  max-width:760px;width:100%;max-height:86vh;overflow-y:auto;
+  padding:26px 28px 26px;box-shadow:0 20px 60px rgba(0,0,0,0.35);
+}
+.modal-box h3{font-size:20px;}
+.modal-close{
+  float:right;background:none;border:none;font-size:20px;color:var(--text-soft);line-height:1;
+}
+.remark-box{
+  width:100%;min-height:80px;border:1px solid var(--rule);padding:10px;
+  font-family:'Source Serif 4',serif;font-size:14px;margin-top:10px;background:#fff;
+}
+.audit-item{
+  border-left:2px solid var(--rule);padding:8px 0 8px 14px;margin-bottom:4px;font-size:13px;
+}
+.audit-item .a-head{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--brass);letter-spacing:0.04em;text-transform:uppercase;}
+.audit-item .a-body{margin-top:3px;color:var(--text);}
+.audit-item .a-time{font-size:10.5px;color:var(--text-soft);margin-top:3px;font-family:'IBM Plex Mono',monospace;}
+
+/* toast */
+.toast-container{
+  position:fixed;bottom:20px;right:20px;z-index:200;
+  display:flex;flex-direction:column;gap:8px;
+}
+.toast{
+  background:var(--ink);color:#FBF7EC;padding:12px 18px;
+  border-left:3px solid var(--brass);font-size:13.5px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.3);min-width:240px;
+  animation:toast-in 0.25s ease;
+}
+.toast.err{border-left-color:var(--seal-red);}
+.toast.ok{border-left-color:var(--seal-green);}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
+/* weight bar reuse */
+.weight-inline{display:flex;align-items:center;gap:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-soft);margin-top:4px;}
+.weight-track{width:120px;height:7px;background:#DCD3B9;display:flex;overflow:hidden;}
+.weight-cie{background:var(--ink);width:50%;}
+.weight-see{background:var(--brass);width:50%;}
+
+.config-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px;}
+.config-field label{display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-soft);margin-bottom:5px;}
+.config-field input,.config-field select{
+  width:100%;padding:8px 10px;border:1px solid var(--rule);background:#fff;font-size:13.5px;
+}
+
+.branch-heading{
+  margin-top:22px;margin-bottom:8px;
+  font-family:'IBM Plex Mono', monospace;font-size:11px;
+  letter-spacing:0.14em;text-transform:uppercase;color:var(--brass);
+  border-bottom:1px solid var(--rule-light);padding-bottom:6px;
+}
+.branch-heading:first-child{margin-top:0;}
+.search-input{
+  width:100%;padding:10px 12px;border:1px solid var(--rule);
+  background:#fff;font-size:13.5px;border-radius:2px;
+}
+.search-input:focus{outline:2px solid var(--brass-light);outline-offset:1px;}
+
+.table-scroll{overflow-x:auto;}
+.tab-bar{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--rule);}
+.tab-btn{
+  background:none;border:none;padding:10px 16px;
+  font-family:'IBM Plex Mono', monospace;font-size:11.5px;letter-spacing:0.04em;text-transform:uppercase;
+  color:var(--text-soft);border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.tab-btn:hover{color:var(--ink);}
+.tab-btn.active{color:var(--ink);font-weight:600;border-bottom-color:var(--brass);}
+.tab-btn.locked{color:#a89f86;}
+.tab-panel.hidden{display:none;}
+.import-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px;}
+.file-input-label{
+  display:inline-flex;align-items:center;gap:8px;
+  border:1px dashed var(--rule);padding:9px 14px;font-size:13px;color:var(--text-soft);
+  border-radius:2px;cursor:pointer;background:#fff;
+}
+.file-input-label:hover{border-color:var(--brass);color:var(--ink);}
+
+@media (max-width:820px){
+  .body-shell{flex-direction:column;}
+  .sidebar{width:100%;display:flex;overflow-x:auto;padding:10px 0;border-right:none;border-bottom:1px solid var(--rule);}
+  .nav-item{white-space:nowrap;border-left:none;border-bottom:3px solid transparent;}
+  .nav-item.active{border-left-color:transparent;border-bottom-color:var(--brass);}
+  .content{padding:22px 16px 50px;}
+  .notif-panel{right:16px;width:280px;}
+}
+@media print{
+  .topbar,.sidebar,.toast-container,#modal-root .modal-close, .no-print{display:none !important;}
+  body{background:#fff;}
+  .content{padding:0;max-width:none;}
+}
+</style>
 </head>
 <body>
-  <div class="login-container">
-    <h2>Login</h2>
-    <form id="loginForm">
-      <div class="input-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" placeholder="Enter username" required />
-      </div>
 
-      <div class="input-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" placeholder="Enter password" required />
-      </div>
+  <div id="app">
 
-      <button type="submit">Login</button>
-<p class="switch">
-  Don't have an account? <a href="signup.html">Create one</a>.
-</p>
-      <p id="message"></p>
-    </form>
+    <!-- LOGIN VIEW -->
+    <section id="login-view" class="login-view">
+      <div class="login-card">
+        <span class="eyebrow">Record No. FMEA‑07</span>
+        <h1>Faculty Marks Entry &amp; Approval</h1>
+        <p class="login-sub">Sign in as one of the registered personas below to see how a mark record moves through the department.</p>
+        <div id="persona-list" class="persona-list"></div>
+      </div>
+    </section>
+
+    <!-- APP SHELL -->
+    <div id="shell" class="shell hidden">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">FMEA</span>
+          <span class="brand-sub mono">Marks Entry &amp; Approval</span>
+        </div>
+        <div class="topbar-right">
+          <button id="bell-btn" class="bell-btn" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span id="bell-count" class="bell-count hidden">0</span>
+          </button>
+          <div id="notif-panel" class="notif-panel hidden"></div>
+          <div class="user-chip">
+            <span id="user-name" class="user-name"></span>
+            <span id="user-role" class="role-tag mono"></span>
+          </div>
+          <button id="logout-btn" class="ghost-btn">Sign out</button>
+        </div>
+      </header>
+
+      <div class="body-shell">
+        <nav id="sidebar" class="sidebar"></nav>
+        <main id="content" class="content"></main>
+      </div>
+    </div>
+
   </div>
 
-  <script src="script.js"></script>
+  <div id="toast-container" class="toast-container"></div>
+  <div id="modal-root"></div>
+  <div id="print-area"></div>
+
+<script>
+/* =========================================================
+   Faculty Marks Entry & Approval — client-side demo engine
+   Vanilla JS, backed by a live Supabase Postgres database
+   (see the schema/seed SQL — profiles, courses, students,
+   assignments, notifications, course_history, app_settings,
+   term_test_history).
+
+   Role model:
+   - Fixed system roles: ADMIN, HOD, EA, EXAM
+   - FACULTY is the only "person" role — whether a faculty
+     member currently behaves as a Course Coordinator (CC) or
+     Course Instructor (CI) is derived at runtime from the
+     `assignments` table, never stored on the user record.
+   ========================================================= */
+
+/* ---------------- Supabase connection ---------------- */
+const SUPABASE_URL = 'https://dhmidutrazdhhiqsstxv.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobWlkdXRyYXpkaGhpcXNzdHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTMwOTIsImV4cCI6MjA5OTk2OTA5Mn0.jXlLh7b737FzsKpavzr5lHzSn04mjcb1XhWZaPFn9ko';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
+
+const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.' };
+function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
+
+// Fixed university evaluation scheme — applies to every course-section.
+// CIE (50 marks total, 50% weightage):
+//   Theory TT1 (raw /50, scaled to /10) + Theory TT2 (raw /50, scaled to /10)
+//   Lab Internal (raw /50, scaled to /10) + Lab External (raw /50, scaled to /10)
+//   SIA (raw /5) + Assignments (raw /5)
+//   10 + 10 + 10 + 10 + 5 + 5 = 50
+// SEE (50% weightage): raw /100, scaled to /50.
+// Grand total = CIE (50) + SEE scaled (50) = 100.
+const CIE_COMPONENTS = [
+  { key:'tt1',         label:'Theory TT1',   group:'Theory', rawMax:50, scaledMax:10 },
+  { key:'tt2',         label:'Theory TT2',   group:'Theory', rawMax:50, scaledMax:10 },
+  { key:'labInternal', label:'Lab Internal', group:'Lab',    rawMax:50, scaledMax:10 },
+  { key:'labExternal', label:'Lab External', group:'Lab',    rawMax:50, scaledMax:10 },
+  { key:'sia',         label:'SIA',          group:'Other',  rawMax:5,  scaledMax:5  },
+  { key:'assignments', label:'Assignments',  group:'Other',  rawMax:5,  scaledMax:5  },
+];
+const CIE_MAX = 50;
+const SEE_RAW_MAX = 100;
+const SEE_SCALED_MAX = 50;
+
+const STATUS_LABEL = { draft:'Draft', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
+const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coordinated:'status-coordinated', verified:'status-verified', approved:'status-approved' };
+
+const STUDENT_POOL = ['Aarav Sharma','Diya Kulkarni','Rohan Gupta','Sneha Reddy','Kabir Malhotra','Isha Bansal','Arjun Nair','Meera Pillai','Karthik Iyer','Ananya Joshi'];
+
+const TERM_TEST_LABELS = { TT1:'Term Test 1', TT2:'Term Test 2', TT3:'Term Test 3' };
+
+function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+/* fills every student's marks with plausible, complete values — used to seed a fully-approved demo record for the Examination Branch */
+function fillFullMarks(course){
+  course.students.forEach(s=>{
+    CIE_COMPONENTS.forEach(comp=>{
+      s.marks[comp.key] = Math.round((comp.rawMax*0.78 + Math.random()*comp.rawMax*0.15)*2)/2;
+    });
+    s.marks.see = Math.round((70 + Math.random()*22)*2)/2;
+  });
+}
+
+/* ---------------- seed data ---------------- */
+function makeStudents(){
+  const shuffled = [...STUDENT_POOL].sort(()=>Math.random()-0.5).slice(0,5);
+  return shuffled.map((name,i)=>({ id:'s'+(i+1)+'_'+Math.random().toString(36).slice(2,6), name, marks:{} }));
+}
+
+function seedState(){
+  const t0 = Date.now() - 6*86400000;
+
+  const users = [
+    { id:'admin1', name:'System Admin',        email:'admin@suh.in',        systemRole:'ADMIN' },
+    { id:'hod1',   name:'Dr. Suresh Menon',     email:'hod@suh.in',         systemRole:'HOD' },
+    { id:'ea1',    name:'Ms. Priya Fernandes',  email:'ea@suh.in',          systemRole:'EA' },
+    { id:'ex1',    name:'Examination Cell',     email:'exam@suh.in',        systemRole:'EXAM' },
+    { id:'cc1',    name:'Dr. Meera Nair',       email:'cc@suh.in',         systemRole:'FACULTY' },
+    { id:'ci1',    name:'Dr. Ananya Rao',       email:'ci@suh.in',         systemRole:'FACULTY', homeBranch:'CSE' },
+    { id:'fac2',   name:'Prof. Vikram Iyer',    email:'vikram.iyer@suh.in', systemRole:'FACULTY', homeBranch:'CSE' },
+    { id:'fac3',   name:'Dr. Farah Sheikh',     email:'farah.sheikh@suh.in',systemRole:'FACULTY', homeBranch:'AIML' },
+    { id:'fac4',   name:'Prof. Rahul Sen',      email:'rahul.sen@suh.in',   systemRole:'FACULTY', homeBranch:'SAP' },
+    { id:'fac5',   name:'Dr. Neha Kapoor',      email:'neha.kapoor@suh.in', systemRole:'FACULTY', homeBranch:'ECE' },
+  ];
+
+  const courses = [
+    { id:'c1', code:'CS301', name:'Data Structures',      section:'A', branch:'CSE'  },
+    { id:'c2', code:'CS302', name:'Software Engineering', section:'A', branch:'CSE'  },
+    { id:'c3', code:'CS303', name:'Database Lab',         section:'B', branch:'AIML' },
+    { id:'c4', code:'CS404', name:'Capstone Project',     section:'B', branch:'AIML' },
+    { id:'c5', code:'CS205', name:'Computer Networks',    section:'C', branch:'SAP'  },
+    { id:'c6', code:'CS210', name:'Operating Systems',    section:'A', branch:'ECE'  }, // deliberately left unassigned — shows the empty state
+    { id:'c7', code:'CS207', name:'Environmental Science',section:'D', branch:'SAP'  }, // pre-seeded, fully approved — Examination Branch demo record
+  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', students: makeStudents(), history: [] }));
+
+  const assignments = [
+    { id:'a1', type:'CC', courseId:'c1', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
+    { id:'a2', type:'CC', courseId:'c2', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
+    { id:'a3', type:'CC', courseId:'c3', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
+    { id:'a4', type:'CC', courseId:'c4', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
+    { id:'a5', type:'CC', courseId:'c5', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
+    { id:'a6', type:'CI', courseId:'c1', userId:'ci1', assignedBy:'cc1',  assignedAt:t0+3600000, status:'active' },
+    { id:'a7', type:'CC', courseId:'c7', userId:'fac4', assignedBy:'hod1', assignedAt:t0-5*86400000, status:'active' },
+    { id:'a8', type:'CI', courseId:'c7', userId:'fac2', assignedBy:'fac4', assignedAt:t0-5*86400000+3600000, status:'active' },
+  ];
+
+  // seed history entries so the audit log / cards have something to show
+  const byId = id => courses.find(c=>c.id===id);
+  assignments.forEach(a=>{
+    const course = byId(a.courseId);
+    const user = users.find(u=>u.id===a.userId);
+    const label = a.type==='CC' ? 'Course Coordinator' : 'Course Instructor';
+    course.history.push({ id:uid('h'), ts:a.assignedAt, user:user.name, role:a.type, action:`${label} assigned: ${user.name} (${user.email})`, remark:'' });
+  });
+
+  // walk c7 fully through the workflow so the Examination Branch has a complete, approved record to demo
+  const c7 = byId('c7');
+  fillFullMarks(c7);
+  c7.status = 'approved';
+  const c7t = t0 - 5*86400000;
+  c7.history.push(
+    { id:uid('h'), ts:c7t+2*3600000, user:'Dr. Ananya Rao', role:'CI', action:'Submitted directly to the Executive Assistant for verification', remark:'' },
+    { id:uid('h'), ts:c7t+26*3600000, user:'Ms. Priya Fernandes', role:'EA', action:'Verified for completeness and forwarded to HOD', remark:'All components complete and within range.' },
+    { id:uid('h'), ts:c7t+50*3600000, user:'Dr. Suresh Menon', role:'HOD', action:'Approved — record locked for result processing', remark:'' },
+  );
+  c7.eaRemark = 'All components complete and within range.';
+
+  const notifications = [
+    { id:'note_seed1', forUserId:'ci1', courseId:'c1', title:"You're now Course Instructor", body:"Dr. Meera Nair assigned you as Course Instructor for CS301 — Data Structures. This role is active immediately.", ts:t0+3600000, read:false },
+    { id:'note_seed2', forUserId:'cc1', courseId:'c1', title:"You're now Course Coordinator", body:"Dr. Suresh Menon assigned you as Course Coordinator for CS301 — Data Structures. This role is active immediately.", ts:t0, read:true },
+  ];
+
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:null, termTestHistory:[] };
+}
+
+/* ---------------- Supabase-backed persistence ----------------
+   The entire app still works against one in-memory `state` object
+   (same shape as before). On boot we fetch every table and assemble
+   it into that shape; every mutation still happens in memory first
+   (so the UI stays instant), then `persist()` pushes the current
+   state back up to Supabase in the background via upserts. */
+
+async function fetchStateFromSupabase(){
+  const [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR] = await Promise.all([
+    sb.from('profiles').select('*').order('created_at', { ascending:true }),
+    sb.from('courses').select('*').order('created_at', { ascending:true }),
+    sb.from('students').select('*'),
+    sb.from('assignments').select('*').order('assigned_at', { ascending:true }),
+    sb.from('notifications').select('*').order('ts', { ascending:false }),
+    sb.from('course_history').select('*').order('ts', { ascending:false }),
+    sb.from('term_test_history').select('*').order('ts', { ascending:false }),
+    sb.from('app_settings').select('*'),
+  ]);
+
+  const firstErr = [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR].find(r=>r.error);
+  if(firstErr) throw firstErr.error;
+  if(!profilesR.data || profilesR.data.length===0) throw new Error('No data in Supabase yet — has the schema/seed SQL been run?');
+
+  const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined }));
+
+  const courses = coursesR.data.map(c=>({
+    id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
+    status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
+    students:[], history:[]
+  }));
+  const courseById = id => courses.find(c=>c.id===id);
+
+  (studentsR.data||[]).forEach(s=>{
+    const course = courseById(s.course_id);
+    if(course) course.students.push({ id:s.id, name:s.name, marks: s.marks || {} });
+  });
+  (historyR.data||[]).forEach(h=>{
+    const course = courseById(h.course_id);
+    if(course) course.history.push({ id:h.id, ts:new Date(h.ts).getTime(), user:h.user_name, role:h.role, action:h.action, remark:h.remark||'' });
+  });
+
+  const assignments = (assignmentsR.data||[]).map(a=>({
+    id:a.id, type:a.type, courseId:a.course_id, userId:a.user_id, assignedBy:a.assigned_by,
+    assignedAt:new Date(a.assigned_at).getTime(), status:a.status,
+    revokedAt:a.revoked_at ? new Date(a.revoked_at).getTime() : undefined,
+    revokedBy:a.revoked_by || undefined,
+  }));
+
+  const notifications = (notificationsR.data||[]).map(n=>({
+    id:n.id, forUserId:n.for_user_id, courseId:n.course_id, title:n.title, body:n.body,
+    ts:new Date(n.ts).getTime(), read:!!n.read
+  }));
+
+  const termTestHistory = (ttHistoryR.data||[]).map(t=>({ id:t.id, ts:new Date(t.ts).getTime(), by:t.by_name, value:t.value }));
+
+  let currentTermTest = null;
+  const ctRow = (settingsR.data||[]).find(r=>r.key==='current_term_test');
+  if(ctRow && ctRow.value!==null && ctRow.value!==undefined) currentTermTest = ctRow.value;
+
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory };
+}
+
+let persistInFlight = Promise.resolve();
+function persistStateToSupabase(state){
+  // chain so overlapping calls don't race each other
+  persistInFlight = persistInFlight.then(()=>doPersist(state)).catch(e=>{ console.warn('Supabase sync failed', e); });
+  return persistInFlight;
+}
+async function doPersist(state){
+  const profiles = state.users.map(u=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch || null }));
+  const courses = state.courses.map(c=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'' }));
+  const students = state.courses.flatMap(c=>c.students.map(s=>({ id:s.id, course_id:c.id, name:s.name, marks:s.marks||{} })));
+  const assignments = state.assignments.map(a=>({
+    id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
+    assigned_at:new Date(a.assignedAt).toISOString(), status:a.status,
+    revoked_at:a.revokedAt ? new Date(a.revokedAt).toISOString() : null,
+    revoked_by:a.revokedBy || null,
+  }));
+  const notifications = state.notifications.map(n=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read }));
+  const courseHistory = state.courses.flatMap(c=>c.history.map(h=>({ id:h.id, course_id:c.id, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' })));
+  const termTestHistory = (state.termTestHistory||[]).map(t=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }));
+
+  const jobs = [];
+  if(profiles.length) jobs.push(sb.from('profiles').upsert(profiles));
+  if(courses.length) jobs.push(sb.from('courses').upsert(courses));
+  if(students.length) jobs.push(sb.from('students').upsert(students));
+  if(assignments.length) jobs.push(sb.from('assignments').upsert(assignments));
+  if(notifications.length) jobs.push(sb.from('notifications').upsert(notifications));
+  if(courseHistory.length) jobs.push(sb.from('course_history').upsert(courseHistory));
+  if(termTestHistory.length) jobs.push(sb.from('term_test_history').upsert(termTestHistory));
+  jobs.push(sb.from('app_settings').upsert([{ key:'current_term_test', value: JSON.stringify(state.currentTermTest ?? null) }]));
+
+  const results = await Promise.all(jobs);
+  const bad = results.find(r=>r && r.error);
+  if(bad) console.warn('Supabase sync error', bad.error);
+}
+
+/* ---------------- assignment helpers (the "assignment tables") ---------------- */
+function getActiveAssignment(courseId, type){
+  return App.state.assignments.find(a=>a.courseId===courseId && a.type===type && a.status==='active');
+}
+function getCourseCCUser(courseId){ const a=getActiveAssignment(courseId,'CC'); return a ? App.getUserById(a.userId) : null; }
+function getCourseCIUser(courseId){ const a=getActiveAssignment(courseId,'CI'); return a ? App.getUserById(a.userId) : null; }
+function getFacultyCourses(userId){
+  const ccCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'CC')?.userId===userId);
+  const ciCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'CI')?.userId===userId);
+  return { ccCourses, ciCourses };
+}
+function createFacultyIfNeeded(email, name){
+  const existing = App.state.users.find(u=>u.email.toLowerCase()===email.toLowerCase());
+  if(existing) return existing;
+  const finalName = (name && name.trim()) ? name.trim() : email.split('@')[0].replace(/[._]+/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
+  const user = { id:uid('fac'), name:finalName, email, systemRole:'FACULTY' };
+  App.state.users.push(user);
+  return user;
+}
+function isValidEmail(email){ return /^\S+@\S+\.\S+$/.test(email); }
+
+/* ---------------- app state ---------------- */
+const App = {
+  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[] },
+  ui: { view:'', params:{} },
+  ready:false,
+
+  currentUser(){ return this.state.users.find(u=>u.id===this.state.currentUserId) || null; },
+  getUserById(id){ return this.state.users.find(u=>u.id===id) || null; },
+  getCourse(id){ return this.state.courses.find(c=>c.id===id); },
+  persist(){ return persistStateToSupabase(this.state); },
+
+  /* ---------- auth ---------- */
+  login(userId){
+    this.state.currentUserId = userId;
+    document.getElementById('login-view').classList.add('hidden');
+    document.getElementById('shell').classList.remove('hidden');
+    const u = this.currentUser();
+    document.getElementById('user-name').textContent = u.name;
+    document.getElementById('user-role').textContent = u.systemRole==='FACULTY' ? (facultyBadgeShort(u) || 'FACULTY') : `${u.systemRole} · ${ROLE_LABELS[u.systemRole]}`;
+    const nav = getNavForUser(u);
+    this.ui = { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
+    renderSidebar();
+    renderContent();
+    renderBell();
+  },
+  logout(){
+    this.state.currentUserId = null;
+    document.getElementById('shell').classList.add('hidden');
+    document.getElementById('login-view').classList.remove('hidden');
+    closeNotifPanel();
+    renderPersonaList();
+  },
+  navigate(view, params={}){
+    this.ui = { view, params };
+    renderSidebar();
+    renderContent();
+    window.scrollTo({top:0, behavior:'smooth'});
+  },
+
+  /* ---------- audit ---------- */
+  logHistory(course, action, remark=''){
+    const u = this.currentUser();
+    course.history.unshift({ id:uid('h'), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark });
+  },
+  notifyUser(userId, course, title, body){
+    this.state.notifications.unshift({ id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false });
+    this.persist();
+    renderBell();
+  },
+
+  /* ---------- Admin: create/revoke HOD ---------- */
+  createHOD(rawName, rawEmail){
+    const name = (rawName||'').trim();
+    const email = (rawEmail||'').trim().toLowerCase();
+    if(!name || !email){ toast('Name and email are required.', 'err'); return; }
+    if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
+    if(this.state.users.find(u=>u.email.toLowerCase()===email)){ toast('A user with this email already exists.', 'err'); return; }
+    const user = { id:uid('hod'), name, email, systemRole:'HOD' };
+    this.state.users.push(user);
+    this.persist();
+    toast(`${name} added as Head of Department.`, 'ok');
+    this.navigate('admin-hods');
+  },
+  revokeHOD(userId){
+    const u = this.getUserById(userId);
+    if(!u) return;
+    u.systemRole = 'FACULTY';
+    this.persist();
+    toast(`${u.name} is no longer an HOD.`, 'err');
+    this.navigate('admin-hods');
+  },
+
+  /* ---------- HOD → CC, CC → CI: assign / revoke ---------- */
+  assignRole(type, courseId, rawEmail, rawName){
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Choose a course first.', 'err'); return; }
+    const actor = this.currentUser();
+    const email = (rawEmail||'').trim().toLowerCase();
+    if(!email){ toast('A faculty email is required.', 'err'); return; }
+    if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
+    if(type==='CC' && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD can assign a Course Coordinator.', 'err'); return; }
+    if(type==='CI'){
+      const ccA = getActiveAssignment(courseId,'CC');
+      const isCoordinator = ccA && ccA.userId===actor.id;
+      if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
+    }
+    const existing = getActiveAssignment(courseId, type);
+    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; }
+    const user = createFacultyIfNeeded(email, rawName);
+    const rec = { id:uid('asg'), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
+    this.state.assignments.push(rec);
+    const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
+    this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})`);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}. This role is active immediately — no separate approval step is needed.`);
+    this.persist();
+    toast(`${user.name} is now ${roleLabel} for ${course.code}. Role activated automatically.`, 'ok');
+    closeModal();
+    renderSidebar();
+    renderContent();
+  },
+  revokeRole(type, courseId){
+    const course = this.getCourse(courseId);
+    const actor = this.currentUser();
+    const existing = getActiveAssignment(courseId, type);
+    if(!existing){ toast('No active assignment to revoke.', 'err'); return; }
+    if(type==='CC' && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD can revoke a Course Coordinator.', 'err'); return; }
+    if(type==='CI'){
+      const isCoordinator = getActiveAssignment(courseId,'CC')?.userId===actor.id;
+      if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can revoke a Course Instructor.', 'err'); return; }
+    }
+    existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id;
+    const user = this.getUserById(existing.userId);
+    const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
+    this.logHistory(course, `${roleLabel} capability revoked: ${user ? user.name+' ('+user.email+')' : existing.email}`);
+    if(user) this.notifyUser(user.id, course, `${roleLabel} access revoked`, `${actor.name} revoked your ${roleLabel} role for ${course.code} — ${course.name}.`);
+    this.persist();
+    toast(`${roleLabel} capability revoked for ${course.code}.`, 'err');
+    renderSidebar();
+    renderContent();
+  },
+
+  /* ---------- marks workflow ---------- */
+  saveMarks(courseId){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    document.querySelectorAll(`[data-course="${courseId}"][data-field]`).forEach(input=>{
+      const sid = input.dataset.student;
+      const field = input.dataset.field;
+      const student = course.students.find(s=>s.id===sid);
+      if(!student) return;
+      const val = input.value === '' ? null : parseFloat(input.value);
+      student.marks[field] = (val===null || isNaN(val)) ? null : val;
+    });
+    this.persist();
+    return course;
+  },
+  validateCIEComplete(course){
+    for(const s of course.students){
+      for(const comp of CIE_COMPONENTS){
+        const v = s.marks[comp.key];
+        if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
+        if(v < 0 || v > comp.rawMax) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${comp.rawMax}.` };
+      }
+    }
+    return { ok:true };
+  },
+  validateComplete(course){
+    const cieCheck = this.validateCIEComplete(course);
+    if(!cieCheck.ok) return cieCheck;
+    for(const s of course.students){
+      const v = s.marks.see;
+      if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing Semester End Examination score for ${s.name}.` };
+      if(v < 0 || v > SEE_RAW_MAX) return { ok:false, msg:`Semester End Examination score for ${s.name} exceeds the maximum of ${SEE_RAW_MAX}.` };
+    }
+    return { ok:true };
+  },
+  ciSubmit(courseId){
+    this.saveMarks(courseId);
+    const course = this.getCourse(courseId);
+    const check = this.validateComplete(course);
+    if(!check.ok){ toast(check.msg, 'err'); return; }
+    course.status = 'submitted';
+    course.sentBack = false;
+    this.logHistory(course, 'Submitted directly to the Executive Assistant for verification');
+    this.persist();
+    toast(`${course.code} submitted to the Executive Assistant.`, 'ok');
+    this.navigate('ci-sections');
+  },
+  ciSaveDraft(courseId){ this.saveMarks(courseId); toast('Draft saved.', 'ok'); },
+
+  eaForward(courseId){
+    const course = this.getCourse(courseId);
+    const remarkEl = document.getElementById('ea-remark-input');
+    course.eaRemark = remarkEl ? remarkEl.value.trim() : course.eaRemark;
+    course.status = 'verified';
+    this.logHistory(course, 'Verified for completeness and forwarded to HOD', course.eaRemark);
+    this.persist();
+    toast(`${course.code} forwarded to the HOD.`, 'ok');
+    this.navigate('ea-list');
+  },
+
+  hodApprove(courseId){
+    const course = this.getCourse(courseId);
+    course.status = 'approved';
+    this.logHistory(course, 'Approved — record locked for result processing');
+    this.persist();
+    toast(`${course.code} approved and locked.`, 'ok');
+    closeModal();
+    this.navigate('hod-list');
+  },
+  hodSendBack(courseId){
+    const course = this.getCourse(courseId);
+    const remarkEl = document.getElementById('sendback-remark');
+    const remark = remarkEl ? remarkEl.value.trim() : '';
+    if(!remark){ toast('A correction remark is required to send a record back.', 'err'); return; }
+    course.status = 'draft';
+    course.sentBack = true;
+    course.lastRemark = remark;
+    course.eaRemark = '';
+    this.logHistory(course, 'Sent back for correction', remark);
+    this.persist();
+    const ciUser = getCourseCIUser(courseId);
+    const ccUser = getCourseCCUser(courseId);
+    [ciUser, ccUser].filter(Boolean).forEach(u => this.notifyUser(u.id, course, `${course.code} sent back for correction`, remark));
+    toast(`${course.code} sent back to the instructor.`, 'err');
+    closeModal();
+    this.navigate('hod-list');
+  },
+
+  /* ---------- HOD: fix the active Term Test cycle, visible to every role ---------- */
+  setTermTest(value){
+    if(!TERM_TEST_LABELS[value]){ toast('Choose a valid term test.', 'err'); return; }
+    const actor = this.currentUser();
+    this.state.currentTermTest = value;
+    this.state.termTestHistory = this.state.termTestHistory || [];
+    this.state.termTestHistory.unshift({ id:uid('tt'), ts:Date.now(), by:actor.name, value });
+    const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
+    ccUserIds.forEach(uidTarget=>{
+      this.state.notifications.unshift({
+        id:uid('note'), forUserId:uidTarget, courseId:null,
+        title:`${TERM_TEST_LABELS[value]} is now the active cycle`,
+        body:`${actor.name} (HOD) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
+        ts:Date.now(), read:false
+      });
+    });
+    this.persist();
+    toast(`${TERM_TEST_LABELS[value]} set as the active cycle and sent to all Course Coordinators.`, 'ok');
+    renderContent();
+    renderBell();
+  },
+
+  /* ---------- EA: faculty directory, uploaded branch-wise ---------- */
+  addFacultyToDirectory(rawName, rawEmail, branch){
+    const actor = this.currentUser();
+    if(!['EA','ADMIN'].includes(actor.systemRole)){ toast('Only the Executive Assistant can upload the faculty directory.', 'err'); return; }
+    const name = (rawName||'').trim();
+    const email = (rawEmail||'').trim().toLowerCase();
+    if(!name || !email){ toast('Name and email are required.', 'err'); return; }
+    if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
+    if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
+    const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
+    if(existing && existing.systemRole!=='FACULTY'){ toast('This email already belongs to a non-faculty account.', 'err'); return; }
+    if(existing){
+      existing.name = name;
+      existing.homeBranch = branch;
+    } else {
+      this.state.users.push({ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch });
+    }
+    this.persist();
+    toast(`${name} added to the ${branchLabel(branch)} faculty directory.`, 'ok');
+    this.navigate('ea-faculty');
+  },
+  removeFacultyFromDirectory(userId){
+    const actor = this.currentUser();
+    if(!['EA','ADMIN'].includes(actor.systemRole)){ toast('Only the Executive Assistant can edit the faculty directory.', 'err'); return; }
+    const u = this.getUserById(userId);
+    if(!u) return;
+    delete u.homeBranch;
+    this.persist();
+    toast(`${u.name} removed from the faculty directory.`, 'err');
+    this.navigate('ea-faculty');
+  },
+  bulkImportFaculty(rows){
+    const actor = this.currentUser();
+    if(!['EA','ADMIN'].includes(actor.systemRole)){ toast('Only the Executive Assistant can import the faculty directory.', 'err'); return; }
+    if(!Array.isArray(rows) || rows.length===0){ toast('That file has no rows to import.', 'err'); return; }
+    let added=0, updated=0, skipped=0;
+    rows.forEach(row=>{
+      const keys = Object.keys(row||{});
+      const findKey = (re) => keys.find(k=>re.test(String(k).trim()));
+      const nameKey = findKey(/^name$/i);
+      const emailKey = findKey(/^e-?mail$/i);
+      const branchKey = findKey(/^branch$/i);
+      const name = nameKey ? String(row[nameKey]).trim() : '';
+      const email = emailKey ? String(row[emailKey]).trim().toLowerCase() : '';
+      const branch = branchKey ? String(row[branchKey]).trim().toUpperCase() : '';
+      if(!name || !email || !isValidEmail(email) || !BRANCH_LABELS[branch]){ skipped++; return; }
+      const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
+      if(existing && existing.systemRole!=='FACULTY'){ skipped++; return; }
+      if(existing){ existing.name=name; existing.homeBranch=branch; updated++; }
+      else { this.state.users.push({ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch }); added++; }
+    });
+    this.persist();
+    if(added+updated===0){
+      toast(`Import found nothing usable. Check the file has Name, Email, and Branch columns (Branch must be ${Object.keys(BRANCH_LABELS).join('/')}).`, 'err');
+    } else {
+      toast(`Import complete — ${added} added, ${updated} updated${skipped?`, ${skipped} skipped`:''}.`, 'ok');
+    }
+    this.navigate('ea-faculty');
+  },
+};
+window.App = App;
+
+/* ---------------- small helpers ---------------- */
+function computeCIE(student){
+  let total = 0, complete = true;
+  CIE_COMPONENTS.forEach(comp=>{
+    const raw = student.marks[comp.key];
+    if(typeof raw !== 'number'){ complete = false; return; }
+    total += (Math.min(raw, comp.rawMax)/comp.rawMax) * comp.scaledMax;
+  });
+  return { total: round1(total), complete };
+}
+function computeSEE(student){
+  const raw = student.marks.see;
+  if(typeof raw !== 'number') return { scaled:null, complete:false };
+  return { scaled: round1((Math.min(raw, SEE_RAW_MAX)/SEE_RAW_MAX) * SEE_SCALED_MAX), complete:true };
+}
+function computeGrandTotal(student){
+  const cie = computeCIE(student);
+  const see = computeSEE(student);
+  return { cieTotal:cie.total, seeScaled:see.scaled, total: round1(cie.total + (see.scaled||0)), complete: cie.complete && see.complete };
+}
+function courseCIEComplete(course){ return course.students.every(s=>computeCIE(s).complete); }
+function round1(n){ return Math.round(n*10)/10; }
+function fmtDate(ts){
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'}) + ' · ' + d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+}
+function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstElementChild; }
+function toast(msg, kind=''){
+  const c = document.getElementById('toast-container');
+  const t = el(`<div class="toast ${kind}">${escapeHtml(msg)}</div>`);
+  c.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 3600);
+}
+function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function emptyStateHtml(title, body){ return `<div class="empty-state"><div class="em-title">${escapeHtml(title)}</div>${escapeHtml(body)}</div>`; }
+function openModal(html){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal-box">${html}</div></div>`;
+}
+function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+window.closeModal = closeModal;
+
+/* ---------------- faculty badge text ---------------- */
+function facultyBadgeShort(u){
+  const { ccCourses, ciCourses } = getFacultyCourses(u.id);
+  const parts = [];
+  if(ccCourses.length) parts.push('CC×'+ccCourses.length);
+  if(ciCourses.length) parts.push('CI×'+ciCourses.length);
+  return parts.join(' ');
+}
+function facultyBadgeLong(u){
+  const { ccCourses, ciCourses } = getFacultyCourses(u.id);
+  const parts = [];
+  if(ccCourses.length) parts.push(`Coordinates ${ccCourses.length} course${ccCourses.length>1?'s':''}`);
+  if(ciCourses.length) parts.push(`Instructs ${ciCourses.length} course${ciCourses.length>1?'s':''}`);
+  return parts.length ? parts.join(' · ') : 'No active assignment';
+}
+
+/* ---------------- notifications bell ---------------- */
+function renderBell(){
+  const user = App.currentUser();
+  if(!user) return;
+  const items = App.state.notifications.filter(n=>n.forUserId===user.id);
+  const unread = items.filter(n=>!n.read).length;
+  const countEl = document.getElementById('bell-count');
+  countEl.textContent = unread;
+  countEl.classList.toggle('hidden', unread===0);
+}
+function toggleNotifPanel(){
+  const panel = document.getElementById('notif-panel');
+  const isHidden = panel.classList.contains('hidden');
+  if(isHidden){
+    const user = App.currentUser();
+    const items = App.state.notifications.filter(n=>n.forUserId===user.id).slice(0,20);
+    panel.innerHTML = items.length ? items.map(n=>`
+      <div class="notif-item">
+        <div class="n-title">${escapeHtml(n.title)}</div>
+        <div class="n-body">${escapeHtml(n.body)}</div>
+        <div class="n-time">${fmtDate(n.ts)}</div>
+      </div>`).join('') : `<div class="notif-empty">No notifications yet.</div>`;
+    panel.classList.remove('hidden');
+    items.forEach(n=>n.read=true);
+    App.persist();
+    renderBell();
+  } else {
+    closeNotifPanel();
+  }
+}
+function closeNotifPanel(){ document.getElementById('notif-panel').classList.add('hidden'); }
+
+/* ---------------- sidebar / routing ---------------- */
+function getNavForUser(user){
+  if(user.systemRole==='ADMIN') return [{v:'admin-hods', label:'Manage HODs'}];
+  if(user.systemRole==='HOD') return [
+    {v:'hod-list', label:'Pending Approval'},
+    {v:'hod-coordinators', label:'Manage Coordinators'},
+    {v:'hod-termtest', label:'Term Test Cycle'},
+    {v:'hod-faculty', label:'Faculty Directory'},
+    {v:'hod-audit', label:'Audit Log'},
+  ];
+  if(user.systemRole==='EA') return [
+    {v:'ea-list', label:'Verification Queue'},
+    {v:'ea-faculty', label:'Faculty Directory'},
+  ];
+  if(user.systemRole==='EXAM') return [{v:'exam-list', label:'Approved Records'}];
+  // FACULTY — dynamic, derived from assignments
+  const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+  const nav = [];
+  if(ciCourses.length) nav.push({v:'ci-sections', label:'My Sections'});
+  if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
+  if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
+  return nav;
+}
+function renderSidebar(){
+  const user = App.currentUser();
+  const nav = getNavForUser(user);
+  const sb = document.getElementById('sidebar');
+  sb.innerHTML = nav.map(n=>`<button class="nav-item ${App.ui.view===n.v?'active':''}" onclick="App.navigate('${n.v}')">${n.label}</button>`).join('');
+}
+function renderContent(){
+  const user = App.currentUser();
+  const nav = getNavForUser(user);
+  let view = App.ui.view || (nav[0] ? nav[0].v : 'faculty-empty');
+
+  const routes = {
+    'admin-hods': renderAdminHods,
+    'hod-list': renderHODList,
+    'hod-review': renderHODReview,
+    'hod-coordinators': renderHODCoordinators,
+    'hod-termtest': renderHODTermTest,
+    'hod-faculty': renderHODFacultyDirectory,
+    'hod-audit': renderHODAudit,
+    'ea-list': renderEAList,
+    'ea-faculty': renderEAFacultyDirectory,
+    'ea-review': renderEAReview,
+    'exam-list': renderExamList,
+    'ci-sections': renderCISections,
+    'ci-entry': renderCIEntry,
+    'cc-list': renderCCList,
+    'cc-review': renderCCReview,
+    'faculty-empty': renderFacultyEmpty,
+  };
+  const fn = routes[view] || renderFacultyEmpty;
+  const c = document.getElementById('content');
+  c.innerHTML = '';
+  if(user.systemRole !== 'ADMIN'){
+    const bannerHtml = termTestBanner();
+    if(bannerHtml){
+      const bannerWrap = el('<div></div>');
+      bannerWrap.innerHTML = bannerHtml;
+      c.appendChild(bannerWrap.firstElementChild);
+    }
+  }
+  c.appendChild(fn(App.ui.params));
+}
+function termTestBanner(){
+  if(!App.state.currentTermTest) return '';
+  return `<div class="card" style="border-left:3px solid var(--brass);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <div class="page-eyebrow">Active Examination Cycle</div>
+      <div class="section-title" style="margin-top:4px;">${TERM_TEST_LABELS[App.state.currentTermTest]}</div>
+    </div>
+    <span class="status-pill status-verified">Fixed by HOD · visible to CC, CI, EA, Exam Branch &amp; HOD</span>
+  </div>`;
+}
+
+/* ---------------- shared bits ---------------- */
+function statusPill(course){ return `<span class="status-pill ${STATUS_CLASS[course.status]}">${STATUS_LABEL[course.status]}</span>`; }
+function courseMeta(course){ return `${course.code} · Section ${course.section} · ${branchLabel(course.branch)}`; }
+function assignmentSummary(courseId){
+  const ccUser = getCourseCCUser(courseId);
+  const ciUser = getCourseCIUser(courseId);
+  return `Coordinator: ${ccUser ? ccUser.name : 'Unassigned'} · Instructor: ${ciUser ? ciUser.name : 'Unassigned'}`;
+}
+function courseMetaBlock(course){
+  return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
+}
+function sentBackBanner(course){
+  if(!course.sentBack || course.status!=='draft') return '';
+  return `<div class="card" style="border-left:3px solid var(--seal-red);">
+    <div class="section-title" style="color:var(--seal-red);">Sent back for correction</div>
+    <p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.lastRemark)}</p>
+  </div>`;
+}
+
+let activeMarksTab = 'cie';
+
+/* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
+function marksViewTable(course){
+  const rows = course.students.map(s=>{
+    const gt = computeGrandTotal(s);
+    const cieCells = CIE_COMPONENTS.map(comp=>{
+      const v = s.marks[comp.key];
+      return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+    }).join('');
+    const seeVal = s.marks.see;
+    return `<tr>
+      <td>${escapeHtml(s.name)}</td>
+      ${cieCells}
+      <td class="total-cell">${gt.cieTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
+      <td>${seeVal===undefined||seeVal===null?'—':seeVal} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${SEE_RAW_MAX}</span></td>
+      <td class="total-cell">${gt.seeScaled===null?'—':gt.seeScaled} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${SEE_SCALED_MAX}</span></td>
+      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/100</span></td>
+    </tr>`;
+  }).join('');
+  const headCells = CIE_COMPONENTS.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  return `
+    <div class="weight-inline">
+      <div class="weight-track"><div class="weight-cie"></div><div class="weight-see"></div></div>
+      <span>CIE 50% (Theory TT1+TT2, Lab Int+Ext, SIA, Assignments) · SEE 50%</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" style="margin-top:14px;min-width:920px;">
+        <thead><tr><th>Student</th>${headCells}<th>CIE Total</th><th>SEE</th><th>SEE Scaled</th><th>Grand Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/* Editable, tabbed CIE/SEE entry UI — used only on the Course Instructor's entry page.
+   The SEE tab stays locked until every student's CIE components (TT1, TT2, Lab Internal,
+   Lab External, SIA, Assignments) are fully entered. */
+function marksEntryTabs(course){
+  const cieDone = courseCIEComplete(course);
+  if(activeMarksTab==='see' && !cieDone) activeMarksTab = 'cie';
+
+  const cieRows = course.students.map(s=>{
+    const cie = computeCIE(s);
+    const cells = CIE_COMPONENTS.map(comp=>{
+      const val = s.marks[comp.key];
+      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
+        onchange="onMarkChange(this)"></td>`;
+    }).join('');
+    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td></tr>`;
+  }).join('');
+  const cieHead = CIE_COMPONENTS.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+
+  const seeRows = course.students.map(s=>{
+    const gt = computeGrandTotal(s);
+    const val = s.marks.see;
+    return `<tr>
+      <td>${escapeHtml(s.name)}</td>
+      <td><input type="number" min="0" max="${SEE_RAW_MAX}" step="0.5"
+        data-course="${course.id}" data-student="${s.id}" data-field="see"
+        value="${val===undefined||val===null?'':val}" placeholder="/${SEE_RAW_MAX}"
+        onchange="onMarkChange(this)"></td>
+      <td class="total-cell">${gt.seeScaled===null?'—':gt.seeScaled} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${SEE_SCALED_MAX}</span></td>
+      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/100</span></td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="tab-bar">
+      <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
+      <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''} ${cieDone?'':'locked'}" onclick="switchMarksTab('see')">Semester End Exam (SEE) ${cieDone?'':'🔒'}</button>
+    </div>
+    <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
+      <p class="section-meta" style="margin-bottom:8px;">CIE is 50 marks total: Theory TT1 (/50→/10) + TT2 (/50→/10), Lab Internal (/50→/10) + External (/50→/10), SIA (/5), Assignments (/5).</p>
+      <div class="table-scroll">
+        <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
+      </div>
+    </div>
+    <div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
+      ${cieDone ? `
+        <p class="section-meta" style="margin-bottom:8px;">SEE is out of 100, scaled to 50. Grand total = CIE (50) + SEE scaled (50).</p>
+        <div class="table-scroll">
+          <table class="data-table"><thead><tr><th>Student</th><th>SEE <span style="text-transform:none;">max ${SEE_RAW_MAX}</span></th><th>SEE Scaled</th><th>Grand Total</th></tr></thead><tbody>${seeRows}</tbody></table>
+        </div>` : `
+        <div class="empty-state">
+          <div class="em-title">Semester End Examination marks are locked</div>
+          Complete Theory TT1, TT2, Lab Internal, Lab External, SIA, and Assignments for every student on the CIE tab first.
+        </div>`}
+    </div>`;
+}
+function switchMarksTab(tab){
+  activeMarksTab = tab;
+  renderContent();
+}
+window.switchMarksTab = switchMarksTab;
+
+function onMarkChange(input){
+  const max = parseFloat(input.max);
+  const val = parseFloat(input.value);
+  input.classList.toggle('invalid', !isNaN(val) && (val<0 || val>max));
+  App.saveMarks(input.dataset.course);
+  renderContent();
+}
+window.onMarkChange = onMarkChange;
+
+/* ================= ASSIGN / REVOKE MODAL (shared by HOD and CC) ================= */
+function openAssignModal(type, courseId){
+  const label = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
+  const course = App.getCourse(courseId);
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>Assign ${label}</h3>
+    <p style="color:var(--text-soft);margin-top:6px;">${course.code} — ${course.name} · Section ${course.section}</p>
+    <p style="color:var(--text-soft);font-size:13px;margin-top:10px;">Enter the faculty member's university email. If they don't already have an account, one is created automatically and the role activates immediately — no separate approval step.</p>
+    <div class="config-field" style="margin-top:14px;">
+      <label>Faculty email</label>
+      <input id="assign-email" type="email" placeholder="name@suh.in">
+    </div>
+    <div class="config-field" style="margin-top:12px;">
+      <label>Full name <span style="text-transform:none;">(only needed for a new account)</span></label>
+      <input id="assign-name" type="text" placeholder="Dr. Jane Doe">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value)">Assign &amp; Activate</button>
+    </div>
+  `);
+}
+window.openAssignModal = openAssignModal;
+
+/* ================= ADMIN VIEWS ================= */
+function renderAdminHods(){
+  const hods = App.state.users.filter(u=>u.systemRole==='HOD');
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Administrator</div>
+      <h2>Manage Heads of Department</h2>
+      <p>Admin creates HOD accounts. Everything below HOD — coordinators and instructors — is assigned downstream and never configured here directly.</p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Create HOD account</div>
+      <div class="config-grid">
+        <div class="config-field"><label>Full name</label><input id="new-hod-name" type="text" placeholder="Dr. Jane Doe"></div>
+        <div class="config-field"><label>Email</label><input id="new-hod-email" type="email" placeholder="jane.doe@suh.in"></div>
+      </div>
+      <button class="btn" style="margin-top:14px;" onclick="App.createHOD(document.getElementById('new-hod-name').value, document.getElementById('new-hod-email').value)">Create HOD Account</button>
+    </div>
+    ${hods.map(h=>`
+      <div class="card card-row">
+        <div>
+          <div class="section-title">${escapeHtml(h.name)}</div>
+          <div class="section-meta">${escapeHtml(h.email)}</div>
+        </div>
+        <button class="btn btn-red btn-sm" onclick="if(confirm('Revoke HOD access for ${escapeHtml(h.name)}?')) App.revokeHOD('${h.id}')">Revoke HOD Access</button>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+
+/* ================= HOD VIEWS ================= */
+function renderHODList(){
+  const list = App.state.courses;
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Pending Approval</h2>
+      <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
+    </div>
+    ${list.map(c=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${c.name}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            ${statusPill(c)}
+            <button class="btn ${c.status==='verified'?'':'btn-outline'} btn-sm" onclick="App.navigate('hod-review',{courseId:'${c.id}'})">
+              ${c.status==='verified' ? 'Review' : 'View'}
+            </button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+function renderHODReview(params){
+  const course = App.getCourse(params.courseId);
+  const actionable = course.status === 'verified';
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('hod-list')">← Back to pending approval</button>
+      <div class="page-eyebrow">Stage 3 · Approval</div>
+      <h2>${course.name}</h2>
+      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
+    </div>
+    ${course.eaRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">EA verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : ''}
+    <div class="card">
+      ${marksViewTable(course)}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;flex-wrap:wrap;gap:10px;">
+        <button class="btn-outline btn" onclick="openAuditModal('${course.id}')">View Audit Trail</button>
+        ${actionable ? `
+          <div style="display:flex;gap:10px;">
+            <button class="btn btn-red" onclick="openSendBackModal('${course.id}')">Send Back</button>
+            <button class="btn btn-green" onclick="App.hodApprove('${course.id}')">Approve &amp; Lock</button>
+          </div>` : `<span style="color:var(--text-soft);font-size:13.5px;">Not currently pending HOD action.</span>`}
+      </div>
+    </div>
+  `;
+  return wrap;
+}
+function openSendBackModal(courseId){
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>Send record back</h3>
+    <p style="color:var(--text-soft);margin-top:8px;">This restarts the approval cycle from the instructor. A correction remark is required.</p>
+    <textarea id="sendback-remark" class="remark-box" placeholder="Describe what needs to be corrected..."></textarea>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn" style="background:var(--seal-red);border-color:var(--seal-red);color:#fff;" onclick="App.hodSendBack('${courseId}')">Confirm Send Back</button>
+    </div>
+  `);
+}
+window.openSendBackModal = openSendBackModal;
+
+function openAuditModal(courseId){
+  const course = App.getCourse(courseId);
+  const items = course.history.length ? course.history.map(h=>`
+    <div class="audit-item">
+      <div class="a-head">${escapeHtml(h.action)} — ${escapeHtml(h.role)}</div>
+      <div class="a-body">${escapeHtml(h.user)}${h.remark ? ': "'+escapeHtml(h.remark)+'"' : ''}</div>
+      <div class="a-time">${fmtDate(h.ts)}</div>
+    </div>`).join('') : `<p style="color:var(--text-soft);">No history recorded yet.</p>`;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>Audit trail — ${course.code}</h3>
+    <div style="margin-top:14px;max-height:50vh;overflow-y:auto;">${items}</div>
+  `);
+}
+window.openAuditModal = openAuditModal;
+
+function renderHODCoordinators(){
+  const courses = App.state.courses;
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Manage Course Coordinators</h2>
+      <p>Assign a Course Coordinator to each section using their university email. Once assigned, that coordinator manages their own Course Instructors — you don't need to touch that layer.</p>
+    </div>
+    ${courses.map(c=>{
+      const ccUser = getCourseCCUser(c.id);
+      return `
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${c.name}</div>
+            <div class="section-meta">${courseMeta(c)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            ${ccUser
+              ? `<span class="status-pill status-approved">${escapeHtml(ccUser.name)}</span>
+                 <button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Coordinator access for ${escapeHtml(ccUser.name)} on ${c.code}?')) App.revokeRole('CC','${c.id}')">Revoke</button>`
+              : `<span class="status-pill status-draft">Unassigned</span>
+                 <button class="btn btn-sm" onclick="openAssignModal('CC','${c.id}')">Assign Coordinator</button>`}
+          </div>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+  return wrap;
+}
+
+function renderHODTermTest(){
+  const current = App.state.currentTermTest;
+  const history = App.state.termTestHistory || [];
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Term Test Cycle</h2>
+      <p>Fix which examination cycle is currently active. Once set, it's sent to every Course Coordinator and shown as a banner to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.</p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Current cycle: ${current ? TERM_TEST_LABELS[current] : 'Not set yet'}</div>
+      <div class="config-grid" style="max-width:320px;">
+        <div class="config-field">
+          <label>Term test</label>
+          <select id="tt-select">
+            ${Object.entries(TERM_TEST_LABELS).map(([k,v])=>`<option value="${k}" ${current===k?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn" style="margin-top:14px;" onclick="App.setTermTest(document.getElementById('tt-select').value)">Fix &amp; Send to CC</button>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Cycle history</div>
+      ${history.length===0 ? `<p style="margin-top:10px;color:var(--text-soft);font-size:13.5px;">No cycle has been fixed yet.</p>` : `
+        <div style="margin-top:12px;">${history.map(h=>`
+          <div class="audit-item">
+            <div class="a-head">${escapeHtml(TERM_TEST_LABELS[h.value])} fixed</div>
+            <div class="a-body">${escapeHtml(h.by)}</div>
+            <div class="a-time">${fmtDate(h.ts)}</div>
+          </div>`).join('')}</div>`}
+    </div>
+  `;
+  return wrap;
+}
+
+function renderHODAudit(){
+  const entries = [];
+  App.state.courses.forEach(c=>{ c.history.forEach(h=> entries.push({...h, code:c.code, name:c.name})); });
+  entries.sort((a,b)=>b.ts-a.ts);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Step 6 · Accountability</div>
+      <h2>Audit Log</h2>
+      <p>An immutable record of every mark entry, correction, staffing change, and workflow transition across all course-sections.</p>
+    </div>
+    ${entries.length===0 ? emptyStateHtml('No activity yet','Actions will appear here as records move through the workflow.') :
+      `<div class="card">${entries.map(h=>`
+        <div class="audit-item">
+          <div class="a-head">${escapeHtml(h.code)} — ${escapeHtml(h.action)} — ${escapeHtml(h.role)}</div>
+          <div class="a-body">${escapeHtml(h.user)}${h.remark ? ': "'+escapeHtml(h.remark)+'"' : ''}</div>
+          <div class="a-time">${fmtDate(h.ts)}</div>
+        </div>`).join('')}</div>`}
+  `;
+  return wrap;
+}
+
+/* ================= EA VIEWS ================= */
+function renderEAList(){
+  const list = App.state.courses;
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Executive Assistant</div>
+      <h2>Verification Queue</h2>
+      <p>Submissions now come to you directly from the Course Instructor — no Course Coordinator sign-off in between. Check each record for completeness before it reaches the HOD.</p>
+    </div>
+    ${list.map(c=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${c.name}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            ${statusPill(c)}
+            <button class="btn ${c.status==='submitted'?'':'btn-outline'} btn-sm" onclick="App.navigate('ea-review',{courseId:'${c.id}'})">
+              ${c.status==='submitted' ? 'Verify' : 'View'}
+            </button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+function renderEAReview(params){
+  const course = App.getCourse(params.courseId);
+  const actionable = course.status === 'submitted';
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ea-list')">← Back to queue</button>
+      <div class="page-eyebrow">Stage 2 · Verification</div>
+      <h2>${course.name}</h2>
+      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
+    </div>
+    <div class="card">
+      ${marksViewTable(course)}
+      ${actionable ? `
+        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional)</label>
+        <textarea id="ea-remark-input" class="remark-box" placeholder="Note anything relevant for the HOD's review...">${course.eaRemark||''}</textarea>
+        <div style="display:flex;gap:10px;margin-top:14px;">
+          <button class="btn" onclick="App.eaForward('${course.id}')">Forward to HOD</button>
+        </div>` : (course.eaRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is not currently actionable.</p>`)}
+    </div>
+  `;
+  return wrap;
+}
+
+/* ================= EXAM BRANCH VIEWS ================= */
+function renderExamList(){
+  const approved = App.state.courses.filter(c=>c.status==='approved');
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Examination Branch</div>
+      <h2>Approved Records</h2>
+      <p>Read-only, finalized results only. Draft and in-progress submissions never appear here.</p>
+    </div>
+    ${approved.length===0 ? emptyStateHtml('No finalized records yet','Approved course-sections will appear here once the HOD locks them.') :
+      approved.map(c=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${c.name}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${statusPill(c)}
+            <button class="btn btn-outline btn-sm" onclick="exportCSV('${c.id}')">Export CSV</button>
+            <button class="btn btn-sm" onclick="exportPrint('${c.id}')">Export / Print PDF</button>
+          </div>
+        </div>
+        <div style="margin-top:14px;">${marksViewTable(c)}</div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+function exportCSV(courseId){
+  const course = App.getCourse(courseId);
+  const header = ['Student', ...CIE_COMPONENTS.map(c=>c.label), 'CIE Total', 'SEE', 'SEE Scaled', 'Grand Total'];
+  const rows = course.students.map(s=>{
+    const gt = computeGrandTotal(s);
+    return [s.name, ...CIE_COMPONENTS.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, s.marks.see ?? '', gt.seeScaled ?? '', gt.total];
+  });
+  const csv = [header, ...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${course.code}_Section${course.section}_results.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+window.exportCSV = exportCSV;
+function exportPrint(courseId){
+  const course = App.getCourse(courseId);
+  const area = document.getElementById('print-area');
+  area.innerHTML = `
+    <h2 style="font-family:'Fraunces',serif;">${course.name} — ${course.code}</h2>
+    <p class="mono" style="font-size:12px;">${courseMeta(course)} · Approved</p>
+    ${marksViewTable(course)}
+  `;
+  window.print();
+}
+window.exportPrint = exportPrint;
+
+/* ================= FACULTY DIRECTORY (uploaded by EA, branch-wise; HOD views read-only) ================= */
+function facultyDirectoryEntries(){
+  return App.state.users.filter(u=>u.systemRole==='FACULTY' && u.homeBranch);
+}
+function facultyDirectoryBranchGroupsHtml(editable){
+  const entries = facultyDirectoryEntries();
+  if(entries.length===0) return emptyStateHtml('No faculty uploaded yet', editable ? 'Add faculty below to build the branch-wise directory Course Coordinators assign from.' : 'The Executive Assistant hasn\'t uploaded any faculty yet.');
+  const branches = {};
+  entries.forEach(u=>{ (branches[u.homeBranch] = branches[u.homeBranch] || []).push(u); });
+  return Object.keys(branches).map(bk=>`
+    <div class="branch-heading">${branchLabel(bk)}</div>
+    ${branches[bk].map(u=>{
+      const { ccCourses, ciCourses } = getFacultyCourses(u.id);
+      const load = [ccCourses.length?`CC×${ccCourses.length}`:null, ciCourses.length?`CI×${ciCourses.length}`:null].filter(Boolean).join(' · ') || 'No current assignment';
+      return `
+      <div class="card card-row">
+        <div>
+          <div class="section-title">${escapeHtml(u.name)}</div>
+          <div class="section-meta">${escapeHtml(u.email)} · ${load}</div>
+        </div>
+        ${editable ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Remove ${escapeHtml(u.name)} from the ${branchLabel(bk)} directory?')) App.removeFacultyFromDirectory('${u.id}')">Remove</button>` : ''}
+      </div>`;
+    }).join('')}
+  `).join('');
+}
+function renderEAFacultyDirectory(){
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Executive Assistant</div>
+      <h2>Faculty Directory</h2>
+      <p>Update faculty branch-wise — one at a time, or by importing an Excel/CSV file. Course Coordinators assign Course Instructors from this list, and the HOD can view it read-only.</p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Add faculty manually</div>
+      <div class="config-grid">
+        <div class="config-field"><label>Full name</label><input id="fd-name" type="text" placeholder="Dr. Jane Doe"></div>
+        <div class="config-field"><label>Email</label><input id="fd-email" type="email" placeholder="jane.doe@suh.in"></div>
+        <div class="config-field">
+          <label>Branch</label>
+          <select id="fd-branch">${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${branchLabel(b)}</option>`).join('')}</select>
+        </div>
+      </div>
+      <button class="btn" style="margin-top:14px;" onclick="App.addFacultyToDirectory(document.getElementById('fd-name').value, document.getElementById('fd-email').value, document.getElementById('fd-branch').value)">Add to Directory</button>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Import from Excel / CSV</div>
+      <p class="section-meta" style="margin-top:4px;">File needs three columns — <strong>Name</strong>, <strong>Email</strong>, <strong>Branch</strong> — with Branch as one of ${Object.keys(BRANCH_LABELS).join(', ')}. Existing emails are updated; new ones are added.</p>
+      <div class="import-row">
+        <label class="file-input-label">
+          📄 Choose file (.xlsx, .xls, .csv)
+          <input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleFacultyExcelImport(this)">
+        </label>
+        <button class="btn btn-outline btn-sm" onclick="downloadFacultyTemplate()">Download template</button>
+      </div>
+    </div>
+    ${facultyDirectoryBranchGroupsHtml(true)}
+  `;
+  return wrap;
+}
+function handleFacultyExcelImport(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  if(typeof XLSX === 'undefined'){ toast('The spreadsheet reader failed to load. Check your internet connection and try again.', 'err'); input.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      App.bulkImportFaculty(rows);
+    }catch(err){
+      console.warn(err);
+      toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
+    }
+    input.value = '';
+  };
+  reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
+  reader.readAsArrayBuffer(file);
+}
+window.handleFacultyExcelImport = handleFacultyExcelImport;
+
+function downloadFacultyTemplate(){
+  const rows = [['Name','Email','Branch'], ['Dr. Jane Doe','jane.doe@suh.in','CSE'], ['Dr. John Roe','john.roe@suh.in','AIML']];
+  const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'faculty_directory_template.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+window.downloadFacultyTemplate = downloadFacultyTemplate;
+
+function renderHODFacultyDirectory(){
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Faculty Directory</h2>
+      <p>Read-only, branch-wise view of the faculty roster uploaded by the Executive Assistant. Course Coordinators use this list to assign Course Instructors.</p>
+    </div>
+    ${facultyDirectoryBranchGroupsHtml(false)}
+  `;
+  return wrap;
+}
+
+
+function renderCISections(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>My Sections</h2>
+      <p>Enter component marks for your assigned course-sections. Submitting hands the record to your Course Coordinator.</p>
+    </div>
+    ${ciCourses.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : ciCourses.map(c=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${c.name}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            ${statusPill(c)}
+            <button class="btn ${c.status==='draft'?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
+              ${c.status==='draft' ? 'Enter Marks' : 'View Record'}
+            </button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+function renderCIEntry(params){
+  const course = App.getCourse(params.courseId);
+  const editable = course.status === 'draft';
+  const complete = App.validateComplete(course).ok;
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my sections</button>
+      <div class="page-eyebrow">Stage 1 · Submission</div>
+      <h2>${course.name}</h2>
+      <p>${courseMeta(course)} ${statusPill(course)}</p>
+    </div>
+    ${sentBackBanner(course)}
+    <div class="card">
+      ${editable ? marksEntryTabs(course) : marksViewTable(course)}
+      ${editable ? `
+        <div style="display:flex;gap:10px;margin-top:18px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save Draft</button>
+          <button class="btn" ${complete?'':'disabled'} onclick="App.ciSubmit('${course.id}')">Submit for Review</button>
+          ${complete ? '' : `<span class="section-meta">Complete every CIE component and the SEE score for all students to enable submission.</span>`}
+        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is currently read-only.</p>`}
+    </div>
+  `;
+  return wrap;
+}
+
+/* ================= FACULTY: CC VIEWS (dynamic role) ================= */
+function renderCCList(){
+  const user = App.currentUser();
+  const { ccCourses } = getFacultyCourses(user.id);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Coordinator</div>
+      <h2>My Coordination</h2>
+      <p>Assign the Course Instructor for each section you coordinate, choosing from the Executive Assistant's faculty directory for that branch. Marks review and approval are now handled directly by the Executive Assistant and HOD — you don't need to sign off on submissions.</p>
+    </div>
+    ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a section, it will appear here.') : `
+      <div class="card">
+        <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
+        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated courses, then choose an instructor from the faculty directory uploaded for that branch.</p>
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Course</label>
+            <select id="cc-assign-course" onchange="updateCCInstructorOptions(this.value)">
+              ${ccCourses.map(c=>`<option value="${c.id}">${c.code} — ${c.name} (${branchLabel(c.branch)})</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
+            <select id="cc-assign-instructor">${buildInstructorOptionsHtml(ccCourses[0].branch)}</select>
+          </div>
+        </div>
+        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '')">Assign &amp; Activate</button>
+      </div>
+
+      <div class="card">
+        <div class="section-title" style="font-size:15px;">Search my sections</div>
+        <input id="cc-search-input" class="search-input" type="text" placeholder="Search by course code, name, branch, or instructor..." style="margin-top:10px;" oninput="updateCCBranchGroups(this.value)">
+      </div>
+
+      <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses,'')}</div>
+    `}
+  `;
+  return wrap;
+}
+function buildInstructorOptionsHtml(branch){
+  const directoryFaculty = App.state.users.filter(u=>u.systemRole==='FACULTY' && u.homeBranch===branch);
+  if(directoryFaculty.length===0) return `<option value="">— No faculty uploaded for ${escapeHtml(branchLabel(branch))} yet —</option>`;
+  return directoryFaculty.map(f=>`<option value="${escapeHtml(f.email)}">${escapeHtml(f.name)} (${escapeHtml(f.email)})</option>`).join('');
+}
+function updateCCInstructorOptions(courseId){
+  const course = App.getCourse(courseId);
+  const sel = document.getElementById('cc-assign-instructor');
+  if(sel && course) sel.innerHTML = buildInstructorOptionsHtml(course.branch);
+}
+window.updateCCInstructorOptions = updateCCInstructorOptions;
+function renderCCBranchGroupsHtml(ccCourses, term){
+  const q = (term||'').trim().toLowerCase();
+  const branches = {};
+  ccCourses.forEach(c=>{
+    const ciUser = getCourseCIUser(c.id);
+    const hay = [c.code, c.name, branchLabel(c.branch), ciUser?.name, ciUser?.email].filter(Boolean).join(' ').toLowerCase();
+    if(q && !hay.includes(q)) return;
+    (branches[c.branch] = branches[c.branch] || []).push(c);
+  });
+  const branchKeys = Object.keys(branches);
+  if(branchKeys.length===0) return emptyStateHtml('No matches', 'Try a different search term.');
+  return branchKeys.map(bk=>{
+    const list = branches[bk];
+    return `
+      <div class="branch-heading">${branchLabel(bk)}</div>
+      ${list.map(c=>{
+        const ciUser = getCourseCIUser(c.id);
+        return `
+        <div class="card">
+          <div class="card-row">
+            <div>
+              <div class="section-title">${c.name}</div>
+              <div class="section-meta">${courseMeta(c)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;">
+              ${statusPill(c)}
+              <button class="btn btn-outline btn-sm" onclick="App.navigate('cc-review',{courseId:'${c.id}'})">View</button>
+            </div>
+          </div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}</span>
+            ${ciUser
+              ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Instructor access for ${escapeHtml(ciUser.name)} on ${c.code}?')) App.revokeRole('CI','${c.id}')">Revoke Instructor</button>`
+              : `<button class="btn btn-sm btn-outline" onclick="openAssignModal('CI','${c.id}')">Assign Instructor</button>`}
+          </div>
+        </div>`;
+      }).join('')}
+    `;
+  }).join('');
+}
+function updateCCBranchGroups(term){
+  const user = App.currentUser();
+  const { ccCourses } = getFacultyCourses(user.id);
+  const target = document.getElementById('cc-branch-groups');
+  if(target) target.innerHTML = renderCCBranchGroupsHtml(ccCourses, term);
+}
+window.updateCCBranchGroups = updateCCBranchGroups;
+
+function renderCCReview(params){
+  const course = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>
+      <div class="page-eyebrow">Coordinator oversight</div>
+      <h2>${course.name}</h2>
+      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
+    </div>
+    <div class="card">
+      <p style="color:var(--text-soft);font-size:13.5px;margin:0 0 14px;">Marks review and approval are handled directly by the Executive Assistant and HOD once the instructor submits. As coordinator you can track progress here and manage the instructor assignment from My Coordination.</p>
+      ${marksViewTable(course)}
+    </div>
+  `;
+  return wrap;
+}
+
+/* ================= FACULTY: no assignments yet ================= */
+function renderFacultyEmpty(){
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Faculty</div>
+      <h2>No active assignments yet</h2>
+      <p>Once a Head of Department assigns you as Course Coordinator, or a Course Coordinator assigns you as Course Instructor, your courses will appear here automatically — no separate role request needed.</p>
+    </div>
+    ${emptyStateHtml('Nothing to show yet','Check back after your department assigns you to a course-section.')}
+  `;
+  return wrap;
+}
+
+/* ---------------- login screen ---------------- */
+function personaBtn(u){
+  const isFaculty = u.systemRole==='FACULTY';
+  const code = isFaculty ? (facultyBadgeShort(u) || 'FACULTY') : u.systemRole;
+  const desc = isFaculty ? facultyBadgeLong(u) : ROLE_LABELS[u.systemRole];
+  return `<button class="persona-btn" onclick="App.login('${u.id}')">
+    <span>
+      <span class="p-name">${escapeHtml(u.name)}</span>
+      <span class="p-desc">${escapeHtml(desc)} · ${escapeHtml(u.email)}</span>
+    </span>
+    <span class="p-code">${escapeHtml(code)}</span>
+  </button>`;
+}
+function renderPersonaList(){
+  const list = document.getElementById('persona-list');
+  const fixed = App.state.users.filter(u=>u.systemRole!=='FACULTY');
+  const faculty = App.state.users.filter(u=>u.systemRole==='FACULTY');
+  list.innerHTML = `
+    <div class="persona-group-label mono">System Roles</div>
+    ${fixed.map(personaBtn).join('')}
+    <div class="persona-group-label mono">Faculty Directory</div>
+    ${faculty.map(personaBtn).join('')}
+  `;
+}
+
+/* ---------------- boot ---------------- */
+document.addEventListener('DOMContentLoaded', ()=>{
+  const list = document.getElementById('persona-list');
+  if(list) list.innerHTML = `<div class="persona-group-label mono">Connecting to database…</div>`;
+
+  document.getElementById('logout-btn').addEventListener('click', ()=>App.logout());
+  document.getElementById('bell-btn').addEventListener('click', (e)=>{ e.stopPropagation(); toggleNotifPanel(); });
+  document.addEventListener('click', (e)=>{
+    const panel = document.getElementById('notif-panel');
+    if(!panel.classList.contains('hidden') && !panel.contains(e.target) && e.target.id!=='bell-btn'){
+      closeNotifPanel();
+    }
+  });
+
+  fetchStateFromSupabase()
+    .then(state=>{
+      App.state = state;
+      App.ready = true;
+      renderPersonaList();
+    })
+    .catch(err=>{
+      console.warn('Falling back to local demo data — could not load from Supabase:', err);
+      App.state = seedState();
+      App.ready = true;
+      renderPersonaList();
+      toast('Could not reach the database — running on local demo data for this session.', 'err');
+    });
+});
+</script>
 </body>
 </html>
