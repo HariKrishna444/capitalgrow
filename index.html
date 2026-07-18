@@ -606,9 +606,17 @@ async function fetchStateFromSupabase(){
     sb.from('app_settings').select('*'),
   ]);
 
-  const firstErr = [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR].find(r=>r.error);
-  if(firstErr) throw firstErr.error;
-  if(!profilesR.data || profilesR.data.length===0) throw new Error('No data in Supabase yet — has the schema/seed SQL been run?');
+  const named = [
+    ['profiles',profilesR],['courses',coursesR],['students',studentsR],['assignments',assignmentsR],
+    ['notifications',notificationsR],['course_history',historyR],['term_test_history',ttHistoryR],['app_settings',settingsR],
+  ];
+  const firstErr = named.find(([,r])=>r.error);
+  if(firstErr){
+    const [table, r] = firstErr;
+    const e = r.error;
+    throw new Error(`Supabase query on "${table}" failed: ${e.message || JSON.stringify(e)}${e.hint ? ' — hint: '+e.hint : ''}${e.code ? ' (code '+e.code+')' : ''}`);
+  }
+  if(!profilesR.data || profilesR.data.length===0) throw new Error('The "profiles" table came back empty — has the schema/seed SQL been run in this Supabase project yet?');
 
   const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined }));
 
@@ -1970,11 +1978,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
       renderPersonaList();
     })
     .catch(err=>{
-      console.warn('Falling back to local demo data — could not load from Supabase:', err);
+      const msg = (err && err.message) ? err.message : String(err);
+      console.error('Falling back to local demo data — could not load from Supabase:', msg, err);
       App.state = seedState();
       App.ready = true;
       renderPersonaList();
-      toast('Could not reach the database — running on local demo data for this session.', 'err');
+      toast('Could not reach the database (' + msg + ') — running on local demo data for this session.', 'err');
     });
 });
 </script>
