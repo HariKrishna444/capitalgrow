@@ -412,7 +412,7 @@ table.data-table{
       <div class="login-card">
         <span class="eyebrow">Record No. FMEA‑07</span>
         <h1>Faculty Marks Entry &amp; Approval</h1>
-        <p class="login-sub">Sign in as one of the registered personas below to see how a mark record moves through the department.</p>
+        <p class="login-sub">Choose your persona below — we'll email a secure sign-in link to that address. Click it to open your dashboard here; nothing moves until you confirm you own that inbox.</p>
         <div id="persona-list" class="persona-list"></div>
       </div>
     </section>
@@ -588,11 +588,12 @@ function seedState(){
 }
 
 /* ---------------- Supabase-backed persistence ----------------
-   The entire app still works against one in-memory `state` object
-   (same shape as before). On boot we fetch every table and assemble
-   it into that shape; every mutation still happens in memory first
-   (so the UI stays instant), then `persist()` pushes the current
-   state back up to Supabase in the background via upserts. */
+   The app still works against one in-memory `state` object (same
+   shape as before) so every render function is unchanged. On boot —
+   and again right after sign-in — we fetch every table and assemble
+   it into that shape. Every mutation happens in memory first (so the
+   UI stays instant), then a *targeted* sync function pushes only the
+   row(s) that actually changed, instead of re-writing everything. */
 
 async function fetchStateFromSupabase(){
   const [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR] = await Promise.all([
@@ -616,9 +617,9 @@ async function fetchStateFromSupabase(){
     const e = r.error;
     throw new Error(`Supabase query on "${table}" failed: ${e.message || JSON.stringify(e)}${e.hint ? ' — hint: '+e.hint : ''}${e.code ? ' (code '+e.code+')' : ''}`);
   }
-  if(!profilesR.data || profilesR.data.length===0) throw new Error('The "profiles" table came back empty — has the schema/seed SQL been run in this Supabase project yet?');
+  if(!profilesR.data || profilesR.data.length===0) throw new Error('The "profiles" table came back empty for this session.');
 
-  const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined }));
+  const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined, authId:p.auth_id||null }));
 
   const courses = coursesR.data.map(c=>({
     id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
@@ -657,40 +658,101 @@ async function fetchStateFromSupabase(){
   return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory };
 }
 
-let persistInFlight = Promise.resolve();
-function persistStateToSupabase(state){
-  // chain so overlapping calls don't race each other
-  persistInFlight = persistInFlight.then(()=>doPersist(state)).catch(e=>{ console.warn('Supabase sync failed', e); });
-  return persistInFlight;
+// Lightweight, pre-login fetch — just the public directory, used to
+// render the persona list before anyone has signed in.
+async function fetchProfilesOnly(){
+  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending:true });
+  if(error) throw error;
+  if(!data || data.length===0) throw new Error('The "profiles" table came back empty — has the schema/seed SQL been run in this Supabase project yet?');
+  return data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined, authId:p.auth_id||null }));
 }
-async function doPersist(state){
-  const profiles = state.users.map(u=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch || null }));
-  const courses = state.courses.map(c=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'' }));
-  const students = state.courses.flatMap(c=>c.students.map(s=>({ id:s.id, course_id:c.id, name:s.name, marks:s.marks||{} })));
-  const assignments = state.assignments.map(a=>({
+
+/* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
+const rowOf = {
+  profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'' }),
+  student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{} }),
+  assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
     assigned_at:new Date(a.assignedAt).toISOString(), status:a.status,
     revoked_at:a.revokedAt ? new Date(a.revokedAt).toISOString() : null,
     revoked_by:a.revokedBy || null,
-  }));
-  const notifications = state.notifications.map(n=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read }));
-  const courseHistory = state.courses.flatMap(c=>c.history.map(h=>({ id:h.id, course_id:c.id, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' })));
-  const termTestHistory = (state.termTestHistory||[]).map(t=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }));
+  }),
+  notification:(n)=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read }),
+  history:(courseId,h)=>({ id:h.id, course_id:courseId, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' }),
+  termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }),
+};
 
-  const jobs = [];
-  if(profiles.length) jobs.push(sb.from('profiles').upsert(profiles));
-  if(courses.length) jobs.push(sb.from('courses').upsert(courses));
-  if(students.length) jobs.push(sb.from('students').upsert(students));
-  if(assignments.length) jobs.push(sb.from('assignments').upsert(assignments));
-  if(notifications.length) jobs.push(sb.from('notifications').upsert(notifications));
-  if(courseHistory.length) jobs.push(sb.from('course_history').upsert(courseHistory));
-  if(termTestHistory.length) jobs.push(sb.from('term_test_history').upsert(termTestHistory));
-  jobs.push(sb.from('app_settings').upsert([{ key:'current_term_test', value: JSON.stringify(state.currentTermTest ?? null) }]));
-
-  const results = await Promise.all(jobs);
-  const bad = results.find(r=>r && r.error);
-  if(bad) console.warn('Supabase sync error', bad.error);
+async function warnOnError(promise, label){
+  const { error } = await promise;
+  if(error) console.warn(`Supabase sync failed (${label}):`, error.message || error);
 }
+
+function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.profile(u)), 'profile:'+u.id); }
+function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk') : Promise.resolve(); }
+function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id); }
+function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id); }
+function syncStudents(courseId, students){ return students.length ? warnOnError(sb.from('students').upsert(students.map(s=>rowOf.student(courseId,s))), 'students:'+courseId) : Promise.resolve(); }
+function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id); }
+function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
+function syncNotificationRead(n){ return warnOnError(sb.from('notifications').update({ read:true }).eq('id', n.id), 'notification-read:'+n.id); }
+function syncHistory(courseId, h){ return warnOnError(sb.from('course_history').insert(rowOf.history(courseId,h)), 'history:'+h.id); }
+function syncAppSetting(key, value){ return warnOnError(sb.from('app_settings').upsert({ key, value: JSON.stringify(value ?? null) }), 'app_settings:'+key); }
+function syncTermTest(t){ return warnOnError(sb.from('term_test_history').insert(rowOf.termTest(t)), 'term_test:'+t.id); }
+
+/* ---------------- real auth: passwordless magic-link sign-in ----------------
+   Clicking a persona sends a one-time sign-in link to that address —
+   nothing is "logged in" until the person actually opens that email
+   and clicks it. On first sign-in for an address, we silently link
+   the Supabase Auth user to its matching `profiles` row (auth_id),
+   which is what the RLS policies key off from then on. */
+
+let authBusy = false;
+
+async function requestMagicLink(user){
+  try{
+    authBusy = true;
+    const { error } = await sb.auth.signInWithOtp({
+      email: user.email,
+      options: { shouldCreateUser:false, emailRedirectTo: window.location.href }
+    });
+    if(error) throw error;
+    toast(`Sign-in link sent to ${user.email}. Open that inbox and click the link to continue as ${user.name}.`, 'ok');
+  }catch(e){
+    toast('Could not send the sign-in link: ' + (e.message || e), 'err');
+  }finally{
+    authBusy = false;
+  }
+}
+
+async function handleSignedIn(session){
+  const email = (session.user.email || '').toLowerCase();
+  if(!email) return;
+  // first login for this address: claim the matching profiles row
+  await warnOnError(
+    sb.from('profiles').update({ auth_id: session.user.id }).is('auth_id', null).eq('email', email),
+    'self-link:'+email
+  );
+  try{
+    const state = await fetchStateFromSupabase();
+    const me = state.users.find(u => u.email.toLowerCase() === email);
+    if(!me){
+      toast(`Signed in as ${email}, but no matching profile exists in the directory.`, 'err');
+      return;
+    }
+    state.currentUserId = me.id;
+    App.state = state;
+    App.completeLogin(me.id);
+  }catch(e){
+    toast('Signed in, but could not load your data: ' + (e.message || e), 'err');
+  }
+}
+
+sb.auth.onAuthStateChange((event, session) => {
+  if(session && !App.state.currentUserId && ['SIGNED_IN','INITIAL_SESSION','TOKEN_REFRESHED'].includes(event)){
+    handleSignedIn(session);
+  }
+});
 
 /* ---------------- assignment helpers (the "assignment tables") ---------------- */
 function getActiveAssignment(courseId, type){
@@ -705,11 +767,11 @@ function getFacultyCourses(userId){
 }
 function createFacultyIfNeeded(email, name){
   const existing = App.state.users.find(u=>u.email.toLowerCase()===email.toLowerCase());
-  if(existing) return existing;
+  if(existing) return { user:existing, isNew:false };
   const finalName = (name && name.trim()) ? name.trim() : email.split('@')[0].replace(/[._]+/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
   const user = { id:uid('fac'), name:finalName, email, systemRole:'FACULTY' };
   App.state.users.push(user);
-  return user;
+  return { user, isNew:true };
 }
 function isValidEmail(email){ return /^\S+@\S+\.\S+$/.test(email); }
 
@@ -722,10 +784,19 @@ const App = {
   currentUser(){ return this.state.users.find(u=>u.id===this.state.currentUserId) || null; },
   getUserById(id){ return this.state.users.find(u=>u.id===id) || null; },
   getCourse(id){ return this.state.courses.find(c=>c.id===id); },
-  persist(){ return persistStateToSupabase(this.state); },
 
   /* ---------- auth ---------- */
-  login(userId){
+  // Called by personaBtn — this only *requests* a magic link; nothing
+  // is signed in yet. The actual login happens in handleSignedIn()
+  // once the person clicks the link Supabase emails them.
+  requestLogin(userId){
+    const u = this.getUserById(userId);
+    if(!u || authBusy) return;
+    requestMagicLink(u);
+  },
+  // Called by handleSignedIn() once a real Supabase Auth session exists
+  // and has been matched to a profiles row.
+  completeLogin(userId){
     this.state.currentUserId = userId;
     document.getElementById('login-view').classList.add('hidden');
     document.getElementById('shell').classList.remove('hidden');
@@ -738,12 +809,13 @@ const App = {
     renderContent();
     renderBell();
   },
-  logout(){
+  async logout(){
+    try{ await sb.auth.signOut(); }catch(e){ console.warn('sign-out failed', e); }
     this.state.currentUserId = null;
     document.getElementById('shell').classList.add('hidden');
     document.getElementById('login-view').classList.remove('hidden');
     closeNotifPanel();
-    renderPersonaList();
+    fetchProfilesOnly().then(users=>{ this.state.users = users; renderPersonaList(); }).catch(()=>renderPersonaList());
   },
   navigate(view, params={}){
     this.ui = { view, params };
@@ -755,11 +827,14 @@ const App = {
   /* ---------- audit ---------- */
   logHistory(course, action, remark=''){
     const u = this.currentUser();
-    course.history.unshift({ id:uid('h'), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark });
+    const entry = { id:uid('h'), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark };
+    course.history.unshift(entry);
+    syncHistory(course.id, entry);
   },
   notifyUser(userId, course, title, body){
-    this.state.notifications.unshift({ id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false });
-    this.persist();
+    const n = { id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false };
+    this.state.notifications.unshift(n);
+    syncNotification(n);
     renderBell();
   },
 
@@ -772,7 +847,7 @@ const App = {
     if(this.state.users.find(u=>u.email.toLowerCase()===email)){ toast('A user with this email already exists.', 'err'); return; }
     const user = { id:uid('hod'), name, email, systemRole:'HOD' };
     this.state.users.push(user);
-    this.persist();
+    syncProfile(user);
     toast(`${name} added as Head of Department.`, 'ok');
     this.navigate('admin-hods');
   },
@@ -780,7 +855,7 @@ const App = {
     const u = this.getUserById(userId);
     if(!u) return;
     u.systemRole = 'FACULTY';
-    this.persist();
+    syncProfile(u);
     toast(`${u.name} is no longer an HOD.`, 'err');
     this.navigate('admin-hods');
   },
@@ -800,14 +875,15 @@ const App = {
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
-    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; }
-    const user = createFacultyIfNeeded(email, rawName);
+    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; syncAssignment(existing); }
+    const { user, isNew } = createFacultyIfNeeded(email, rawName);
+    if(isNew) syncProfile(user);
     const rec = { id:uid('asg'), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
     this.state.assignments.push(rec);
+    syncAssignment(rec);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
     this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})`);
     this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}. This role is active immediately — no separate approval step is needed.`);
-    this.persist();
     toast(`${user.name} is now ${roleLabel} for ${course.code}. Role activated automatically.`, 'ok');
     closeModal();
     renderSidebar();
@@ -824,11 +900,11 @@ const App = {
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can revoke a Course Instructor.', 'err'); return; }
     }
     existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id;
+    syncAssignment(existing);
     const user = this.getUserById(existing.userId);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
     this.logHistory(course, `${roleLabel} capability revoked: ${user ? user.name+' ('+user.email+')' : existing.email}`);
     if(user) this.notifyUser(user.id, course, `${roleLabel} access revoked`, `${actor.name} revoked your ${roleLabel} role for ${course.code} — ${course.name}.`);
-    this.persist();
     toast(`${roleLabel} capability revoked for ${course.code}.`, 'err');
     renderSidebar();
     renderContent();
@@ -838,6 +914,7 @@ const App = {
   saveMarks(courseId){
     const course = this.getCourse(courseId);
     if(!course) return;
+    const touched = [];
     document.querySelectorAll(`[data-course="${courseId}"][data-field]`).forEach(input=>{
       const sid = input.dataset.student;
       const field = input.dataset.field;
@@ -845,8 +922,10 @@ const App = {
       if(!student) return;
       const val = input.value === '' ? null : parseFloat(input.value);
       student.marks[field] = (val===null || isNaN(val)) ? null : val;
+      if(!touched.includes(student)) touched.push(student);
     });
-    this.persist();
+    // targeted write: only the students whose marks actually changed on screen
+    syncStudents(courseId, touched);
     return course;
   },
   validateCIEComplete(course){
@@ -876,8 +955,8 @@ const App = {
     if(!check.ok){ toast(check.msg, 'err'); return; }
     course.status = 'submitted';
     course.sentBack = false;
+    syncCourse(course);
     this.logHistory(course, 'Submitted directly to the Executive Assistant for verification');
-    this.persist();
     toast(`${course.code} submitted to the Executive Assistant.`, 'ok');
     this.navigate('ci-sections');
   },
@@ -888,8 +967,8 @@ const App = {
     const remarkEl = document.getElementById('ea-remark-input');
     course.eaRemark = remarkEl ? remarkEl.value.trim() : course.eaRemark;
     course.status = 'verified';
+    syncCourse(course);
     this.logHistory(course, 'Verified for completeness and forwarded to HOD', course.eaRemark);
-    this.persist();
     toast(`${course.code} forwarded to the HOD.`, 'ok');
     this.navigate('ea-list');
   },
@@ -897,8 +976,8 @@ const App = {
   hodApprove(courseId){
     const course = this.getCourse(courseId);
     course.status = 'approved';
+    syncCourse(course);
     this.logHistory(course, 'Approved — record locked for result processing');
-    this.persist();
     toast(`${course.code} approved and locked.`, 'ok');
     closeModal();
     this.navigate('hod-list');
@@ -912,8 +991,8 @@ const App = {
     course.sentBack = true;
     course.lastRemark = remark;
     course.eaRemark = '';
+    syncCourse(course);
     this.logHistory(course, 'Sent back for correction', remark);
-    this.persist();
     const ciUser = getCourseCIUser(courseId);
     const ccUser = getCourseCCUser(courseId);
     [ciUser, ccUser].filter(Boolean).forEach(u => this.notifyUser(u.id, course, `${course.code} sent back for correction`, remark));
@@ -927,18 +1006,22 @@ const App = {
     if(!TERM_TEST_LABELS[value]){ toast('Choose a valid term test.', 'err'); return; }
     const actor = this.currentUser();
     this.state.currentTermTest = value;
+    syncAppSetting('current_term_test', value);
     this.state.termTestHistory = this.state.termTestHistory || [];
-    this.state.termTestHistory.unshift({ id:uid('tt'), ts:Date.now(), by:actor.name, value });
+    const ttEntry = { id:uid('tt'), ts:Date.now(), by:actor.name, value };
+    this.state.termTestHistory.unshift(ttEntry);
+    syncTermTest(ttEntry);
     const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
     ccUserIds.forEach(uidTarget=>{
-      this.state.notifications.unshift({
+      const n = {
         id:uid('note'), forUserId:uidTarget, courseId:null,
         title:`${TERM_TEST_LABELS[value]} is now the active cycle`,
         body:`${actor.name} (HOD) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
         ts:Date.now(), read:false
-      });
+      };
+      this.state.notifications.unshift(n);
+      syncNotification(n);
     });
-    this.persist();
     toast(`${TERM_TEST_LABELS[value]} set as the active cycle and sent to all Course Coordinators.`, 'ok');
     renderContent();
     renderBell();
@@ -955,13 +1038,16 @@ const App = {
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
     const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
     if(existing && existing.systemRole!=='FACULTY'){ toast('This email already belongs to a non-faculty account.', 'err'); return; }
+    let row;
     if(existing){
       existing.name = name;
       existing.homeBranch = branch;
+      row = existing;
     } else {
-      this.state.users.push({ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch });
+      row = { id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch };
+      this.state.users.push(row);
     }
-    this.persist();
+    syncProfile(row);
     toast(`${name} added to the ${branchLabel(branch)} faculty directory.`, 'ok');
     this.navigate('ea-faculty');
   },
@@ -971,7 +1057,7 @@ const App = {
     const u = this.getUserById(userId);
     if(!u) return;
     delete u.homeBranch;
-    this.persist();
+    syncProfile(u);
     toast(`${u.name} removed from the faculty directory.`, 'err');
     this.navigate('ea-faculty');
   },
@@ -980,6 +1066,7 @@ const App = {
     if(!['EA','ADMIN'].includes(actor.systemRole)){ toast('Only the Executive Assistant can import the faculty directory.', 'err'); return; }
     if(!Array.isArray(rows) || rows.length===0){ toast('That file has no rows to import.', 'err'); return; }
     let added=0, updated=0, skipped=0;
+    const touched = [];
     rows.forEach(row=>{
       const keys = Object.keys(row||{});
       const findKey = (re) => keys.find(k=>re.test(String(k).trim()));
@@ -992,10 +1079,10 @@ const App = {
       if(!name || !email || !isValidEmail(email) || !BRANCH_LABELS[branch]){ skipped++; return; }
       const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
       if(existing && existing.systemRole!=='FACULTY'){ skipped++; return; }
-      if(existing){ existing.name=name; existing.homeBranch=branch; updated++; }
-      else { this.state.users.push({ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch }); added++; }
+      if(existing){ existing.name=name; existing.homeBranch=branch; updated++; touched.push(existing); }
+      else { const u2={ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch }; this.state.users.push(u2); added++; touched.push(u2); }
     });
-    this.persist();
+    syncProfiles(touched);
     if(added+updated===0){
       toast(`Import found nothing usable. Check the file has Name, Email, and Branch columns (Branch must be ${Object.keys(BRANCH_LABELS).join('/')}).`, 'err');
     } else {
@@ -1087,8 +1174,7 @@ function toggleNotifPanel(){
         <div class="n-time">${fmtDate(n.ts)}</div>
       </div>`).join('') : `<div class="notif-empty">No notifications yet.</div>`;
     panel.classList.remove('hidden');
-    items.forEach(n=>n.read=true);
-    App.persist();
+    items.filter(n=>!n.read).forEach(n=>{ n.read=true; syncNotificationRead(n); });
     renderBell();
   } else {
     closeNotifPanel();
@@ -1937,7 +2023,7 @@ function personaBtn(u){
   const isFaculty = u.systemRole==='FACULTY';
   const code = isFaculty ? (facultyBadgeShort(u) || 'FACULTY') : u.systemRole;
   const desc = isFaculty ? facultyBadgeLong(u) : ROLE_LABELS[u.systemRole];
-  return `<button class="persona-btn" onclick="App.login('${u.id}')">
+  return `<button class="persona-btn" onclick="App.requestLogin('${u.id}')">
     <span>
       <span class="p-name">${escapeHtml(u.name)}</span>
       <span class="p-desc">${escapeHtml(desc)} · ${escapeHtml(u.email)}</span>
@@ -1971,9 +2057,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
     }
   });
 
-  fetchStateFromSupabase()
-    .then(state=>{
-      App.state = state;
+  fetchProfilesOnly()
+    .then(users=>{
+      App.state.users = users;
       App.ready = true;
       renderPersonaList();
     })
