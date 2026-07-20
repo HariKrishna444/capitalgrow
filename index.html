@@ -704,7 +704,7 @@ function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.pro
 function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk') : Promise.resolve(); }
 function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id); }
 function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id); }
-function syncStudents(courseId, students){ return students.length ? warnOnError(sb.from('students').upsert(students.map(s=>rowOf.student(courseId,s))), 'students:'+courseId) : Promise.resolve(); }
+function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId) : Promise.resolve(); }
 function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id); }
 function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
 function syncNotificationRead(n){ return warnOnError(sb.from('notifications').update({ read:true }).eq('id', n.id), 'notification-read:'+n.id); }
