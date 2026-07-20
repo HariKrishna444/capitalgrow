@@ -1035,6 +1035,9 @@ const App = {
     course.sentBack = false;
     syncCourse(course);
     this.logHistory(course, 'Submitted directly to the Executive Assistant for verification');
+    this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
+      this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been submitted and is awaiting your verification.`)
+    );
     toast(`${course.code} submitted to the Executive Assistant.`, 'ok');
     this.navigate('ci-sections');
   },
@@ -1047,6 +1050,9 @@ const App = {
     course.status = 'verified';
     syncCourse(course);
     this.logHistory(course, 'Verified for completeness and forwarded to HOD', course.eaRemark);
+    this.state.users.filter(u => u.systemRole === 'HOD').forEach(u =>
+      this.notifyUser(u.id, course, `${course.code} ready for approval`, `${course.code} — ${course.name} has been verified by the Executive Assistant and is awaiting your approval.`)
+    );
     toast(`${course.code} forwarded to the HOD.`, 'ok');
     this.navigate('ea-list');
   },
