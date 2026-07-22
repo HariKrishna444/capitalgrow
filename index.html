@@ -488,22 +488,74 @@ const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', EA:'Execu
 const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.' };
 function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
 
-// Fixed university evaluation scheme — applies to every course-section.
-// CIE (50 marks total, 50% weightage):
-//   Theory TT1 (raw /50, scaled to /10) + Theory TT2 (raw /50, scaled to /10)
-//   Lab Internal (raw /50, scaled to /10) + Lab External (raw /50, scaled to /10)
-//   SIA (raw /5) + Assignments (raw /5)
-//   10 + 10 + 10 + 10 + 5 + 5 = 50
-// SEE (50% weightage): raw /100, scaled to /50.
-// Grand total = CIE (50) + SEE scaled (50) = 100.
-const CIE_COMPONENTS = [
-  { key:'tt1',         label:'Theory TT1',   group:'Theory', rawMax:50, scaledMax:10 },
-  { key:'tt2',         label:'Theory TT2',   group:'Theory', rawMax:50, scaledMax:10 },
-  { key:'labInternal', label:'Lab Internal', group:'Lab',    rawMax:50, scaledMax:10 },
-  { key:'labExternal', label:'Lab External', group:'Lab',    rawMax:50, scaledMax:10 },
-  { key:'sia',         label:'SIA',          group:'Other',  rawMax:5,  scaledMax:5  },
-  { key:'assignments', label:'Assignments',  group:'Other',  rawMax:5,  scaledMax:5  },
+// Evaluation Type (ET) scheme — the Course Coordinator fixes ONE of these 7 types
+// per course-section (every non-empty combination of the 3 base modules: Theory,
+// Lab, Practical — 2^3 - 1 = 7 types) at the moment a Course Instructor is assigned.
+// Whichever ET is fixed determines exactly which CIE components the Course
+// Instructor sees and enters marks against. SIA + Assignments (10 marks) are
+// common to every type; the remaining 40 marks are split across the selected
+// module(s) so every type's CIE always totals 50.
+// SEE (50% weightage): raw /100, scaled to /50. Grand total = CIE (50) + SEE scaled (50) = 100.
+const SIA_ASSIGN_COMPONENTS = [
+  { key:'sia',         label:'SIA',          group:'Other', rawMax:5, scaledMax:5 },
+  { key:'assignments', label:'Assignments',  group:'Other', rawMax:5, scaledMax:5 },
 ];
+const EVAL_TYPES = [
+  { key:'THEORY', label:'Theory', components:[
+    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:20 },
+    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:20 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+  { key:'LAB', label:'Lab', components:[
+    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:20 },
+    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:20 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+  { key:'PRACTICAL', label:'Practical', components:[
+    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:20 },
+    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:20 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+  { key:'THEORY_LAB', label:'Theory + Lab', components:[
+    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:10 },
+    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:10 },
+    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:10 },
+    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:10 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+  { key:'THEORY_PRACTICAL', label:'Theory + Practical', components:[
+    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:10 },
+    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:10 },
+    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:10 },
+    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:10 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+  { key:'LAB_PRACTICAL', label:'Lab + Practical', components:[
+    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:10 },
+    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:10 },
+    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:10 },
+    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:10 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+  { key:'THEORY_LAB_PRACTICAL', label:'Theory + Lab + Practical', components:[
+    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:7 },
+    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:7 },
+    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:7 },
+    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:7 },
+    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:6 },
+    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:6 },
+    ...SIA_ASSIGN_COMPONENTS,
+  ]},
+];
+const DEFAULT_EVAL_TYPE = 'THEORY_LAB'; // legacy fallback for records created before ET existed
+function evalTypeLabel(key){ const et = EVAL_TYPES.find(e=>e.key===key); return et ? et.label : '— Not yet fixed by Coordinator —'; }
+function getCourseComponents(course){
+  const et = EVAL_TYPES.find(e=>e.key===(course && course.evalType));
+  return (et || EVAL_TYPES.find(e=>e.key===DEFAULT_EVAL_TYPE)).components;
+}
+function evalTypeOptionsHtml(selected){
+  return EVAL_TYPES.map((et,i)=>`<option value="${et.key}" ${(selected===et.key || (!selected && i===0))?'selected':''}>${i+1}. ${et.label}</option>`).join('');
+}
 const CIE_MAX = 50;
 const SEE_RAW_MAX = 100;
 const SEE_SCALED_MAX = 50;
@@ -519,8 +571,9 @@ function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.rando
 
 /* fills every student's marks with plausible, complete values — used to seed a fully-approved demo record for the Examination Branch */
 function fillFullMarks(course){
+  const components = getCourseComponents(course);
   course.students.forEach(s=>{
-    CIE_COMPONENTS.forEach(comp=>{
+    components.forEach(comp=>{
       s.marks[comp.key] = Math.round((comp.rawMax*0.78 + Math.random()*comp.rawMax*0.15)*2)/2;
     });
     s.marks.see = Math.round((70 + Math.random()*22)*2)/2;
@@ -557,7 +610,11 @@ function seedState(){
     { id:'c5', code:'CS205', name:'Computer Networks',    section:'C', branch:'SAP'  },
     { id:'c6', code:'CS210', name:'Operating Systems',    section:'A', branch:'ECE'  }, // deliberately left unassigned — shows the empty state
     { id:'c7', code:'CS207', name:'Environmental Science',section:'D', branch:'SAP'  }, // pre-seeded, fully approved — Examination Branch demo record
-  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', students: makeStudents(), history: [] }));
+  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, students: makeStudents(), history: [] }));
+  // c1 and c7 already have a Course Instructor assigned in the seed data below,
+  // so their Coordinator has already fixed an Evaluation Type for them.
+  courses.find(c=>c.id==='c1').evalType = 'THEORY_LAB';
+  courses.find(c=>c.id==='c7').evalType = 'THEORY_LAB';
 
   const assignments = [
     { id:'a1', type:'CC', courseId:'c1', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
@@ -636,6 +693,7 @@ async function fetchStateFromSupabase(){
   const courses = coursesR.data.map(c=>({
     id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
     status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
+    evalType:c.eval_type || null,
     students:[], history:[]
   }));
   const courseById = id => courses.find(c=>c.id===id);
@@ -682,7 +740,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'' }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{} }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -939,7 +997,7 @@ const App = {
   },
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ---------- */
-  assignRole(type, courseId, rawEmail, rawName){
+  assignRole(type, courseId, rawEmail, rawName, evalType){
     const course = this.getCourse(courseId);
     if(!course){ toast('Choose a course first.', 'err'); return; }
     const actor = this.currentUser();
@@ -951,6 +1009,7 @@ const App = {
       const ccA = getActiveAssignment(courseId,'CC');
       const isCoordinator = ccA && ccA.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
+      if(!EVAL_TYPES.find(e=>e.key===evalType)){ toast('Choose an Evaluation Type for this course before assigning the Course Instructor.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
     if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; syncAssignment(existing); }
@@ -960,9 +1019,15 @@ const App = {
     this.state.assignments.push(rec);
     syncAssignment(rec);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
-    this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})`);
-    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}. This role is active immediately — no separate approval step is needed.`);
-    toast(`${user.name} is now ${roleLabel} for ${course.code}. Role activated automatically.`, 'ok');
+    let etNote = '';
+    if(type==='CI'){
+      course.evalType = evalType;
+      syncCourse(course);
+      etNote = ` · Evaluation Type fixed as: ${evalTypeLabel(evalType)}`;
+    }
+    this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`);
+    toast(`${user.name} is now ${roleLabel} for ${course.code}.${etNote}`, 'ok');
     closeModal();
     renderSidebar();
     renderContent();
@@ -979,6 +1044,7 @@ const App = {
     }
     existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id;
     syncAssignment(existing);
+    if(type==='CI'){ course.evalType = null; syncCourse(course); }
     const user = this.getUserById(existing.userId);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
     this.logHistory(course, `${roleLabel} capability revoked: ${user ? user.name+' ('+user.email+')' : existing.email}`);
@@ -1007,8 +1073,9 @@ const App = {
     return course;
   },
   validateCIEComplete(course){
+    const components = getCourseComponents(course);
     for(const s of course.students){
-      for(const comp of CIE_COMPONENTS){
+      for(const comp of components){
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
         if(v < 0 || v > comp.rawMax) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${comp.rawMax}.` };
@@ -1178,9 +1245,10 @@ const App = {
 window.App = App;
 
 /* ---------------- small helpers ---------------- */
-function computeCIE(student){
+function computeCIE(student, components){
+  components = components || getCourseComponents();
   let total = 0, complete = true;
-  CIE_COMPONENTS.forEach(comp=>{
+  components.forEach(comp=>{
     const raw = student.marks[comp.key];
     if(typeof raw !== 'number'){ complete = false; return; }
     total += (Math.min(raw, comp.rawMax)/comp.rawMax) * comp.scaledMax;
@@ -1192,12 +1260,15 @@ function computeSEE(student){
   if(typeof raw !== 'number') return { scaled:null, complete:false };
   return { scaled: round1((Math.min(raw, SEE_RAW_MAX)/SEE_RAW_MAX) * SEE_SCALED_MAX), complete:true };
 }
-function computeGrandTotal(student){
-  const cie = computeCIE(student);
+function computeGrandTotal(student, components){
+  const cie = computeCIE(student, components);
   const see = computeSEE(student);
   return { cieTotal:cie.total, seeScaled:see.scaled, total: round1(cie.total + (see.scaled||0)), complete: cie.complete && see.complete };
 }
-function courseCIEComplete(course){ return course.students.every(s=>computeCIE(s).complete); }
+function courseCIEComplete(course){
+  const components = getCourseComponents(course);
+  return course.students.every(s=>computeCIE(s, components).complete);
+}
 function round1(n){ return Math.round(n*10)/10; }
 function fmtDate(ts){
   const d = new Date(ts);
@@ -1346,9 +1417,11 @@ function termTestBanner(){
 function statusPill(course){ return `<span class="status-pill ${STATUS_CLASS[course.status]}">${STATUS_LABEL[course.status]}</span>`; }
 function courseMeta(course){ return `${course.code} · Section ${course.section} · ${branchLabel(course.branch)}`; }
 function assignmentSummary(courseId){
+  const course = App.getCourse(courseId);
   const ccUser = getCourseCCUser(courseId);
   const ciUser = getCourseCIUser(courseId);
-  return `Coordinator: ${ccUser ? ccUser.name : 'Unassigned'} · Instructor: ${ciUser ? ciUser.name : 'Unassigned'}`;
+  const etPart = course && course.evalType ? ` · Evaluation Type: ${evalTypeLabel(course.evalType)}` : '';
+  return `Coordinator: ${ccUser ? ccUser.name : 'Unassigned'} · Instructor: ${ciUser ? ciUser.name : 'Unassigned'}${etPart}`;
 }
 function courseMetaBlock(course){
   return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
@@ -1365,9 +1438,10 @@ let activeMarksTab = 'cie';
 
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
 function marksViewTable(course){
+  const components = getCourseComponents(course);
   const rows = course.students.map(s=>{
-    const gt = computeGrandTotal(s);
-    const cieCells = CIE_COMPONENTS.map(comp=>{
+    const gt = computeGrandTotal(s, components);
+    const cieCells = components.map(comp=>{
       const v = s.marks[comp.key];
       return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
     }).join('');
@@ -1381,11 +1455,11 @@ function marksViewTable(course){
       <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/100</span></td>
     </tr>`;
   }).join('');
-  const headCells = CIE_COMPONENTS.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const headCells = components.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
   return `
     <div class="weight-inline">
       <div class="weight-track"><div class="weight-cie"></div><div class="weight-see"></div></div>
-      <span>CIE 50% (Theory TT1+TT2, Lab Int+Ext, SIA, Assignments) · SEE 50%</span>
+      <span>Evaluation Type: <strong>${escapeHtml(evalTypeLabel(course.evalType))}</strong> · CIE 50% (${components.map(c=>c.label).join(', ')}) · SEE 50%</span>
     </div>
     <div class="table-scroll">
       <table class="data-table" style="margin-top:14px;min-width:920px;">
@@ -1399,12 +1473,13 @@ function marksViewTable(course){
    The SEE tab stays locked until every student's CIE components (TT1, TT2, Lab Internal,
    Lab External, SIA, Assignments) are fully entered. */
 function marksEntryTabs(course){
+  const components = getCourseComponents(course);
   const cieDone = courseCIEComplete(course);
   if(activeMarksTab==='see' && !cieDone) activeMarksTab = 'cie';
 
   const cieRows = course.students.map(s=>{
-    const cie = computeCIE(s);
-    const cells = CIE_COMPONENTS.map(comp=>{
+    const cie = computeCIE(s, components);
+    const cells = components.map(comp=>{
       const val = s.marks[comp.key];
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
@@ -1413,10 +1488,10 @@ function marksEntryTabs(course){
     }).join('');
     return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td></tr>`;
   }).join('');
-  const cieHead = CIE_COMPONENTS.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = components.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
   const seeRows = course.students.map(s=>{
-    const gt = computeGrandTotal(s);
+    const gt = computeGrandTotal(s, components);
     const val = s.marks.see;
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
@@ -1429,13 +1504,20 @@ function marksEntryTabs(course){
     </tr>`;
   }).join('');
 
+  const componentList = components.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
+  const componentNamesOnly = components.map(c=>c.label).join(', ');
+
   return `
+    <div class="et-banner" style="margin-bottom:14px;padding:10px 14px;background:var(--parchment-2);border:1px solid var(--rule);border-radius:2px;">
+      <span class="section-meta" style="text-transform:uppercase;letter-spacing:0.06em;font-size:10.5px;color:var(--brass);">Evaluation Type fixed by Coordinator</span>
+      <div style="font-family:'Fraunces',serif;font-weight:600;color:var(--ink);font-size:15px;margin-top:2px;">${escapeHtml(evalTypeLabel(course.evalType))}</div>
+    </div>
     <div class="tab-bar">
       <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
       <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''} ${cieDone?'':'locked'}" onclick="switchMarksTab('see')">Semester End Exam (SEE) ${cieDone?'':'🔒'}</button>
     </div>
     <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">CIE is 50 marks total: Theory TT1 (/50→/10) + TT2 (/50→/10), Lab Internal (/50→/10) + External (/50→/10), SIA (/5), Assignments (/5).</p>
+      <p class="section-meta" style="margin-bottom:8px;">CIE is 50 marks total: ${componentList}.</p>
       <div class="table-scroll">
         <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
       </div>
@@ -1448,7 +1530,7 @@ function marksEntryTabs(course){
         </div>` : `
         <div class="empty-state">
           <div class="em-title">Semester End Examination marks are locked</div>
-          Complete Theory TT1, TT2, Lab Internal, Lab External, SIA, and Assignments for every student on the CIE tab first.
+          Complete ${componentNamesOnly} for every student on the CIE tab first.
         </div>`}
     </div>`;
 }
@@ -1471,6 +1553,11 @@ window.onMarkChange = onMarkChange;
 function openAssignModal(type, courseId){
   const label = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
   const course = App.getCourse(courseId);
+  const etField = type==='CI' ? `
+    <div class="config-field" style="margin-top:12px;">
+      <label>Evaluation Type <span style="text-transform:none;">(1 of 7 — fixes which marks components this instructor enters)</span></label>
+      <select id="assign-evaltype">${evalTypeOptionsHtml(course.evalType)}</select>
+    </div>` : '';
   openModal(`
     <button class="modal-close" onclick="closeModal()">&times;</button>
     <h3>Assign ${label}</h3>
@@ -1484,9 +1571,10 @@ function openAssignModal(type, courseId){
       <label>Full name <span style="text-transform:none;">(only needed for a new account)</span></label>
       <input id="assign-name" type="text" placeholder="Dr. Jane Doe">
     </div>
+    ${etField}
     <div style="display:flex;gap:10px;margin-top:18px;">
       <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
-      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value)">Assign &amp; Activate</button>
+      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value, ${type==='CI' ? "document.getElementById('assign-evaltype').value" : 'undefined'})">Assign &amp; Activate</button>
     </div>
   `);
 }
@@ -1800,10 +1888,11 @@ function renderExamList(){
 }
 function exportCSV(courseId){
   const course = App.getCourse(courseId);
-  const header = ['Student', ...CIE_COMPONENTS.map(c=>c.label), 'CIE Total', 'SEE', 'SEE Scaled', 'Grand Total'];
+  const components = getCourseComponents(course);
+  const header = ['Student', ...components.map(c=>c.label), 'CIE Total', 'SEE', 'SEE Scaled', 'Grand Total'];
   const rows = course.students.map(s=>{
-    const gt = computeGrandTotal(s);
-    return [s.name, ...CIE_COMPONENTS.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, s.marks.see ?? '', gt.seeScaled ?? '', gt.total];
+    const gt = computeGrandTotal(s, components);
+    return [s.name, ...components.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, s.marks.see ?? '', gt.seeScaled ?? '', gt.total];
   });
   const csv = [header, ...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -2003,7 +2092,7 @@ function renderCCList(){
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a section, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated courses, then choose an instructor from the faculty directory uploaded for that branch.</p>
+        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated courses, fix the Evaluation Type for it, then choose an instructor from the faculty directory uploaded for that branch. Whichever Evaluation Type you fix here decides which marks components the instructor will see and enter.</p>
         <div class="config-grid">
           <div class="config-field">
             <label>Course</label>
@@ -2012,11 +2101,15 @@ function renderCCList(){
             </select>
           </div>
           <div class="config-field">
+            <label>Evaluation Type <span style="text-transform:none;">(1 of 7)</span></label>
+            <select id="cc-assign-evaltype">${evalTypeOptionsHtml(ccCourses[0].evalType)}</select>
+          </div>
+          <div class="config-field">
             <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
             <select id="cc-assign-instructor">${buildInstructorOptionsHtml(ccCourses[0].branch)}</select>
           </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '')">Assign &amp; Activate</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '', document.getElementById('cc-assign-evaltype').value)">Assign &amp; Activate</button>
       </div>
 
       <div class="card">
@@ -2038,6 +2131,8 @@ function updateCCInstructorOptions(courseId){
   const course = App.getCourse(courseId);
   const sel = document.getElementById('cc-assign-instructor');
   if(sel && course) sel.innerHTML = buildInstructorOptionsHtml(course.branch);
+  const etSel = document.getElementById('cc-assign-evaltype');
+  if(etSel && course) etSel.innerHTML = evalTypeOptionsHtml(course.evalType);
 }
 window.updateCCInstructorOptions = updateCCInstructorOptions;
 function renderCCBranchGroupsHtml(ccCourses, term){
@@ -2070,7 +2165,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
             </div>
           </div>
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}</span>
+            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}${c.evalType ? ' · Evaluation Type: '+escapeHtml(evalTypeLabel(c.evalType)) : ''}</span>
             ${ciUser
               ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Instructor access for ${escapeHtml(ciUser.name)} on ${c.code}?')) App.revokeRole('CI','${c.id}')">Revoke Instructor</button>`
               : `<button class="btn btn-sm btn-outline" onclick="openAssignModal('CI','${c.id}')">Assign Instructor</button>`}
