@@ -412,8 +412,20 @@ table.data-table{
       <div class="login-card">
         <span class="eyebrow">Record No. FMEA‑07</span>
         <h1>Faculty Marks Entry &amp; Approval</h1>
-        <p class="login-sub">Sign in as one of the registered personas below to see how a mark record moves through the department.</p>
-        <div id="persona-list" class="persona-list"></div>
+        <p class="login-sub">Sign in with the email and password issued to you by the System Administrator.</p>
+        <form id="login-form" class="login-form" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+          <div class="config-field">
+            <label style="color:var(--brass-light);">Email</label>
+            <input id="login-email" type="email" autocomplete="username" placeholder="you@suh.in" style="width:100%;">
+          </div>
+          <div class="config-field">
+            <label style="color:var(--brass-light);">Password</label>
+            <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" style="width:100%;">
+          </div>
+          <div id="login-error" class="section-meta hidden" style="color:#E38C8C;"></div>
+          <button id="login-submit-btn" type="submit" class="btn" style="margin-top:4px;">Sign In</button>
+          <p class="section-meta" style="color:#B9AF93;">No account or forgotten password? Contact your System Administrator — accounts and passwords are issued by them, not self-registered.</p>
+        </form>
       </div>
     </section>
 
@@ -476,74 +488,22 @@ const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', EA:'Execu
 const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.' };
 function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
 
-// Evaluation Type (ET) scheme — the Course Coordinator fixes ONE of these 7 types
-// per course-section (every non-empty combination of the 3 base modules: Theory,
-// Lab, Practical — 2^3 - 1 = 7 types) at the moment a Course Instructor is assigned.
-// Whichever ET is fixed determines exactly which CIE components the Course
-// Instructor sees and enters marks against. SIA + Assignments (10 marks) are
-// common to every type; the remaining 40 marks are split across the selected
-// module(s) so every type's CIE always totals 50.
-// SEE (50% weightage): raw /100, scaled to /50. Grand total = CIE (50) + SEE scaled (50) = 100.
-const SIA_ASSIGN_COMPONENTS = [
-  { key:'sia',         label:'SIA',          group:'Other', rawMax:5, scaledMax:5 },
-  { key:'assignments', label:'Assignments',  group:'Other', rawMax:5, scaledMax:5 },
+// Fixed university evaluation scheme — applies to every course-section.
+// CIE (50 marks total, 50% weightage):
+//   Theory TT1 (raw /50, scaled to /10) + Theory TT2 (raw /50, scaled to /10)
+//   Lab Internal (raw /50, scaled to /10) + Lab External (raw /50, scaled to /10)
+//   SIA (raw /5) + Assignments (raw /5)
+//   10 + 10 + 10 + 10 + 5 + 5 = 50
+// SEE (50% weightage): raw /100, scaled to /50.
+// Grand total = CIE (50) + SEE scaled (50) = 100.
+const CIE_COMPONENTS = [
+  { key:'tt1',         label:'Theory TT1',   group:'Theory', rawMax:50, scaledMax:10 },
+  { key:'tt2',         label:'Theory TT2',   group:'Theory', rawMax:50, scaledMax:10 },
+  { key:'labInternal', label:'Lab Internal', group:'Lab',    rawMax:50, scaledMax:10 },
+  { key:'labExternal', label:'Lab External', group:'Lab',    rawMax:50, scaledMax:10 },
+  { key:'sia',         label:'SIA',          group:'Other',  rawMax:5,  scaledMax:5  },
+  { key:'assignments', label:'Assignments',  group:'Other',  rawMax:5,  scaledMax:5  },
 ];
-const EVAL_TYPES = [
-  { key:'THEORY', label:'Theory', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:20 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:20 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'LAB', label:'Lab', components:[
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:20 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:20 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'PRACTICAL', label:'Practical', components:[
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:20 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:20 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'THEORY_LAB', label:'Theory + Lab', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:10 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:10 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'THEORY_PRACTICAL', label:'Theory + Practical', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:10 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:10 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'LAB_PRACTICAL', label:'Lab + Practical', components:[
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:10 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:10 },
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:10 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:10 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'THEORY_LAB_PRACTICAL', label:'Theory + Lab + Practical', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:7 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:7 },
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:7 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:7 },
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:6 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:6 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-];
-const DEFAULT_EVAL_TYPE = 'THEORY_LAB'; // legacy fallback for records created before ET existed
-function evalTypeLabel(key){ const et = EVAL_TYPES.find(e=>e.key===key); return et ? et.label : '— Not yet fixed by Coordinator —'; }
-function getCourseComponents(course){
-  const et = EVAL_TYPES.find(e=>e.key===(course && course.evalType));
-  return (et || EVAL_TYPES.find(e=>e.key===DEFAULT_EVAL_TYPE)).components;
-}
-function evalTypeOptionsHtml(selected){
-  return EVAL_TYPES.map((et,i)=>`<option value="${et.key}" ${(selected===et.key || (!selected && i===0))?'selected':''}>${i+1}. ${et.label}</option>`).join('');
-}
 const CIE_MAX = 50;
 const SEE_RAW_MAX = 100;
 const SEE_SCALED_MAX = 50;
@@ -559,9 +519,8 @@ function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.rando
 
 /* fills every student's marks with plausible, complete values — used to seed a fully-approved demo record for the Examination Branch */
 function fillFullMarks(course){
-  const components = getCourseComponents(course);
   course.students.forEach(s=>{
-    components.forEach(comp=>{
+    CIE_COMPONENTS.forEach(comp=>{
       s.marks[comp.key] = Math.round((comp.rawMax*0.78 + Math.random()*comp.rawMax*0.15)*2)/2;
     });
     s.marks.see = Math.round((70 + Math.random()*22)*2)/2;
@@ -598,11 +557,7 @@ function seedState(){
     { id:'c5', code:'CS205', name:'Computer Networks',    section:'C', branch:'SAP'  },
     { id:'c6', code:'CS210', name:'Operating Systems',    section:'A', branch:'ECE'  }, // deliberately left unassigned — shows the empty state
     { id:'c7', code:'CS207', name:'Environmental Science',section:'D', branch:'SAP'  }, // pre-seeded, fully approved — Examination Branch demo record
-  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, students: makeStudents(), history: [] }));
-  // c1 and c7 already have a Course Instructor assigned in the seed data below,
-  // so their Coordinator has already fixed an Evaluation Type for them.
-  courses.find(c=>c.id==='c1').evalType = 'THEORY_LAB';
-  courses.find(c=>c.id==='c7').evalType = 'THEORY_LAB';
+  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', students: makeStudents(), history: [] }));
 
   const assignments = [
     { id:'a1', type:'CC', courseId:'c1', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
@@ -645,11 +600,12 @@ function seedState(){
 }
 
 /* ---------------- Supabase-backed persistence ----------------
-   The entire app still works against one in-memory `state` object
-   (same shape as before). On boot we fetch every table and assemble
-   it into that shape; every mutation still happens in memory first
-   (so the UI stays instant), then `persist()` pushes the current
-   state back up to Supabase in the background via upserts. */
+   The app still works against one in-memory `state` object (same
+   shape as before) so every render function is unchanged. On boot —
+   and again right after sign-in — we fetch every table and assemble
+   it into that shape. Every mutation happens in memory first (so the
+   UI stays instant), then a *targeted* sync function pushes only the
+   row(s) that actually changed, instead of re-writing everything. */
 
 async function fetchStateFromSupabase(){
   const [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR] = await Promise.all([
@@ -663,16 +619,23 @@ async function fetchStateFromSupabase(){
     sb.from('app_settings').select('*'),
   ]);
 
-  const firstErr = [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR].find(r=>r.error);
-  if(firstErr) throw firstErr.error;
-  if(!profilesR.data || profilesR.data.length===0) throw new Error('No data in Supabase yet — has the schema/seed SQL been run?');
+  const named = [
+    ['profiles',profilesR],['courses',coursesR],['students',studentsR],['assignments',assignmentsR],
+    ['notifications',notificationsR],['course_history',historyR],['term_test_history',ttHistoryR],['app_settings',settingsR],
+  ];
+  const firstErr = named.find(([,r])=>r.error);
+  if(firstErr){
+    const [table, r] = firstErr;
+    const e = r.error;
+    throw new Error(`Supabase query on "${table}" failed: ${e.message || JSON.stringify(e)}${e.hint ? ' — hint: '+e.hint : ''}${e.code ? ' (code '+e.code+')' : ''}`);
+  }
+  if(!profilesR.data || profilesR.data.length===0) throw new Error('The "profiles" table came back empty for this session.');
 
-  const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined }));
+  const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined, authId:p.auth_id||null }));
 
   const courses = coursesR.data.map(c=>({
     id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
     status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
-    evalType:c.eval_type || null,
     students:[], history:[]
   }));
   const courseById = id => courses.find(c=>c.id===id);
@@ -707,39 +670,136 @@ async function fetchStateFromSupabase(){
   return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory };
 }
 
-let persistInFlight = Promise.resolve();
-function persistStateToSupabase(state){
-  // chain so overlapping calls don't race each other
-  persistInFlight = persistInFlight.then(()=>doPersist(state)).catch(e=>{ console.warn('Supabase sync failed', e); });
-  return persistInFlight;
+// Lightweight, pre-login fetch — just the public directory, used to
+// render the persona list before anyone has signed in.
+async function fetchProfilesOnly(){
+  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending:true });
+  if(error) throw error;
+  if(!data || data.length===0) throw new Error('The "profiles" table came back empty — has the schema/seed SQL been run in this Supabase project yet?');
+  return data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined, authId:p.auth_id||null }));
 }
-async function doPersist(state){
-  const profiles = state.users.map(u=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch || null }));
-  const courses = state.courses.map(c=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null }));
-  const students = state.courses.flatMap(c=>c.students.map(s=>({ id:s.id, course_id:c.id, name:s.name, marks:s.marks||{} })));
-  const assignments = state.assignments.map(a=>({
+
+/* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
+const rowOf = {
+  profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'' }),
+  student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{} }),
+  assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
     assigned_at:new Date(a.assignedAt).toISOString(), status:a.status,
     revoked_at:a.revokedAt ? new Date(a.revokedAt).toISOString() : null,
     revoked_by:a.revokedBy || null,
-  }));
-  const notifications = state.notifications.map(n=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read }));
-  const courseHistory = state.courses.flatMap(c=>c.history.map(h=>({ id:h.id, course_id:c.id, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' })));
-  const termTestHistory = (state.termTestHistory||[]).map(t=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }));
+  }),
+  notification:(n)=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read }),
+  history:(courseId,h)=>({ id:h.id, course_id:courseId, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' }),
+  termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }),
+};
 
-  const jobs = [];
-  if(profiles.length) jobs.push(sb.from('profiles').upsert(profiles));
-  if(courses.length) jobs.push(sb.from('courses').upsert(courses));
-  if(students.length) jobs.push(sb.from('students').upsert(students));
-  if(assignments.length) jobs.push(sb.from('assignments').upsert(assignments));
-  if(notifications.length) jobs.push(sb.from('notifications').upsert(notifications));
-  if(courseHistory.length) jobs.push(sb.from('course_history').upsert(courseHistory));
-  if(termTestHistory.length) jobs.push(sb.from('term_test_history').upsert(termTestHistory));
-  jobs.push(sb.from('app_settings').upsert([{ key:'current_term_test', value: JSON.stringify(state.currentTermTest ?? null) }]));
+async function warnOnError(promise, label){
+  const { error } = await promise;
+  if(error) console.warn(`Supabase sync failed (${label}):`, error.message || error);
+}
 
-  const results = await Promise.all(jobs);
-  const bad = results.find(r=>r && r.error);
-  if(bad) console.warn('Supabase sync error', bad.error);
+function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.profile(u)), 'profile:'+u.id); }
+function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk') : Promise.resolve(); }
+function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id); }
+function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id); }
+function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId) : Promise.resolve(); }
+function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id); }
+function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
+function syncNotificationRead(n){ return warnOnError(sb.from('notifications').update({ read:true }).eq('id', n.id), 'notification-read:'+n.id); }
+function syncHistory(courseId, h){ return warnOnError(sb.from('course_history').insert(rowOf.history(courseId,h)), 'history:'+h.id); }
+function syncAppSetting(key, value){ return warnOnError(sb.from('app_settings').upsert({ key, value: JSON.stringify(value ?? null) }), 'app_settings:'+key); }
+function syncTermTest(t){ return warnOnError(sb.from('term_test_history').insert(rowOf.termTest(t)), 'term_test:'+t.id); }
+
+/* ---------------- real auth: email + password sign-in ----------------
+   Accounts and passwords are provisioned entirely by the System Admin
+   (see the "Manage System Accounts" screen + the admin-manage-user
+   Edge Function). This page only ever calls signInWithPassword — it
+   never creates accounts or sets passwords itself. On first sign-in
+   for an address we silently link the Supabase Auth user to its
+   matching `profiles` row (auth_id), which is what RLS policies key
+   off from then on. */
+
+let authBusy = false;
+
+async function attemptPasswordLogin(email, password){
+  const errBox = document.getElementById('login-error');
+  const btn = document.getElementById('login-submit-btn');
+  if(errBox){ errBox.classList.add('hidden'); errBox.textContent = ''; }
+  if(!email || !password){
+    if(errBox){ errBox.textContent = 'Enter both email and password.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(authBusy) return;
+  authBusy = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Signing in…'; }
+  try{
+    const { error } = await sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+    if(error) throw error;
+    // handleSignedIn() runs via onAuthStateChange once the session lands
+  }catch(e){
+    const msg = (e && e.message) ? e.message : String(e);
+    if(errBox){ errBox.textContent = 'Sign-in failed: ' + msg; errBox.classList.remove('hidden'); }
+  }finally{
+    authBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Sign In'; }
+  }
+}
+
+async function handleSignedIn(session){
+  const email = (session.user.email || '').toLowerCase();
+  if(!email) return;
+  // first login for this address: claim the matching profiles row
+  await warnOnError(
+    sb.from('profiles').update({ auth_id: session.user.id }).is('auth_id', null).eq('email', email),
+    'self-link:'+email
+  );
+  try{
+    const state = await fetchStateFromSupabase();
+    const me = state.users.find(u => u.email.toLowerCase() === email);
+    if(!me){
+      const errBox = document.getElementById('login-error');
+      if(errBox){ errBox.textContent = `Signed in as ${email}, but no matching profile exists in the directory. Ask your Admin to add you.`; errBox.classList.remove('hidden'); }
+      await sb.auth.signOut();
+      return;
+    }
+    state.currentUserId = me.id;
+    App.state = state;
+    App.completeLogin(me.id);
+  }catch(e){
+    const errBox = document.getElementById('login-error');
+    if(errBox){ errBox.textContent = 'Signed in, but could not load your data: ' + (e.message || e); errBox.classList.remove('hidden'); }
+  }
+}
+
+sb.auth.onAuthStateChange((event, session) => {
+  if(session && !App.state.currentUserId && ['SIGNED_IN','INITIAL_SESSION','TOKEN_REFRESHED'].includes(event)){
+    handleSignedIn(session);
+  }
+});
+
+/* ---------------- Admin-only: account & password provisioning ----------------
+   These call a Supabase Edge Function (admin-manage-user) using the
+   currently signed-in Admin's own access token. The function itself
+   re-checks server-side that the caller is really an ADMIN before it
+   touches anything — the service-role key never appears in this file. */
+async function callAdminManageUser(action, payload){
+  const { data: sessionData } = await sb.auth.getSession();
+  const token = sessionData && sessionData.session ? sessionData.session.access_token : null;
+  if(!token) throw new Error('Not signed in.');
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-manage-user`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const body = await res.json().catch(()=>({}));
+  if(!res.ok || body.error) throw new Error(body.error || `Request failed (${res.status})`);
+  return body;
 }
 
 /* ---------------- assignment helpers (the "assignment tables") ---------------- */
@@ -755,11 +815,11 @@ function getFacultyCourses(userId){
 }
 function createFacultyIfNeeded(email, name){
   const existing = App.state.users.find(u=>u.email.toLowerCase()===email.toLowerCase());
-  if(existing) return existing;
+  if(existing) return { user:existing, isNew:false };
   const finalName = (name && name.trim()) ? name.trim() : email.split('@')[0].replace(/[._]+/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
   const user = { id:uid('fac'), name:finalName, email, systemRole:'FACULTY' };
   App.state.users.push(user);
-  return user;
+  return { user, isNew:true };
 }
 function isValidEmail(email){ return /^\S+@\S+\.\S+$/.test(email); }
 
@@ -772,10 +832,17 @@ const App = {
   currentUser(){ return this.state.users.find(u=>u.id===this.state.currentUserId) || null; },
   getUserById(id){ return this.state.users.find(u=>u.id===id) || null; },
   getCourse(id){ return this.state.courses.find(c=>c.id===id); },
-  persist(){ return persistStateToSupabase(this.state); },
 
   /* ---------- auth ---------- */
-  login(userId){
+  // Called by the login form's submit handler / button.
+  submitLogin(){
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    attemptPasswordLogin(email, password);
+  },
+  // Called by handleSignedIn() once a real Supabase Auth session exists
+  // and has been matched to a profiles row.
+  completeLogin(userId){
     this.state.currentUserId = userId;
     document.getElementById('login-view').classList.add('hidden');
     document.getElementById('shell').classList.remove('hidden');
@@ -788,12 +855,17 @@ const App = {
     renderContent();
     renderBell();
   },
-  logout(){
+  async logout(){
+    try{ await sb.auth.signOut(); }catch(e){ console.warn('sign-out failed', e); }
     this.state.currentUserId = null;
+    this.state.users = [];
     document.getElementById('shell').classList.add('hidden');
     document.getElementById('login-view').classList.remove('hidden');
+    const emailEl = document.getElementById('login-email');
+    const pwEl = document.getElementById('login-password');
+    if(emailEl) emailEl.value = '';
+    if(pwEl) pwEl.value = '';
     closeNotifPanel();
-    renderPersonaList();
   },
   navigate(view, params={}){
     this.ui = { view, params };
@@ -805,38 +877,69 @@ const App = {
   /* ---------- audit ---------- */
   logHistory(course, action, remark=''){
     const u = this.currentUser();
-    course.history.unshift({ id:uid('h'), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark });
+    const entry = { id:uid('h'), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark };
+    course.history.unshift(entry);
+    syncHistory(course.id, entry);
   },
   notifyUser(userId, course, title, body){
-    this.state.notifications.unshift({ id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false });
-    this.persist();
+    const n = { id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false };
+    this.state.notifications.unshift(n);
+    syncNotification(n);
     renderBell();
   },
 
-  /* ---------- Admin: create/revoke HOD ---------- */
-  createHOD(rawName, rawEmail){
+  /* ---------- Admin: create account (with password) + set role + reset password ----------
+     CC / CI are NOT handled here — those stay assigned inside the app by
+     HOD (→ CC) and CC (→ CI) exactly as before. This panel only covers
+     the fixed system roles: ADMIN, HOD, EA, EXAM, and plain FACULTY. */
+  async createSystemAccount(rawName, rawEmail, role, rawPassword){
     const name = (rawName||'').trim();
     const email = (rawEmail||'').trim().toLowerCase();
+    const password = (rawPassword||'').trim();
     if(!name || !email){ toast('Name and email are required.', 'err'); return; }
     if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
+    if(!password || password.length < 8){ toast('Set a password of at least 8 characters.', 'err'); return; }
     if(this.state.users.find(u=>u.email.toLowerCase()===email)){ toast('A user with this email already exists.', 'err'); return; }
-    const user = { id:uid('hod'), name, email, systemRole:'HOD' };
-    this.state.users.push(user);
-    this.persist();
-    toast(`${name} added as Head of Department.`, 'ok');
-    this.navigate('admin-hods');
+    try{
+      await callAdminManageUser('create_user', { name, email, role, password });
+      const user = { id:uid('u'), name, email, systemRole:role };
+      this.state.users.push(user);
+      toast(`${name} added as ${ROLE_LABELS[role]}, with sign-in credentials issued.`, 'ok');
+      this.navigate('admin-users');
+    }catch(e){
+      toast('Could not create account: ' + (e.message || e), 'err');
+    }
   },
-  revokeHOD(userId){
+  async setSystemRole(userId, role){
     const u = this.getUserById(userId);
     if(!u) return;
-    u.systemRole = 'FACULTY';
-    this.persist();
-    toast(`${u.name} is no longer an HOD.`, 'err');
-    this.navigate('admin-hods');
+    const prevRole = u.systemRole;
+    u.systemRole = role;
+    try{
+      await syncProfile(u);
+      toast(`${u.name} is now ${ROLE_LABELS[role]}.`, role==='FACULTY' ? 'err' : 'ok');
+    }catch(e){
+      u.systemRole = prevRole;
+      toast('Could not update role: ' + (e.message || e), 'err');
+    }
+    this.navigate('admin-users');
+  },
+  async setUserPassword(userId, rawPassword){
+    const u = this.getUserById(userId);
+    const password = (rawPassword||'').trim();
+    if(!u) return;
+    if(!password || password.length < 8){ toast('Set a password of at least 8 characters.', 'err'); return; }
+    try{
+      await callAdminManageUser('set_password', { email: u.email, password });
+      toast(`Password updated for ${u.name}.`, 'ok');
+      this.navigate('admin-users');
+    }catch(e){
+      toast('Could not set password: ' + (e.message || e), 'err');
+    }
   },
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ---------- */
-  assignRole(type, courseId, rawEmail, rawName, evalType){
+  assignRole(type, courseId, rawEmail, rawName){
     const course = this.getCourse(courseId);
     if(!course){ toast('Choose a course first.', 'err'); return; }
     const actor = this.currentUser();
@@ -848,23 +951,18 @@ const App = {
       const ccA = getActiveAssignment(courseId,'CC');
       const isCoordinator = ccA && ccA.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
-      if(!EVAL_TYPES.find(e=>e.key===evalType)){ toast('Choose an Evaluation Type for this course before assigning the Course Instructor.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
-    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; }
-    const user = createFacultyIfNeeded(email, rawName);
+    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; syncAssignment(existing); }
+    const { user, isNew } = createFacultyIfNeeded(email, rawName);
+    if(isNew) syncProfile(user);
     const rec = { id:uid('asg'), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
     this.state.assignments.push(rec);
+    syncAssignment(rec);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
-    let etNote = '';
-    if(type==='CI'){
-      course.evalType = evalType;
-      etNote = ` · Evaluation Type fixed as: ${evalTypeLabel(evalType)}`;
-    }
-    this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
-    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`);
-    this.persist();
-    toast(`${user.name} is now ${roleLabel} for ${course.code}.${etNote}`, 'ok');
+    this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})`);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}. This role is active immediately — no separate approval step is needed.`);
+    toast(`${user.name} is now ${roleLabel} for ${course.code}. Role activated automatically.`, 'ok');
     closeModal();
     renderSidebar();
     renderContent();
@@ -880,12 +978,11 @@ const App = {
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can revoke a Course Instructor.', 'err'); return; }
     }
     existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id;
-    if(type==='CI') course.evalType = null;
+    syncAssignment(existing);
     const user = this.getUserById(existing.userId);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
     this.logHistory(course, `${roleLabel} capability revoked: ${user ? user.name+' ('+user.email+')' : existing.email}`);
     if(user) this.notifyUser(user.id, course, `${roleLabel} access revoked`, `${actor.name} revoked your ${roleLabel} role for ${course.code} — ${course.name}.`);
-    this.persist();
     toast(`${roleLabel} capability revoked for ${course.code}.`, 'err');
     renderSidebar();
     renderContent();
@@ -895,6 +992,7 @@ const App = {
   saveMarks(courseId){
     const course = this.getCourse(courseId);
     if(!course) return;
+    const touched = [];
     document.querySelectorAll(`[data-course="${courseId}"][data-field]`).forEach(input=>{
       const sid = input.dataset.student;
       const field = input.dataset.field;
@@ -902,14 +1000,15 @@ const App = {
       if(!student) return;
       const val = input.value === '' ? null : parseFloat(input.value);
       student.marks[field] = (val===null || isNaN(val)) ? null : val;
+      if(!touched.includes(student)) touched.push(student);
     });
-    this.persist();
+    // targeted write: only the students whose marks actually changed on screen
+    syncStudents(courseId, touched);
     return course;
   },
   validateCIEComplete(course){
-    const components = getCourseComponents(course);
     for(const s of course.students){
-      for(const comp of components){
+      for(const comp of CIE_COMPONENTS){
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
         if(v < 0 || v > comp.rawMax) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${comp.rawMax}.` };
@@ -934,8 +1033,11 @@ const App = {
     if(!check.ok){ toast(check.msg, 'err'); return; }
     course.status = 'submitted';
     course.sentBack = false;
+    syncCourse(course);
     this.logHistory(course, 'Submitted directly to the Executive Assistant for verification');
-    this.persist();
+    this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
+      this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been submitted and is awaiting your verification.`)
+    );
     toast(`${course.code} submitted to the Executive Assistant.`, 'ok');
     this.navigate('ci-sections');
   },
@@ -946,8 +1048,11 @@ const App = {
     const remarkEl = document.getElementById('ea-remark-input');
     course.eaRemark = remarkEl ? remarkEl.value.trim() : course.eaRemark;
     course.status = 'verified';
+    syncCourse(course);
     this.logHistory(course, 'Verified for completeness and forwarded to HOD', course.eaRemark);
-    this.persist();
+    this.state.users.filter(u => u.systemRole === 'HOD').forEach(u =>
+      this.notifyUser(u.id, course, `${course.code} ready for approval`, `${course.code} — ${course.name} has been verified by the Executive Assistant and is awaiting your approval.`)
+    );
     toast(`${course.code} forwarded to the HOD.`, 'ok');
     this.navigate('ea-list');
   },
@@ -955,8 +1060,8 @@ const App = {
   hodApprove(courseId){
     const course = this.getCourse(courseId);
     course.status = 'approved';
+    syncCourse(course);
     this.logHistory(course, 'Approved — record locked for result processing');
-    this.persist();
     toast(`${course.code} approved and locked.`, 'ok');
     closeModal();
     this.navigate('hod-list');
@@ -970,8 +1075,8 @@ const App = {
     course.sentBack = true;
     course.lastRemark = remark;
     course.eaRemark = '';
+    syncCourse(course);
     this.logHistory(course, 'Sent back for correction', remark);
-    this.persist();
     const ciUser = getCourseCIUser(courseId);
     const ccUser = getCourseCCUser(courseId);
     [ciUser, ccUser].filter(Boolean).forEach(u => this.notifyUser(u.id, course, `${course.code} sent back for correction`, remark));
@@ -985,18 +1090,22 @@ const App = {
     if(!TERM_TEST_LABELS[value]){ toast('Choose a valid term test.', 'err'); return; }
     const actor = this.currentUser();
     this.state.currentTermTest = value;
+    syncAppSetting('current_term_test', value);
     this.state.termTestHistory = this.state.termTestHistory || [];
-    this.state.termTestHistory.unshift({ id:uid('tt'), ts:Date.now(), by:actor.name, value });
+    const ttEntry = { id:uid('tt'), ts:Date.now(), by:actor.name, value };
+    this.state.termTestHistory.unshift(ttEntry);
+    syncTermTest(ttEntry);
     const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
     ccUserIds.forEach(uidTarget=>{
-      this.state.notifications.unshift({
+      const n = {
         id:uid('note'), forUserId:uidTarget, courseId:null,
         title:`${TERM_TEST_LABELS[value]} is now the active cycle`,
         body:`${actor.name} (HOD) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
         ts:Date.now(), read:false
-      });
+      };
+      this.state.notifications.unshift(n);
+      syncNotification(n);
     });
-    this.persist();
     toast(`${TERM_TEST_LABELS[value]} set as the active cycle and sent to all Course Coordinators.`, 'ok');
     renderContent();
     renderBell();
@@ -1013,13 +1122,16 @@ const App = {
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
     const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
     if(existing && existing.systemRole!=='FACULTY'){ toast('This email already belongs to a non-faculty account.', 'err'); return; }
+    let row;
     if(existing){
       existing.name = name;
       existing.homeBranch = branch;
+      row = existing;
     } else {
-      this.state.users.push({ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch });
+      row = { id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch };
+      this.state.users.push(row);
     }
-    this.persist();
+    syncProfile(row);
     toast(`${name} added to the ${branchLabel(branch)} faculty directory.`, 'ok');
     this.navigate('ea-faculty');
   },
@@ -1029,7 +1141,7 @@ const App = {
     const u = this.getUserById(userId);
     if(!u) return;
     delete u.homeBranch;
-    this.persist();
+    syncProfile(u);
     toast(`${u.name} removed from the faculty directory.`, 'err');
     this.navigate('ea-faculty');
   },
@@ -1038,6 +1150,7 @@ const App = {
     if(!['EA','ADMIN'].includes(actor.systemRole)){ toast('Only the Executive Assistant can import the faculty directory.', 'err'); return; }
     if(!Array.isArray(rows) || rows.length===0){ toast('That file has no rows to import.', 'err'); return; }
     let added=0, updated=0, skipped=0;
+    const touched = [];
     rows.forEach(row=>{
       const keys = Object.keys(row||{});
       const findKey = (re) => keys.find(k=>re.test(String(k).trim()));
@@ -1050,10 +1163,10 @@ const App = {
       if(!name || !email || !isValidEmail(email) || !BRANCH_LABELS[branch]){ skipped++; return; }
       const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
       if(existing && existing.systemRole!=='FACULTY'){ skipped++; return; }
-      if(existing){ existing.name=name; existing.homeBranch=branch; updated++; }
-      else { this.state.users.push({ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch }); added++; }
+      if(existing){ existing.name=name; existing.homeBranch=branch; updated++; touched.push(existing); }
+      else { const u2={ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch }; this.state.users.push(u2); added++; touched.push(u2); }
     });
-    this.persist();
+    syncProfiles(touched);
     if(added+updated===0){
       toast(`Import found nothing usable. Check the file has Name, Email, and Branch columns (Branch must be ${Object.keys(BRANCH_LABELS).join('/')}).`, 'err');
     } else {
@@ -1065,10 +1178,9 @@ const App = {
 window.App = App;
 
 /* ---------------- small helpers ---------------- */
-function computeCIE(student, components){
-  components = components || getCourseComponents();
+function computeCIE(student){
   let total = 0, complete = true;
-  components.forEach(comp=>{
+  CIE_COMPONENTS.forEach(comp=>{
     const raw = student.marks[comp.key];
     if(typeof raw !== 'number'){ complete = false; return; }
     total += (Math.min(raw, comp.rawMax)/comp.rawMax) * comp.scaledMax;
@@ -1080,15 +1192,12 @@ function computeSEE(student){
   if(typeof raw !== 'number') return { scaled:null, complete:false };
   return { scaled: round1((Math.min(raw, SEE_RAW_MAX)/SEE_RAW_MAX) * SEE_SCALED_MAX), complete:true };
 }
-function computeGrandTotal(student, components){
-  const cie = computeCIE(student, components);
+function computeGrandTotal(student){
+  const cie = computeCIE(student);
   const see = computeSEE(student);
   return { cieTotal:cie.total, seeScaled:see.scaled, total: round1(cie.total + (see.scaled||0)), complete: cie.complete && see.complete };
 }
-function courseCIEComplete(course){
-  const components = getCourseComponents(course);
-  return course.students.every(s=>computeCIE(s, components).complete);
-}
+function courseCIEComplete(course){ return course.students.every(s=>computeCIE(s).complete); }
 function round1(n){ return Math.round(n*10)/10; }
 function fmtDate(ts){
   const d = new Date(ts);
@@ -1149,8 +1258,7 @@ function toggleNotifPanel(){
         <div class="n-time">${fmtDate(n.ts)}</div>
       </div>`).join('') : `<div class="notif-empty">No notifications yet.</div>`;
     panel.classList.remove('hidden');
-    items.forEach(n=>n.read=true);
-    App.persist();
+    items.filter(n=>!n.read).forEach(n=>{ n.read=true; syncNotificationRead(n); });
     renderBell();
   } else {
     closeNotifPanel();
@@ -1160,7 +1268,7 @@ function closeNotifPanel(){ document.getElementById('notif-panel').classList.add
 
 /* ---------------- sidebar / routing ---------------- */
 function getNavForUser(user){
-  if(user.systemRole==='ADMIN') return [{v:'admin-hods', label:'Manage HODs'}];
+  if(user.systemRole==='ADMIN') return [{v:'admin-users', label:'Manage System Accounts'}];
   if(user.systemRole==='HOD') return [
     {v:'hod-list', label:'Pending Approval'},
     {v:'hod-coordinators', label:'Manage Coordinators'},
@@ -1193,7 +1301,7 @@ function renderContent(){
   let view = App.ui.view || (nav[0] ? nav[0].v : 'faculty-empty');
 
   const routes = {
-    'admin-hods': renderAdminHods,
+    'admin-users': renderAdminUsers,
     'hod-list': renderHODList,
     'hod-review': renderHODReview,
     'hod-coordinators': renderHODCoordinators,
@@ -1238,11 +1346,9 @@ function termTestBanner(){
 function statusPill(course){ return `<span class="status-pill ${STATUS_CLASS[course.status]}">${STATUS_LABEL[course.status]}</span>`; }
 function courseMeta(course){ return `${course.code} · Section ${course.section} · ${branchLabel(course.branch)}`; }
 function assignmentSummary(courseId){
-  const course = App.getCourse(courseId);
   const ccUser = getCourseCCUser(courseId);
   const ciUser = getCourseCIUser(courseId);
-  const etPart = course && course.evalType ? ` · Evaluation Type: ${evalTypeLabel(course.evalType)}` : '';
-  return `Coordinator: ${ccUser ? ccUser.name : 'Unassigned'} · Instructor: ${ciUser ? ciUser.name : 'Unassigned'}${etPart}`;
+  return `Coordinator: ${ccUser ? ccUser.name : 'Unassigned'} · Instructor: ${ciUser ? ciUser.name : 'Unassigned'}`;
 }
 function courseMetaBlock(course){
   return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
@@ -1259,10 +1365,9 @@ let activeMarksTab = 'cie';
 
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
 function marksViewTable(course){
-  const components = getCourseComponents(course);
   const rows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, components);
-    const cieCells = components.map(comp=>{
+    const gt = computeGrandTotal(s);
+    const cieCells = CIE_COMPONENTS.map(comp=>{
       const v = s.marks[comp.key];
       return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
     }).join('');
@@ -1276,11 +1381,11 @@ function marksViewTable(course){
       <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/100</span></td>
     </tr>`;
   }).join('');
-  const headCells = components.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const headCells = CIE_COMPONENTS.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
   return `
     <div class="weight-inline">
       <div class="weight-track"><div class="weight-cie"></div><div class="weight-see"></div></div>
-      <span>Evaluation Type: <strong>${escapeHtml(evalTypeLabel(course.evalType))}</strong> · CIE 50% (${components.map(c=>c.label).join(', ')}) · SEE 50%</span>
+      <span>CIE 50% (Theory TT1+TT2, Lab Int+Ext, SIA, Assignments) · SEE 50%</span>
     </div>
     <div class="table-scroll">
       <table class="data-table" style="margin-top:14px;min-width:920px;">
@@ -1294,13 +1399,12 @@ function marksViewTable(course){
    The SEE tab stays locked until every student's CIE components (TT1, TT2, Lab Internal,
    Lab External, SIA, Assignments) are fully entered. */
 function marksEntryTabs(course){
-  const components = getCourseComponents(course);
   const cieDone = courseCIEComplete(course);
   if(activeMarksTab==='see' && !cieDone) activeMarksTab = 'cie';
 
   const cieRows = course.students.map(s=>{
-    const cie = computeCIE(s, components);
-    const cells = components.map(comp=>{
+    const cie = computeCIE(s);
+    const cells = CIE_COMPONENTS.map(comp=>{
       const val = s.marks[comp.key];
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
@@ -1309,10 +1413,10 @@ function marksEntryTabs(course){
     }).join('');
     return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td></tr>`;
   }).join('');
-  const cieHead = components.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = CIE_COMPONENTS.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
   const seeRows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, components);
+    const gt = computeGrandTotal(s);
     const val = s.marks.see;
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
@@ -1325,20 +1429,13 @@ function marksEntryTabs(course){
     </tr>`;
   }).join('');
 
-  const componentList = components.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
-  const componentNamesOnly = components.map(c=>c.label).join(', ');
-
   return `
-    <div class="et-banner" style="margin-bottom:14px;padding:10px 14px;background:var(--parchment-2);border:1px solid var(--rule);border-radius:2px;">
-      <span class="section-meta" style="text-transform:uppercase;letter-spacing:0.06em;font-size:10.5px;color:var(--brass);">Evaluation Type fixed by Coordinator</span>
-      <div style="font-family:'Fraunces',serif;font-weight:600;color:var(--ink);font-size:15px;margin-top:2px;">${escapeHtml(evalTypeLabel(course.evalType))}</div>
-    </div>
     <div class="tab-bar">
       <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
       <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''} ${cieDone?'':'locked'}" onclick="switchMarksTab('see')">Semester End Exam (SEE) ${cieDone?'':'🔒'}</button>
     </div>
     <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">CIE is 50 marks total: ${componentList}.</p>
+      <p class="section-meta" style="margin-bottom:8px;">CIE is 50 marks total: Theory TT1 (/50→/10) + TT2 (/50→/10), Lab Internal (/50→/10) + External (/50→/10), SIA (/5), Assignments (/5).</p>
       <div class="table-scroll">
         <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
       </div>
@@ -1351,7 +1448,7 @@ function marksEntryTabs(course){
         </div>` : `
         <div class="empty-state">
           <div class="em-title">Semester End Examination marks are locked</div>
-          Complete ${componentNamesOnly} for every student on the CIE tab first.
+          Complete Theory TT1, TT2, Lab Internal, Lab External, SIA, and Assignments for every student on the CIE tab first.
         </div>`}
     </div>`;
 }
@@ -1374,11 +1471,6 @@ window.onMarkChange = onMarkChange;
 function openAssignModal(type, courseId){
   const label = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
   const course = App.getCourse(courseId);
-  const etField = type==='CI' ? `
-    <div class="config-field" style="margin-top:12px;">
-      <label>Evaluation Type <span style="text-transform:none;">(1 of 7 — fixes which marks components this instructor enters)</span></label>
-      <select id="assign-evaltype">${evalTypeOptionsHtml(course.evalType)}</select>
-    </div>` : '';
   openModal(`
     <button class="modal-close" onclick="closeModal()">&times;</button>
     <h3>Assign ${label}</h3>
@@ -1392,41 +1484,59 @@ function openAssignModal(type, courseId){
       <label>Full name <span style="text-transform:none;">(only needed for a new account)</span></label>
       <input id="assign-name" type="text" placeholder="Dr. Jane Doe">
     </div>
-    ${etField}
     <div style="display:flex;gap:10px;margin-top:18px;">
       <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
-      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value, ${type==='CI' ? "document.getElementById('assign-evaltype').value" : 'undefined'})">Assign &amp; Activate</button>
+      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value)">Assign &amp; Activate</button>
     </div>
   `);
 }
 window.openAssignModal = openAssignModal;
 
 /* ================= ADMIN VIEWS ================= */
-function renderAdminHods(){
-  const hods = App.state.users.filter(u=>u.systemRole==='HOD');
+const FIXED_ROLE_OPTIONS = ['ADMIN','HOD','EA','EXAM','FACULTY'];
+function roleSelectHtml(userId, currentRole){
+  return `<select onchange="if(confirm('Change role to '+this.value+'?')){App.setSystemRole('${userId}', this.value);}else{this.value='${currentRole}';}">
+    ${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}" ${r===currentRole?'selected':''}>${ROLE_LABELS[r]}</option>`).join('')}
+  </select>`;
+}
+function renderAdminUsers(){
+  const users = [...App.state.users].sort((a,b)=> a.name.localeCompare(b.name));
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Administrator</div>
-      <h2>Manage Heads of Department</h2>
-      <p>Admin creates HOD accounts. Everything below HOD — coordinators and instructors — is assigned downstream and never configured here directly.</p>
+      <h2>Manage System Accounts</h2>
+      <p>Every profile in the directory, with its role and sign-in credentials. Course Coordinator / Course Instructor assignments are unaffected here — those stay assigned by HOD and CC inside the app as usual.</p>
     </div>
     <div class="card">
-      <div class="section-title" style="font-size:15px;">Create HOD account</div>
+      <div class="section-title" style="font-size:15px;">Create account</div>
+      <p class="section-meta" style="margin-top:4px;">Set an initial password — share it with the person securely; they can be given a new one any time from the list below.</p>
       <div class="config-grid">
-        <div class="config-field"><label>Full name</label><input id="new-hod-name" type="text" placeholder="Dr. Jane Doe"></div>
-        <div class="config-field"><label>Email</label><input id="new-hod-email" type="email" placeholder="jane.doe@suh.in"></div>
-      </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createHOD(document.getElementById('new-hod-name').value, document.getElementById('new-hod-email').value)">Create HOD Account</button>
-    </div>
-    ${hods.map(h=>`
-      <div class="card card-row">
-        <div>
-          <div class="section-title">${escapeHtml(h.name)}</div>
-          <div class="section-meta">${escapeHtml(h.email)}</div>
+        <div class="config-field"><label>Full name</label><input id="new-acct-name" type="text" placeholder="Dr. Jane Doe"></div>
+        <div class="config-field"><label>Email</label><input id="new-acct-email" type="email" placeholder="jane.doe@suh.in"></div>
+        <div class="config-field"><label>Role</label>
+          <select id="new-acct-role">${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}">${ROLE_LABELS[r]}</option>`).join('')}</select>
         </div>
-        <button class="btn btn-red btn-sm" onclick="if(confirm('Revoke HOD access for ${escapeHtml(h.name)}?')) App.revokeHOD('${h.id}')">Revoke HOD Access</button>
-      </div>`).join('')}
+        <div class="config-field"><label>Initial password</label><input id="new-acct-password" type="text" placeholder="min. 8 characters"></div>
+      </div>
+      <button class="btn" style="margin-top:14px;" onclick="App.createSystemAccount(document.getElementById('new-acct-name').value, document.getElementById('new-acct-email').value, document.getElementById('new-acct-role').value, document.getElementById('new-acct-password').value)">Create Account</button>
+    </div>
+
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">All profiles (${users.length})</div>
+      ${users.map(u=>`
+        <div class="card-row" style="padding:12px 0;border-top:1px solid var(--rule-light);flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="section-title" style="font-size:14px;">${escapeHtml(u.name)}</div>
+            <div class="section-meta">${escapeHtml(u.email)}${u.homeBranch ? ' · '+escapeHtml(branchLabel(u.homeBranch)) : ''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            ${roleSelectHtml(u.id, u.systemRole)}
+            <input id="pw-${u.id}" type="text" placeholder="new password" style="width:150px;">
+            <button class="btn btn-outline btn-sm" onclick="App.setUserPassword('${u.id}', document.getElementById('pw-${u.id}').value)">Set Password</button>
+          </div>
+        </div>`).join('')}
+    </div>
   `;
   return wrap;
 }
@@ -1690,11 +1800,10 @@ function renderExamList(){
 }
 function exportCSV(courseId){
   const course = App.getCourse(courseId);
-  const components = getCourseComponents(course);
-  const header = ['Student', ...components.map(c=>c.label), 'CIE Total', 'SEE', 'SEE Scaled', 'Grand Total'];
+  const header = ['Student', ...CIE_COMPONENTS.map(c=>c.label), 'CIE Total', 'SEE', 'SEE Scaled', 'Grand Total'];
   const rows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, components);
-    return [s.name, ...components.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, s.marks.see ?? '', gt.seeScaled ?? '', gt.total];
+    const gt = computeGrandTotal(s);
+    return [s.name, ...CIE_COMPONENTS.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, s.marks.see ?? '', gt.seeScaled ?? '', gt.total];
   });
   const csv = [header, ...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -1894,7 +2003,7 @@ function renderCCList(){
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a section, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated courses, fix the Evaluation Type for it, then choose an instructor from the faculty directory uploaded for that branch. Whichever Evaluation Type you fix here decides which marks components the instructor will see and enter.</p>
+        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated courses, then choose an instructor from the faculty directory uploaded for that branch.</p>
         <div class="config-grid">
           <div class="config-field">
             <label>Course</label>
@@ -1903,15 +2012,11 @@ function renderCCList(){
             </select>
           </div>
           <div class="config-field">
-            <label>Evaluation Type <span style="text-transform:none;">(1 of 7)</span></label>
-            <select id="cc-assign-evaltype">${evalTypeOptionsHtml(ccCourses[0].evalType)}</select>
-          </div>
-          <div class="config-field">
             <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
             <select id="cc-assign-instructor">${buildInstructorOptionsHtml(ccCourses[0].branch)}</select>
           </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '', document.getElementById('cc-assign-evaltype').value)">Assign &amp; Activate</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '')">Assign &amp; Activate</button>
       </div>
 
       <div class="card">
@@ -1933,8 +2038,6 @@ function updateCCInstructorOptions(courseId){
   const course = App.getCourse(courseId);
   const sel = document.getElementById('cc-assign-instructor');
   if(sel && course) sel.innerHTML = buildInstructorOptionsHtml(course.branch);
-  const etSel = document.getElementById('cc-assign-evaltype');
-  if(etSel && course) etSel.innerHTML = evalTypeOptionsHtml(course.evalType);
 }
 window.updateCCInstructorOptions = updateCCInstructorOptions;
 function renderCCBranchGroupsHtml(ccCourses, term){
@@ -1967,7 +2070,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
             </div>
           </div>
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}${c.evalType ? ' · Evaluation Type: '+escapeHtml(evalTypeLabel(c.evalType)) : ''}</span>
+            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}</span>
             ${ciUser
               ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Instructor access for ${escapeHtml(ciUser.name)} on ${c.code}?')) App.revokeRole('CI','${c.id}')">Revoke Instructor</button>`
               : `<button class="btn btn-sm btn-outline" onclick="openAssignModal('CI','${c.id}')">Assign Instructor</button>`}
@@ -2018,35 +2121,13 @@ function renderFacultyEmpty(){
   return wrap;
 }
 
-/* ---------------- login screen ---------------- */
-function personaBtn(u){
-  const isFaculty = u.systemRole==='FACULTY';
-  const code = isFaculty ? (facultyBadgeShort(u) || 'FACULTY') : u.systemRole;
-  const desc = isFaculty ? facultyBadgeLong(u) : ROLE_LABELS[u.systemRole];
-  return `<button class="persona-btn" onclick="App.login('${u.id}')">
-    <span>
-      <span class="p-name">${escapeHtml(u.name)}</span>
-      <span class="p-desc">${escapeHtml(desc)} · ${escapeHtml(u.email)}</span>
-    </span>
-    <span class="p-code">${escapeHtml(code)}</span>
-  </button>`;
-}
-function renderPersonaList(){
-  const list = document.getElementById('persona-list');
-  const fixed = App.state.users.filter(u=>u.systemRole!=='FACULTY');
-  const faculty = App.state.users.filter(u=>u.systemRole==='FACULTY');
-  list.innerHTML = `
-    <div class="persona-group-label mono">System Roles</div>
-    ${fixed.map(personaBtn).join('')}
-    <div class="persona-group-label mono">Faculty Directory</div>
-    ${faculty.map(personaBtn).join('')}
-  `;
-}
-
-/* ---------------- boot ---------------- */
+/* ---------------- boot ----------------
+   No profile data is fetched before sign-in anymore — the login
+   screen is just an email/password form now. onAuthStateChange
+   (registered above) handles both a fresh sign-in and restoring an
+   existing session (INITIAL_SESSION) by calling handleSignedIn(). */
 document.addEventListener('DOMContentLoaded', ()=>{
-  const list = document.getElementById('persona-list');
-  if(list) list.innerHTML = `<div class="persona-group-label mono">Connecting to database…</div>`;
+  App.ready = true;
 
   document.getElementById('logout-btn').addEventListener('click', ()=>App.logout());
   document.getElementById('bell-btn').addEventListener('click', (e)=>{ e.stopPropagation(); toggleNotifPanel(); });
@@ -2057,19 +2138,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
     }
   });
 
-  fetchStateFromSupabase()
-    .then(state=>{
-      App.state = state;
-      App.ready = true;
-      renderPersonaList();
-    })
-    .catch(err=>{
-      console.warn('Falling back to local demo data — could not load from Supabase:', err);
-      App.state = seedState();
-      App.ready = true;
-      renderPersonaList();
-      toast('Could not reach the database — running on local demo data for this session.', 'err');
-    });
+  const loginForm = document.getElementById('login-form');
+  const loginBtn = document.getElementById('login-submit-btn');
+  if(loginForm) loginForm.addEventListener('submit', (e)=>{ e.preventDefault(); App.submitLogin(); });
+  if(loginBtn) loginBtn.addEventListener('click', ()=>App.submitLogin());
 });
 </script>
 </body>
