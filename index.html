@@ -1135,10 +1135,11 @@ const App = {
      CC / CI are NOT handled here — those stay assigned inside the app by
      HOD (→ CC) and CC (→ CI) exactly as before. This panel only covers
      the fixed system roles: ADMIN, HOD, EA, EXAM, and plain FACULTY. */
-  async createSystemAccount(rawName, rawEmail, role, rawPassword){
+  async createSystemAccount(rawName, rawEmail, role, rawPassword, rawBranch){
     const name = (rawName||'').trim();
     const email = (rawEmail||'').trim().toLowerCase();
     const password = (rawPassword||'').trim();
+    const branch = (rawBranch||'').trim().toUpperCase();
     if(!name || !email){ toast('Name and email are required.', 'err'); return; }
     if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
     if(!password || password.length < 8){ toast('Set a password of at least 8 characters.', 'err'); return; }
@@ -1147,12 +1148,25 @@ const App = {
     try{
       await callAdminManageUser('create_user', { id, name, email, role, password });
       const user = { id, name, email, systemRole:role };
+      if(role==='FACULTY' && BRANCH_LABELS[branch]){
+        user.homeBranch = branch;
+        syncProfile(user); // best-effort follow-up write, home_branch isn't set by the Edge Function itself
+      }
       this.state.users.push(user);
       toast(`${name} added as ${ROLE_LABELS[role]}, with sign-in credentials issued.`, 'ok');
       this.navigate('admin-users');
     }catch(e){
       toast('Could not create account: ' + (e.message || e), 'err');
     }
+  },
+  setUserBranch(userId, branch){
+    const u = this.getUserById(userId);
+    if(!u) return;
+    if(u.systemRole!=='FACULTY'){ toast('Only Faculty accounts have a branch.', 'err'); return; }
+    u.homeBranch = branch || undefined;
+    syncProfile(u);
+    toast(`${u.name}'s branch set to ${branch ? branchLabel(branch) : 'none'}.`, 'ok');
+    this.navigate('admin-users');
   },
   async setSystemRole(userId, role){
     const u = this.getUserById(userId);
@@ -1819,6 +1833,13 @@ function roleSelectHtml(userId, currentRole){
     ${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}" ${r===currentRole?'selected':''}>${ROLE_LABELS[r]}</option>`).join('')}
   </select>`;
 }
+function branchSelectHtml(userId, currentBranch, systemRole){
+  if(systemRole!=='FACULTY') return '';
+  return `<select onchange="App.setUserBranch('${userId}', this.value)">
+    <option value="">— No branch —</option>
+    ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}" ${b===currentBranch?'selected':''}>${branchLabel(b)}</option>`).join('')}
+  </select>`;
+}
 function renderAdminUsers(){
   const users = [...App.state.users].sort((a,b)=> a.name.localeCompare(b.name));
   const wrap = el('<div></div>');
@@ -1835,11 +1856,15 @@ function renderAdminUsers(){
         <div class="config-field"><label>Full name</label><input id="new-acct-name" type="text" placeholder="Dr. Jane Doe"></div>
         <div class="config-field"><label>Email</label><input id="new-acct-email" type="email" placeholder="jane.doe@suh.in"></div>
         <div class="config-field"><label>Role</label>
-          <select id="new-acct-role">${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}">${ROLE_LABELS[r]}</option>`).join('')}</select>
+          <select id="new-acct-role" onchange="document.getElementById('new-acct-branch-field').classList.toggle('hidden', this.value!=='FACULTY')">${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}">${ROLE_LABELS[r]}</option>`).join('')}</select>
+        </div>
+        <div class="config-field" id="new-acct-branch-field">
+          <label>Home branch <span style="text-transform:none;">(Faculty only)</span></label>
+          <select id="new-acct-branch">${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${branchLabel(b)}</option>`).join('')}</select>
         </div>
         <div class="config-field"><label>Initial password</label><input id="new-acct-password" type="text" placeholder="min. 8 characters"></div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createSystemAccount(document.getElementById('new-acct-name').value, document.getElementById('new-acct-email').value, document.getElementById('new-acct-role').value, document.getElementById('new-acct-password').value)">Create Account</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.createSystemAccount(document.getElementById('new-acct-name').value, document.getElementById('new-acct-email').value, document.getElementById('new-acct-role').value, document.getElementById('new-acct-password').value, document.getElementById('new-acct-branch').value)">Create Account</button>
     </div>
 
     <div class="card">
@@ -1852,6 +1877,7 @@ function renderAdminUsers(){
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
             ${roleSelectHtml(u.id, u.systemRole)}
+            ${branchSelectHtml(u.id, u.homeBranch, u.systemRole)}
             <input id="pw-${u.id}" type="text" placeholder="new password" style="width:150px;">
             <button class="btn btn-outline btn-sm" onclick="App.setUserPassword('${u.id}', document.getElementById('pw-${u.id}').value)">Set Password</button>
           </div>
