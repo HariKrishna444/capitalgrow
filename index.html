@@ -562,8 +562,8 @@ const EVAL_TEMPLATES = [
       { key:'regularLabPerf', label:'Regular Lab Performance Assessment*', rawMax:10, scaledMax:10 },
     ],
     see:[
-      { key:'seeTheory',    label:'SEE Theory',    rawMax:50, scaledMax:50 },
-      { key:'seePractical', label:'SEE Practical ^', rawMax:50, scaledMax:50 },
+      { key:'seeTheory',    label:'SEE Theory',    rawMax:50, scaledMax:30 },
+      { key:'seePractical', label:'SEE Practical ^', rawMax:50, scaledMax:20 },
     ],
     courses:[
       {code:'24CSEJ601', name:'Software Engineering'},
@@ -706,12 +706,9 @@ const EVAL_TEMPLATES = [
     courses:[],
   },
 ];
-// NOTE: every template's CIE totals 50 and SEE totals 50 (Grand Total 100),
-// EXCEPT ETP1, whose sheet lists SEE Theory (50) + SEE Practical (50) = 100,
-// making CIE(50)+SEE(100)=150 even though the sheet's own "Total Marks" footer
-// still reads 100. That mismatch is in the source sheet itself; this app sums
-// the actual components (so ETP1 shows a Grand Total out of 150) rather than
-// silently forcing it to 100 — flag this to your exam cell if 100 was intended.
+// NOTE: every template's CIE totals 50 and SEE totals 50 (Grand Total 100).
+// ETP1's SEE is split as SEE Theory (30) + SEE Practical (20) = 50, per the
+// official Evaluation Scheme sheet, so its Grand Total is 100 like the rest.
 
 // Subject Lookup Table: course code -> ET abbreviation, built from the
 // "Courses Applicable" column of the sheet. Powers the auto-detect flow:
