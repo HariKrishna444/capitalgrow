@@ -1143,9 +1143,10 @@ const App = {
     if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
     if(!password || password.length < 8){ toast('Set a password of at least 8 characters.', 'err'); return; }
     if(this.state.users.find(u=>u.email.toLowerCase()===email)){ toast('A user with this email already exists.', 'err'); return; }
+    const id = uid('u'); // generated up front so the Edge Function's profiles insert has an id to use
     try{
-      await callAdminManageUser('create_user', { name, email, role, password });
-      const user = { id:uid('u'), name, email, systemRole:role };
+      await callAdminManageUser('create_user', { id, name, email, role, password });
+      const user = { id, name, email, systemRole:role };
       this.state.users.push(user);
       toast(`${name} added as ${ROLE_LABELS[role]}, with sign-in credentials issued.`, 'ok');
       this.navigate('admin-users');
