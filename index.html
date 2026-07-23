@@ -1415,6 +1415,10 @@ function termTestBanner(){
 
 /* ---------------- shared bits ---------------- */
 function statusPill(course){ return `<span class="status-pill ${STATUS_CLASS[course.status]}">${STATUS_LABEL[course.status]}</span>`; }
+function etPill(course){
+  if(!course || !course.evalType) return `<span class="status-pill status-draft">ET: Not fixed yet</span>`;
+  return `<span class="status-pill" style="background:var(--brass);color:#FBF7EC;border-color:var(--brass);">ET: ${escapeHtml(evalTypeLabel(course.evalType))}</span>`;
+}
 function courseMeta(course){ return `${course.code} · Section ${course.section} · ${branchLabel(course.branch)}`; }
 function assignmentSummary(courseId){
   const course = App.getCourse(courseId);
@@ -1648,6 +1652,7 @@ function renderHODList(){
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
             ${statusPill(c)}
+            ${etPill(c)}
             <button class="btn ${c.status==='verified'?'':'btn-outline'} btn-sm" onclick="App.navigate('hod-review',{courseId:'${c.id}'})">
               ${c.status==='verified' ? 'Review' : 'View'}
             </button>
@@ -1666,7 +1671,7 @@ function renderHODReview(params){
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('hod-list')">← Back to pending approval</button>
       <div class="page-eyebrow">Stage 3 · Approval</div>
       <h2>${course.name}</h2>
-      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
     ${course.eaRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">EA verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : ''}
@@ -1823,6 +1828,7 @@ function renderEAList(){
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
             ${statusPill(c)}
+            ${etPill(c)}
             <button class="btn ${c.status==='submitted'?'':'btn-outline'} btn-sm" onclick="App.navigate('ea-review',{courseId:'${c.id}'})">
               ${c.status==='submitted' ? 'Verify' : 'View'}
             </button>
@@ -1841,7 +1847,7 @@ function renderEAReview(params){
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ea-list')">← Back to queue</button>
       <div class="page-eyebrow">Stage 2 · Verification</div>
       <h2>${course.name}</h2>
-      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
     <div class="card">
@@ -1877,6 +1883,7 @@ function renderExamList(){
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
             ${statusPill(c)}
+            ${etPill(c)}
             <button class="btn btn-outline btn-sm" onclick="exportCSV('${c.id}')">Export CSV</button>
             <button class="btn btn-sm" onclick="exportPrint('${c.id}')">Export / Print PDF</button>
           </div>
@@ -2043,6 +2050,7 @@ function renderCISections(){
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
             ${statusPill(c)}
+            ${etPill(c)}
             <button class="btn ${c.status==='draft'?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
               ${c.status==='draft' ? 'Enter Marks' : 'View Record'}
             </button>
@@ -2062,7 +2070,7 @@ function renderCIEntry(params){
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my sections</button>
       <div class="page-eyebrow">Stage 1 · Submission</div>
       <h2>${course.name}</h2>
-      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     ${sentBackBanner(course)}
     <div class="card">
@@ -2161,6 +2169,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
             </div>
             <div style="display:flex;align-items:center;gap:14px;">
               ${statusPill(c)}
+              ${etPill(c)}
               <button class="btn btn-outline btn-sm" onclick="App.navigate('cc-review',{courseId:'${c.id}'})">View</button>
             </div>
           </div>
@@ -2191,7 +2200,7 @@ function renderCCReview(params){
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>
       <div class="page-eyebrow">Coordinator oversight</div>
       <h2>${course.name}</h2>
-      <p>${courseMeta(course)} ${statusPill(course)}</p>
+      <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
     <div class="card">
