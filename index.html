@@ -488,80 +488,260 @@ const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', EA:'Execu
 const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.' };
 function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
 
-// Evaluation Type (ET) scheme — the Course Coordinator fixes ONE of these 7 types
-// per course-section (every non-empty combination of the 3 base modules: Theory,
-// Lab, Practical — 2^3 - 1 = 7 types) at the moment a Course Instructor is assigned.
-// Whichever ET is fixed determines exactly which CIE components the Course
-// Instructor sees and enters marks against. SIA + Assignments (10 marks) are
-// common to every type; the remaining 40 marks are split across the selected
-// module(s) so every type's CIE always totals 50.
-// SEE (50% weightage): raw /100, scaled to /50. Grand total = CIE (50) + SEE scaled (50) = 100.
-const SIA_ASSIGN_COMPONENTS = [
-  { key:'sia',         label:'SIA',          group:'Other', rawMax:5, scaledMax:5 },
-  { key:'assignments', label:'Assignments',  group:'Other', rawMax:5, scaledMax:5 },
+// ============================================================================
+// EVALUATION TYPE (ET) TEMPLATES — sourced directly from the institution's
+// official Evaluation Scheme sheet. Each template is identified by its
+// Abbreviation (ET1, ET2, ET3, ETP1, ETP2, ETS, EPP, EP, EPS, ES, ESS1, ESS2,
+// EAC) and defines the exact CIE + SEE components, their raw exam marks, and
+// their scaled weight. The Course Coordinator fixes one template per course
+// section (the app auto-detects it from the Subject Lookup Table by course
+// code where possible, with manual override always available). Whichever
+// template is fixed determines exactly which components the Course
+// Instructor's marks-entry form renders — the form is generated automatically:
+//   Select Subject → Lookup Subject Table → Get Abbreviation → Fetch
+//   Evaluation Template → Generate Form Automatically
+//
+// Component shape: { key, label, rawMax, scaledMax }
+//   rawMax    = the raw marks the component is scored out of (what the CI enters)
+//   scaledMax = the weighted marks it contributes to CIE/SEE total
+// Where the sheet lists exam marks as "-" (no separate raw scale), rawMax is
+// set equal to scaledMax, i.e. the CI enters the achieved score directly.
+// ============================================================================
+const EVAL_TEMPLATES = [
+  { abbr:'ET1', courseType:'Theory', label:'ET1 — Theory',
+    cie:[
+      { key:'tt1',              label:'Term Test - 1',                          rawMax:50, scaledMax:15 },
+      { key:'tt2',              label:'Term Test - 2',                          rawMax:50, scaledMax:15 },
+      { key:'moocsAssignments', label:'MOOCS (Self Learning Module)/Assignments', rawMax:10, scaledMax:10 },
+      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:10 },
+    ],
+    see:[
+      { key:'seeTheory', label:'Sem-End Theory', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'25CSE2601', name:'Computer Networks'},
+      {code:'25CSE1203', name:'Computer Organization and Architecture'},
+    ],
+  },
+  { abbr:'ET2', courseType:'Theory', label:'ET2 — Theory',
+    cie:[
+      { key:'termTest',         label:'Term Test',                              rawMax:50, scaledMax:20 },
+      { key:'tutorials',        label:'Tutorials',                              rawMax:10, scaledMax:10 },
+      { key:'moocsAssignments', label:'MOOCS (Self Learning Module)/Assignments', rawMax:10, scaledMax:10 },
+      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:10 },
+    ],
+    see:[
+      { key:'seeTheory', label:'Sem-End Theory', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'25MAT1003', name:'Probability and Statistics'},
+      {code:'26MAT1001', name:'Linear Algebra and Calculus'},
+    ],
+  },
+  { abbr:'ET3', courseType:'Theory', label:'ET3 — Theory',
+    cie:[
+      { key:'termTest',         label:'Term Test',                              rawMax:50, scaledMax:20 },
+      { key:'moocsAssignments', label:'MOOCS (Self Learning Module)/Assignments', rawMax:20, scaledMax:20 },
+      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:10 },
+    ],
+    see:[
+      { key:'seeTheory', label:'Sem-End Theory', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'26PHY1001', name:'Quantum Materials & Semiconductor Physics'},
+      {code:'26PHY1002', name:'Physics of Photonic and Quantum Materials'},
+      {code:'26CHE1001', name:'Computational Chemistry and Biology'},
+    ],
+  },
+  { abbr:'ETP1', courseType:'Theory with Practical-I', label:'ETP1 — Theory with Practical-I',
+    cie:[
+      { key:'tt1',            label:'Term Test - 1',                     rawMax:50, scaledMax:12.5 },
+      { key:'tt2',            label:'Term Test - 2',                     rawMax:50, scaledMax:12.5 },
+      { key:'pracInternal',   label:'Practical Internal Test',           rawMax:50, scaledMax:10 },
+      { key:'sia',            label:'SIA Tests - 5 Objective',           rawMax:10, scaledMax:5 },
+      { key:'regularLabPerf', label:'Regular Lab Performance Assessment*', rawMax:10, scaledMax:10 },
+    ],
+    see:[
+      { key:'seeTheory',    label:'SEE Theory',    rawMax:50, scaledMax:50 },
+      { key:'seePractical', label:'SEE Practical ^', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'24CSEJ601', name:'Software Engineering'},
+      {code:'24CSEJ602', name:'Cloud Computing'},
+      {code:'24CSEJ612', name:'Web Application Frameworks'},
+      {code:'25CSE2201', name:'Operating Systems'},
+      {code:'25CSE2102', name:'Design and Analysis of Algorithms'},
+      {code:'25CSE2A01', name:'ABAP Programming: Fundamentals and Intermediate'},
+      {code:'26ENG1001', name:'English for Digital Era'},
+      {code:'25CSE1A01', name:'Introduction to SAP S/4 HANA'},
+    ],
+  },
+  { abbr:'ETP2', courseType:'Theory with Practical-II', label:'ETP2 — Theory with Practical-II',
+    cie:[
+      { key:'tt1',                 label:'Term Test - 1',                       rawMax:50, scaledMax:10 },
+      { key:'tt2',                 label:'Term Test - 2',                       rawMax:50, scaledMax:10 },
+      { key:'pracInternal',        label:'Practical Internal Test',             rawMax:50, scaledMax:10 },
+      { key:'sia',                 label:'SIA Tests - 5 Objective',             rawMax:10, scaledMax:5 },
+      { key:'regularLabPerf',      label:'Regular Lab Performance Assessment*', rawMax:10, scaledMax:10 },
+      { key:'projectPerfAssess',   label:'Project Performance Assessment',      rawMax:5,  scaledMax:5 },
+    ],
+    see:[
+      { key:'seeTheory',            label:'SEE Theory',                                  rawMax:50, scaledMax:30 },
+      { key:'seePracticalProject',  label:'SEE Practical ^ and Project Presentation @',   rawMax:50, scaledMax:20 },
+    ],
+    courses:[
+      {code:'24AMLJ502', name:'Computer Vision through Open CV'},
+      {code:'24AMLJ602', name:'Deep Learning'},
+      {code:'25CSE2404', name:'Artificial Intelligence'},
+      {code:'25CSE2302', name:'Full Stack Development - Front End'},
+      {code:'25CSE2305', name:'Full Stack Application Development'},
+    ],
+  },
+  { abbr:'ETS', courseType:'Theory with Skill', label:'ETS — Theory with Skill',
+    cie:[
+      { key:'tt1',               label:'Term Test - 1',                          rawMax:50, scaledMax:12.5 },
+      { key:'tt2',               label:'Term Test - 2',                          rawMax:50, scaledMax:12.5 },
+      { key:'sia',               label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:5 },
+      { key:'regularSkillPerf',  label:'Regular Skill Performance Assessment#',  rawMax:10, scaledMax:10 },
+      { key:'skillCert',         label:'Skill Certification',                    rawMax:10, scaledMax:10 },
+    ],
+    see:[
+      { key:'seeTheory', label:'SEE Theory',   rawMax:50, scaledMax:35 },
+      { key:'seeSkill',  label:'SEE Skill **', rawMax:50, scaledMax:15 },
+    ],
+    courses:[
+      {code:'24DSCJ504', name:'Data Visualization with R'},
+      {code:'24CYSJ504', name:'Cryptography and Network Security'},
+    ],
+  },
+  { abbr:'EPP', courseType:'Practical with Project', label:'EPP — Practical with Project',
+    cie:[
+      { key:'pracInternal',       label:'Practical Internal Test',             rawMax:50, scaledMax:15 },
+      { key:'regularLabPerf',     label:'Regular Lab Performance Assessment*', rawMax:10, scaledMax:10 },
+      { key:'projectWorkAssess',  label:'Project Work Assessment $',           rawMax:25, scaledMax:25 },
+    ],
+    see:[
+      { key:'seePractical',           label:'SEE Practical ^',            rawMax:50, scaledMax:25 },
+      { key:'seeProjectPresentation', label:'SEE Project Presentation @', rawMax:50, scaledMax:25 },
+    ],
+    courses:[
+      {code:'26EEC1001', name:'Engineering Visualization & Product Design'},
+    ],
+  },
+  { abbr:'EP', courseType:'Practical', label:'EP — Practical',
+    cie:[
+      { key:'pracInternal',   label:'Practical Internal Test/Assessments', rawMax:50, scaledMax:30 },
+      { key:'regularLabPerf', label:'Regular Lab Performance Assessment *', rawMax:20, scaledMax:20 },
+    ],
+    see:[
+      { key:'seePractical', label:'SEE Practical ^', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'26CSE1101', name:'Computational Problem Solving through C'},
+      {code:'25CSE1001', name:'IT Workshop'},
+    ],
+  },
+  { abbr:'EPS', courseType:'Practical with Skill', label:'EPS — Practical with Skill',
+    cie:[
+      { key:'pracInternal',      label:'Practical Internal Test',              rawMax:50, scaledMax:15 },
+      { key:'regularLabPerf',    label:'Regular Lab Performance Assessment*',  rawMax:10, scaledMax:10 },
+      { key:'regularSkillPerf',  label:'Regular Skill Performance Assessment#', rawMax:10, scaledMax:10 },
+      { key:'skillCert',         label:'Skill Certification',                  rawMax:15, scaledMax:15 },
+    ],
+    see:[
+      { key:'seePractical', label:'SEE Practical ^', rawMax:50, scaledMax:30 },
+      { key:'seeSkill',     label:'SEE Skill **',    rawMax:50, scaledMax:20 },
+    ],
+    courses:[
+      {code:'24CSES507', name:'Coding Excellence Program I'},
+      {code:'25CSE1103', name:'Programming through Python'},
+    ],
+  },
+  { abbr:'ES', courseType:'Skill Oriented', label:'ES — Skill Oriented',
+    cie:[
+      { key:'sia',             label:'SIA Tests - 5 Objective',      rawMax:50, scaledMax:30 },
+      { key:'regularActivity', label:'Regular Activity Assessment',  rawMax:10, scaledMax:20 },
+    ],
+    see:[
+      { key:'seeObjective',    label:'SEE Objective Assessment',                      rawMax:50, scaledMax:30 },
+      { key:'seeFinalActivity',label:'SEE Final Activity/Case Study Presentation',    rawMax:50, scaledMax:20 },
+    ],
+    courses:[
+      {code:'24SEC506', name:'Soft Skills 3'},
+      {code:'25SDC1103', name:'Foundations for Personal Effectiveness'},
+      {code:'26CSE1002', name:'Thinking, Reasoning, and Decision-Making'},
+    ],
+  },
+  { abbr:'ESS1', courseType:'I&E/SDG Impact', label:'ESS1 — I&E/SDG Impact',
+    cie:[
+      { key:'sia',                  label:'SIA Tests - 5 Objective',        rawMax:50, scaledMax:25 },
+      { key:'individualSeminar',    label:'Individual Seminar Presentation $', rawMax:25, scaledMax:25 },
+    ],
+    see:[
+      { key:'seeProjectPresentation', label:'SEE Project Presentation @', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'25HAS1202', name:'Marketing for Sustainability'},
+    ],
+  },
+  { abbr:'ESS2', courseType:'I&E/SDG Impact', label:'ESS2 — I&E/SDG Impact',
+    cie:[
+      { key:'siaProjects', label:'SIA Tests / Projects', rawMax:50, scaledMax:50 },
+    ],
+    see:[
+      { key:'seeProjectPresentation', label:'SEE Project Presentation @', rawMax:50, scaledMax:50 },
+    ],
+    courses:[
+      {code:'24HASL508', name:'Innovation and Entrepreneurship - II'},
+    ],
+  },
+  { abbr:'EAC', courseType:'Audit Courses', label:'EAC — Audit Courses',
+    cie:[
+      { key:'sia',               label:'SIA Tests - 5 Objective',    rawMax:100, scaledMax:25 },
+      { key:'projectWorkAssess', label:'Project Work Assessment $',  rawMax:25,  scaledMax:25 },
+    ],
+    see:[
+      { key:'seeProjectPresentation', label:'SEE Project Presentation @', rawMax:100, scaledMax:50 },
+    ],
+    courses:[],
+  },
 ];
-const EVAL_TYPES = [
-  { key:'THEORY', label:'Theory', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:20 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:20 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'LAB', label:'Lab', components:[
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:20 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:20 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'PRACTICAL', label:'Practical', components:[
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:20 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:20 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'THEORY_LAB', label:'Theory + Lab', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:10 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:10 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'THEORY_PRACTICAL', label:'Theory + Practical', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:10 },
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:10 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:10 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'LAB_PRACTICAL', label:'Lab + Practical', components:[
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:10 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:10 },
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:10 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:10 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-  { key:'THEORY_LAB_PRACTICAL', label:'Theory + Lab + Practical', components:[
-    { key:'tt1', label:'Theory TT1', group:'Theory', rawMax:50, scaledMax:7 },
-    { key:'tt2', label:'Theory TT2', group:'Theory', rawMax:50, scaledMax:7 },
-    { key:'labInternal', label:'Lab Internal', group:'Lab', rawMax:50, scaledMax:7 },
-    { key:'labExternal', label:'Lab External', group:'Lab', rawMax:50, scaledMax:7 },
-    { key:'pracInternal', label:'Practical Internal', group:'Practical', rawMax:50, scaledMax:6 },
-    { key:'pracExternal', label:'Practical External', group:'Practical', rawMax:50, scaledMax:6 },
-    ...SIA_ASSIGN_COMPONENTS,
-  ]},
-];
-const DEFAULT_EVAL_TYPE = 'THEORY_LAB'; // legacy fallback for records created before ET existed
-function evalTypeLabel(key){ const et = EVAL_TYPES.find(e=>e.key===key); return et ? et.label : '— Not yet fixed by Coordinator —'; }
-function getCourseComponents(course){
-  const et = EVAL_TYPES.find(e=>e.key===(course && course.evalType));
-  return (et || EVAL_TYPES.find(e=>e.key===DEFAULT_EVAL_TYPE)).components;
+// NOTE: every template's CIE totals 50 and SEE totals 50 (Grand Total 100),
+// EXCEPT ETP1, whose sheet lists SEE Theory (50) + SEE Practical (50) = 100,
+// making CIE(50)+SEE(100)=150 even though the sheet's own "Total Marks" footer
+// still reads 100. That mismatch is in the source sheet itself; this app sums
+// the actual components (so ETP1 shows a Grand Total out of 150) rather than
+// silently forcing it to 100 — flag this to your exam cell if 100 was intended.
+
+// Subject Lookup Table: course code -> ET abbreviation, built from the
+// "Courses Applicable" column of the sheet. Powers the auto-detect flow:
+// Select Subject -> Lookup Subject Table -> Get Abbreviation -> Fetch Template.
+const SUBJECT_LOOKUP = {};
+EVAL_TEMPLATES.forEach(t=>{
+  (t.courses||[]).forEach(c=>{ SUBJECT_LOOKUP[normalizeCode(c.code)] = t.abbr; });
+});
+function normalizeCode(code){ return (code||'').toString().trim().toUpperCase().replace(/\s+/g,''); }
+function lookupAbbrForCode(code){ return SUBJECT_LOOKUP[normalizeCode(code)] || null; }
+function subjectNameForCode(code){
+  const norm = normalizeCode(code);
+  for(const t of EVAL_TEMPLATES){ const hit = (t.courses||[]).find(c=>normalizeCode(c.code)===norm); if(hit) return hit.name; }
+  return null;
 }
+const DEFAULT_EVAL_TYPE = 'ET1'; // legacy fallback for records created before ET existed
+function getTemplate(abbr){ return EVAL_TEMPLATES.find(e=>e.abbr===abbr) || null; }
+function evalTypeLabel(abbr){ const t = getTemplate(abbr); return t ? t.label : '— Not yet fixed by Coordinator —'; }
+function getCourseTemplate(course){ return getTemplate(course && course.evalType) || getTemplate(DEFAULT_EVAL_TYPE); }
+function getCourseComponents(course){ return getCourseTemplate(course).cie; }
+function getCourseSeeComponents(course){ return getCourseTemplate(course).see; }
 function evalTypeOptionsHtml(selected){
-  return EVAL_TYPES.map((et,i)=>`<option value="${et.key}" ${(selected===et.key || (!selected && i===0))?'selected':''}>${i+1}. ${et.label}</option>`).join('');
+  return `<option value="">— Select Evaluation Type —</option>` +
+    EVAL_TEMPLATES.map(t=>`<option value="${t.abbr}" ${selected===t.abbr?'selected':''}>${t.label}</option>`).join('');
 }
 const CIE_MAX = 50;
-const SEE_RAW_MAX = 100;
-const SEE_SCALED_MAX = 50;
 
 const STATUS_LABEL = { draft:'Draft', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
 const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coordinated:'status-coordinated', verified:'status-verified', approved:'status-approved' };
+
 
 const STUDENT_POOL = ['Aarav Sharma','Diya Kulkarni','Rohan Gupta','Sneha Reddy','Kabir Malhotra','Isha Bansal','Arjun Nair','Meera Pillai','Karthik Iyer','Ananya Joshi'];
 
@@ -571,12 +751,11 @@ function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.rando
 
 /* fills every student's marks with plausible, complete values — used to seed a fully-approved demo record for the Examination Branch */
 function fillFullMarks(course){
-  const components = getCourseComponents(course);
+  const template = getCourseTemplate(course);
   course.students.forEach(s=>{
-    components.forEach(comp=>{
+    [...template.cie, ...template.see].forEach(comp=>{
       s.marks[comp.key] = Math.round((comp.rawMax*0.78 + Math.random()*comp.rawMax*0.15)*2)/2;
     });
-    s.marks.see = Math.round((70 + Math.random()*22)*2)/2;
   });
 }
 
@@ -613,8 +792,8 @@ function seedState(){
   ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, students: makeStudents(), history: [] }));
   // c1 and c7 already have a Course Instructor assigned in the seed data below,
   // so their Coordinator has already fixed an Evaluation Type for them.
-  courses.find(c=>c.id==='c1').evalType = 'THEORY_LAB';
-  courses.find(c=>c.id==='c7').evalType = 'THEORY_LAB';
+  courses.find(c=>c.id==='c1').evalType = 'ET1';
+  courses.find(c=>c.id==='c7').evalType = 'ET1';
 
   const assignments = [
     { id:'a1', type:'CC', courseId:'c1', userId:'cc1', assignedBy:'hod1', assignedAt:t0, status:'active' },
@@ -753,17 +932,23 @@ const rowOf = {
   termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }),
 };
 
-async function warnOnError(promise, label){
+async function warnOnError(promise, label, opts={}){
   const { error } = await promise;
-  if(error) console.warn(`Supabase sync failed (${label}):`, error.message || error);
+  if(error){
+    console.warn(`Supabase sync failed (${label}):`, error.message || error);
+    if(opts.toastOnFail){
+      toast(`Save failed (${label}): ${error.message || error}. Other users won't see this change until it's fixed — check your Supabase RLS policies / grants.`, 'err');
+    }
+  }
+  return { error };
 }
 
-function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.profile(u)), 'profile:'+u.id); }
-function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk') : Promise.resolve(); }
-function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id); }
-function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id); }
-function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId) : Promise.resolve(); }
-function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id); }
+function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.profile(u)), 'profile:'+u.id, {toastOnFail:true}); }
+function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk', {toastOnFail:true}) : Promise.resolve(); }
+function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id, {toastOnFail:true}); }
+function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id, {toastOnFail:true}); }
+function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId, {toastOnFail:true}) : Promise.resolve(); }
+function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id, {toastOnFail:true}); }
 function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
 function syncNotificationRead(n){ return warnOnError(sb.from('notifications').update({ read:true }).eq('id', n.id), 'notification-read:'+n.id); }
 function syncHistory(courseId, h){ return warnOnError(sb.from('course_history').insert(rowOf.history(courseId,h)), 'history:'+h.id); }
@@ -1009,7 +1194,7 @@ const App = {
       const ccA = getActiveAssignment(courseId,'CC');
       const isCoordinator = ccA && ccA.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
-      if(!EVAL_TYPES.find(e=>e.key===evalType)){ toast('Choose an Evaluation Type for this course before assigning the Course Instructor.', 'err'); return; }
+      if(!getTemplate(evalType)){ toast('Choose an Evaluation Type for this course before assigning the Course Instructor.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
     if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; syncAssignment(existing); }
@@ -1083,15 +1268,22 @@ const App = {
     }
     return { ok:true };
   },
-  validateComplete(course){
-    const cieCheck = this.validateCIEComplete(course);
-    if(!cieCheck.ok) return cieCheck;
+  validateSEEComplete(course){
+    const components = getCourseSeeComponents(course);
     for(const s of course.students){
-      const v = s.marks.see;
-      if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing Semester End Examination score for ${s.name}.` };
-      if(v < 0 || v > SEE_RAW_MAX) return { ok:false, msg:`Semester End Examination score for ${s.name} exceeds the maximum of ${SEE_RAW_MAX}.` };
+      for(const comp of components){
+        const v = s.marks[comp.key];
+        if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
+        if(v < 0 || v > comp.rawMax) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${comp.rawMax}.` };
+      }
     }
     return { ok:true };
+  },
+  validateComplete(course){
+    if(!course.evalType) return { ok:false, msg:'The Course Coordinator has not yet fixed an Evaluation Type for this section.' };
+    const cieCheck = this.validateCIEComplete(course);
+    if(!cieCheck.ok) return cieCheck;
+    return this.validateSEEComplete(course);
   },
   ciSubmit(courseId){
     this.saveMarks(courseId);
@@ -1246,7 +1438,7 @@ window.App = App;
 
 /* ---------------- small helpers ---------------- */
 function computeCIE(student, components){
-  components = components || getCourseComponents();
+  components = components || [];
   let total = 0, complete = true;
   components.forEach(comp=>{
     const raw = student.marks[comp.key];
@@ -1255,19 +1447,22 @@ function computeCIE(student, components){
   });
   return { total: round1(total), complete };
 }
-function computeSEE(student){
-  const raw = student.marks.see;
-  if(typeof raw !== 'number') return { scaled:null, complete:false };
-  return { scaled: round1((Math.min(raw, SEE_RAW_MAX)/SEE_RAW_MAX) * SEE_SCALED_MAX), complete:true };
+function computeSEE(student, components){
+  return computeCIE(student, components || []);
 }
-function computeGrandTotal(student, components){
-  const cie = computeCIE(student, components);
-  const see = computeSEE(student);
-  return { cieTotal:cie.total, seeScaled:see.scaled, total: round1(cie.total + (see.scaled||0)), complete: cie.complete && see.complete };
+function computeGrandTotal(student, course){
+  const template = getCourseTemplate(course);
+  const cie = computeCIE(student, template.cie);
+  const see = computeSEE(student, template.see);
+  return { cieTotal:cie.total, seeTotal:see.total, total: round1(cie.total + see.total), complete: cie.complete && see.complete };
 }
 function courseCIEComplete(course){
   const components = getCourseComponents(course);
   return course.students.every(s=>computeCIE(s, components).complete);
+}
+function courseSEEComplete(course){
+  const components = getCourseSeeComponents(course);
+  return course.students.every(s=>computeSEE(s, components).complete);
 }
 function round1(n){ return Math.round(n*10)/10; }
 function fmtDate(ts){
@@ -1442,48 +1637,70 @@ let activeMarksTab = 'cie';
 
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
 function marksViewTable(course){
-  const components = getCourseComponents(course);
+  if(!course.evalType){
+    return `<div class="empty-state"><div class="em-title">Evaluation Type not yet fixed</div>The Course Coordinator hasn't fixed an Evaluation Type for this section yet, so no marks components exist to display.</div>`;
+  }
+  const template = getCourseTemplate(course);
+  const cieComponents = template.cie;
+  const seeComponents = template.see;
+  const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
+  const grandMax = round1(CIE_MAX + seeTotalMax);
   const rows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, components);
-    const cieCells = components.map(comp=>{
+    const gt = computeGrandTotal(s, course);
+    const cieCells = cieComponents.map(comp=>{
       const v = s.marks[comp.key];
       return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
     }).join('');
-    const seeVal = s.marks.see;
+    const seeCells = seeComponents.map(comp=>{
+      const v = s.marks[comp.key];
+      return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+    }).join('');
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
       ${cieCells}
       <td class="total-cell">${gt.cieTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
-      <td>${seeVal===undefined||seeVal===null?'—':seeVal} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${SEE_RAW_MAX}</span></td>
-      <td class="total-cell">${gt.seeScaled===null?'—':gt.seeScaled} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${SEE_SCALED_MAX}</span></td>
-      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/100</span></td>
+      ${seeCells}
+      <td class="total-cell">${gt.seeTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${seeTotalMax}</span></td>
+      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>
     </tr>`;
   }).join('');
-  const headCells = components.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const seeHead = seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
   return `
     <div class="weight-inline">
       <div class="weight-track"><div class="weight-cie"></div><div class="weight-see"></div></div>
-      <span>Evaluation Type: <strong>${escapeHtml(evalTypeLabel(course.evalType))}</strong> · CIE 50% (${components.map(c=>c.label).join(', ')}) · SEE 50%</span>
+      <span>Evaluation Type: <strong>${escapeHtml(template.label)}</strong> · CIE (${cieComponents.map(c=>c.label).join(', ')}) · SEE (${seeComponents.map(c=>c.label).join(', ')})</span>
     </div>
     <div class="table-scroll">
       <table class="data-table" style="margin-top:14px;min-width:920px;">
-        <thead><tr><th>Student</th>${headCells}<th>CIE Total</th><th>SEE</th><th>SEE Scaled</th><th>Grand Total</th></tr></thead>
+        <thead><tr><th>Student</th>${cieHead}<th>CIE Total</th>${seeHead}<th>SEE Total</th><th>Grand Total</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
 }
 
 /* Editable, tabbed CIE/SEE entry UI — used only on the Course Instructor's entry page.
-   The SEE tab stays locked until every student's CIE components (TT1, TT2, Lab Internal,
-   Lab External, SIA, Assignments) are fully entered. */
+   The SEE tab stays locked until every student's CIE components for the course's fixed
+   Evaluation Type template are fully entered. */
 function marksEntryTabs(course){
-  const components = getCourseComponents(course);
+  if(!course.evalType){
+    return `
+      <div class="empty-state">
+        <div class="em-title">Evaluation Type not yet fixed</div>
+        Your Course Coordinator hasn't fixed an Evaluation Type for this section yet. Marks entry opens automatically as soon as they do — Select Subject → Lookup Subject Table → Get Abbreviation → Fetch Evaluation Template → Generate Form Automatically.
+      </div>`;
+  }
+  const template = getCourseTemplate(course);
+  const cieComponents = template.cie;
+  const seeComponents = template.see;
+  const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
+  const grandMax = round1(CIE_MAX + seeTotalMax);
   const cieDone = courseCIEComplete(course);
   if(activeMarksTab==='see' && !cieDone) activeMarksTab = 'cie';
 
   const cieRows = course.students.map(s=>{
-    const cie = computeCIE(s, components);
-    const cells = components.map(comp=>{
+    const cie = computeCIE(s, cieComponents);
+    const cells = cieComponents.map(comp=>{
       const val = s.marks[comp.key];
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
@@ -1492,49 +1709,54 @@ function marksEntryTabs(course){
     }).join('');
     return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td></tr>`;
   }).join('');
-  const cieHead = components.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
   const seeRows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, components);
-    const val = s.marks.see;
+    const gt = computeGrandTotal(s, course);
+    const seeCells = seeComponents.map(comp=>{
+      const val = s.marks[comp.key];
+      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
+        onchange="onMarkChange(this)"></td>`;
+    }).join('');
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
-      <td><input type="number" min="0" max="${SEE_RAW_MAX}" step="0.5"
-        data-course="${course.id}" data-student="${s.id}" data-field="see"
-        value="${val===undefined||val===null?'':val}" placeholder="/${SEE_RAW_MAX}"
-        onchange="onMarkChange(this)"></td>
-      <td class="total-cell">${gt.seeScaled===null?'—':gt.seeScaled} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${SEE_SCALED_MAX}</span></td>
-      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/100</span></td>
+      ${seeCells}
+      <td class="total-cell">${gt.seeTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${seeTotalMax}</span></td>
+      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>
     </tr>`;
   }).join('');
+  const seeHead = seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
-  const componentList = components.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
-  const componentNamesOnly = components.map(c=>c.label).join(', ');
+  const cieComponentList = cieComponents.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
+  const cieNamesOnly = cieComponents.map(c=>c.label).join(', ');
+  const seeComponentList = seeComponents.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
 
   return `
     <div class="et-banner" style="margin-bottom:14px;padding:10px 14px;background:var(--parchment-2);border:1px solid var(--rule);border-radius:2px;">
       <span class="section-meta" style="text-transform:uppercase;letter-spacing:0.06em;font-size:10.5px;color:var(--brass);">Evaluation Type fixed by Coordinator</span>
-      <div style="font-family:'Fraunces',serif;font-weight:600;color:var(--ink);font-size:15px;margin-top:2px;">${escapeHtml(evalTypeLabel(course.evalType))}</div>
+      <div style="font-family:'Fraunces',serif;font-weight:600;color:var(--ink);font-size:15px;margin-top:2px;">${escapeHtml(template.label)} <span style="font-family:inherit;font-weight:400;font-size:12px;color:var(--text-soft);">(${escapeHtml(template.courseType)})</span></div>
     </div>
     <div class="tab-bar">
       <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
       <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''} ${cieDone?'':'locked'}" onclick="switchMarksTab('see')">Semester End Exam (SEE) ${cieDone?'':'🔒'}</button>
     </div>
     <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">CIE is 50 marks total: ${componentList}.</p>
+      <p class="section-meta" style="margin-bottom:8px;">CIE is ${CIE_MAX} marks total: ${cieComponentList}.</p>
       <div class="table-scroll">
         <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
       </div>
     </div>
     <div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
       ${cieDone ? `
-        <p class="section-meta" style="margin-bottom:8px;">SEE is out of 100, scaled to 50. Grand total = CIE (50) + SEE scaled (50).</p>
+        <p class="section-meta" style="margin-bottom:8px;">SEE is ${seeTotalMax} marks total: ${seeComponentList}. Grand total = CIE (${CIE_MAX}) + SEE (${seeTotalMax}) = ${grandMax}.</p>
         <div class="table-scroll">
-          <table class="data-table"><thead><tr><th>Student</th><th>SEE <span style="text-transform:none;">max ${SEE_RAW_MAX}</span></th><th>SEE Scaled</th><th>Grand Total</th></tr></thead><tbody>${seeRows}</tbody></table>
+          <table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>SEE Total</th><th>Grand Total</th></tr></thead><tbody>${seeRows}</tbody></table>
         </div>` : `
         <div class="empty-state">
           <div class="em-title">Semester End Examination marks are locked</div>
-          Complete ${componentNamesOnly} for every student on the CIE tab first.
+          Complete ${cieNamesOnly} for every student on the CIE tab first.
         </div>`}
     </div>`;
 }
@@ -1557,10 +1779,15 @@ window.onMarkChange = onMarkChange;
 function openAssignModal(type, courseId){
   const label = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
   const course = App.getCourse(courseId);
+  const detected = course.evalType || lookupAbbrForCode(course.code);
+  const detectedNote = (!course.evalType && detected)
+    ? `<p style="color:var(--brass);font-size:12.5px;margin-top:6px;">Auto-detected from Subject Table: <strong>${escapeHtml(evalTypeLabel(detected))}</strong> for ${escapeHtml(course.code)}. Change below if this isn't correct.</p>`
+    : (!course.evalType ? `<p style="color:var(--text-soft);font-size:12.5px;margin-top:6px;">Course code ${escapeHtml(course.code)} isn't in the Subject Table — select the Evaluation Type manually.</p>` : '');
   const etField = type==='CI' ? `
     <div class="config-field" style="margin-top:12px;">
-      <label>Evaluation Type <span style="text-transform:none;">(1 of 7 — fixes which marks components this instructor enters)</span></label>
-      <select id="assign-evaltype">${evalTypeOptionsHtml(course.evalType)}</select>
+      <label>Evaluation Type <span style="text-transform:none;">(fixes which marks components this instructor enters)</span></label>
+      <select id="assign-evaltype">${evalTypeOptionsHtml(detected)}</select>
+      ${detectedNote}
     </div>` : '';
   openModal(`
     <button class="modal-close" onclick="closeModal()">&times;</button>
@@ -1895,11 +2122,12 @@ function renderExamList(){
 }
 function exportCSV(courseId){
   const course = App.getCourse(courseId);
-  const components = getCourseComponents(course);
-  const header = ['Student', ...components.map(c=>c.label), 'CIE Total', 'SEE', 'SEE Scaled', 'Grand Total'];
+  const template = getCourseTemplate(course);
+  const cieComponents = template.cie, seeComponents = template.see;
+  const header = ['Student', ...cieComponents.map(c=>c.label), 'CIE Total', ...seeComponents.map(c=>c.label), 'SEE Total', 'Grand Total'];
   const rows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, components);
-    return [s.name, ...components.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, s.marks.see ?? '', gt.seeScaled ?? '', gt.total];
+    const gt = computeGrandTotal(s, course);
+    return [s.name, ...cieComponents.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, ...seeComponents.map(c=>s.marks[c.key] ?? ''), gt.seeTotal, gt.total];
   });
   const csv = [header, ...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -2109,8 +2337,9 @@ function renderCCList(){
             </select>
           </div>
           <div class="config-field">
-            <label>Evaluation Type <span style="text-transform:none;">(1 of 7)</span></label>
-            <select id="cc-assign-evaltype">${evalTypeOptionsHtml(ccCourses[0].evalType)}</select>
+            <label>Evaluation Type <span style="text-transform:none;">(auto-detected from Subject Table where possible)</span></label>
+            <select id="cc-assign-evaltype">${evalTypeOptionsHtml(ccCourses[0].evalType || lookupAbbrForCode(ccCourses[0].code))}</select>
+            <div id="cc-assign-evaltype-note">${evalTypeNoteHtml(ccCourses[0])}</div>
           </div>
           <div class="config-field">
             <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
@@ -2135,12 +2364,20 @@ function buildInstructorOptionsHtml(branch){
   if(directoryFaculty.length===0) return `<option value="">— No faculty uploaded for ${escapeHtml(branchLabel(branch))} yet —</option>`;
   return directoryFaculty.map(f=>`<option value="${escapeHtml(f.email)}">${escapeHtml(f.name)} (${escapeHtml(f.email)})</option>`).join('');
 }
+function evalTypeNoteHtml(course){
+  if(course.evalType) return '';
+  const detected = lookupAbbrForCode(course.code);
+  if(detected) return `<p style="color:var(--brass);font-size:12.5px;margin-top:6px;">Auto-detected from Subject Table: <strong>${escapeHtml(evalTypeLabel(detected))}</strong>. Change below if this isn't correct.</p>`;
+  return `<p style="color:var(--text-soft);font-size:12.5px;margin-top:6px;">Course code ${escapeHtml(course.code)} isn't in the Subject Table — select the Evaluation Type manually.</p>`;
+}
 function updateCCInstructorOptions(courseId){
   const course = App.getCourse(courseId);
   const sel = document.getElementById('cc-assign-instructor');
   if(sel && course) sel.innerHTML = buildInstructorOptionsHtml(course.branch);
   const etSel = document.getElementById('cc-assign-evaltype');
-  if(etSel && course) etSel.innerHTML = evalTypeOptionsHtml(course.evalType);
+  if(etSel && course) etSel.innerHTML = evalTypeOptionsHtml(course.evalType || lookupAbbrForCode(course.code));
+  const noteEl = document.getElementById('cc-assign-evaltype-note');
+  if(noteEl && course) noteEl.innerHTML = evalTypeNoteHtml(course);
 }
 window.updateCCInstructorOptions = updateCCInstructorOptions;
 function renderCCBranchGroupsHtml(ccCourses, term){
