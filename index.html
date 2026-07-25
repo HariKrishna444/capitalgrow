@@ -1253,7 +1253,7 @@ const App = {
      If rawEmail is provided, the Course Coordinator is assigned in the same
      step (single "Subject + Section + Branch + Faculty email/name" form in
      Manage Coordinators) — no separate "Assign Coordinator" click needed. */
-  createCourseSection(subjectCode, section, branch, rawEmail, rawName){
+  async createCourseSection(subjectCode, section, branch, rawEmail, rawName){
     const actor = this.currentUser();
     if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can create a course section.', 'err'); return; }
     const subj = masterSubject(subjectCode);
@@ -1273,7 +1273,11 @@ const App = {
       students: [], history: []
     };
     this.state.courses.push(course);
-    syncCourse(course);
+    // Awaited: the CC assignment inserted just below references this course's
+    // id via a foreign key, so the course row must exist on the server first —
+    // otherwise the assignment insert can race ahead of it and fail with
+    // "violates foreign key constraint assignments_course_id_fkey".
+    await syncCourse(course);
     (course.students||[]).forEach(s=>syncNewStudent(course.id, s));
     this.logHistory(course, `Course section created: ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
     if(email){
@@ -1283,7 +1287,7 @@ const App = {
       // CC/CI are never written to profiles.system_role — that column only
       // ever holds ADMIN/HOD/EA/EXAM/FACULTY; the role is derived from the
       // `assignments` table at render time.
-      this.assignRole('CC', course.id, email, rawName, undefined);
+      await this.assignRole('CC', course.id, email, rawName, undefined);
     } else {
       toast(`Created ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)}.`, 'ok');
     }
@@ -1403,7 +1407,7 @@ const App = {
     this.navigate('cc-roster', { courseId });
   },
 
-  assignRole(type, courseId, rawEmail, rawName, subjectCode){
+  async assignRole(type, courseId, rawEmail, rawName, subjectCode){
     const course = this.getCourse(courseId);
     if(!course){ toast('Choose a course first.', 'err'); return; }
     const actor = this.currentUser();
@@ -1421,9 +1425,13 @@ const App = {
       if(!subj){ toast('Choose a Subject from Courses Applicable before assigning the Course Instructor.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
-    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; syncAssignment(existing); }
+    if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; await syncAssignment(existing); }
     const { user, isNew } = createFacultyIfNeeded(email, rawName);
-    if(isNew) syncProfile(user);
+    // Awaited: the assignment inserted just below references this profile's
+    // id via a foreign key, so a brand-new profile must exist on the server
+    // first — otherwise the assignment insert can race ahead of it and fail
+    // with "violates foreign key constraint assignments_user_id_fkey".
+    if(isNew) await syncProfile(user);
     const rec = { id:uid('asg'), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
     this.state.assignments.push(rec);
     syncAssignment(rec);
