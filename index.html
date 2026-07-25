@@ -724,16 +724,57 @@ function subjectNameForCode(code){
   for(const t of EVAL_TEMPLATES){ const hit = (t.courses||[]).find(c=>normalizeCode(c.code)===norm); if(hit) return hit.name; }
   return null;
 }
+
+// ============================================================================
+// MASTER_SUBJECTS — the flattened "Courses Applicable" master list: every
+// real subject on the official Evaluation Scheme sheet, each tagged with the
+// Abbr + Course Type it maps to. This is the single source of truth for any
+// subject-picker in the app — no hand-typed or invented course codes. Any
+// dropdown built from this list is automatically, correctly mapped to its
+// Evaluation Type, so a Coordinator can never fix a subject to the wrong ET.
+// ============================================================================
+const MASTER_SUBJECTS = [];
+EVAL_TEMPLATES.forEach(t=>{
+  (t.courses||[]).forEach(c=>{
+    MASTER_SUBJECTS.push({ code:c.code, name:c.name, abbr:t.abbr, courseType:t.courseType });
+  });
+});
+function masterSubject(code){ return MASTER_SUBJECTS.find(s=>normalizeCode(s.code)===normalizeCode(code)) || null; }
+
+/* Grouped <select> of every real subject (Courses Applicable), grouped by
+   "Abbr — Course Type" so whoever is picking a subject can see exactly which
+   Evaluation Type it fixes. Used by the CC's Course Instructor assignment flow. */
+function subjectDropdownOptionsHtml(selectedCode){
+  const groups = {};
+  const order = [];
+  MASTER_SUBJECTS.forEach(s=>{
+    const key = `${s.abbr} — ${s.courseType}`;
+    if(!groups[key]){ groups[key] = []; order.push(key); }
+    groups[key].push(s);
+  });
+  let html = `<option value="">— Select Subject (Courses Applicable) —</option>`;
+  order.forEach(key=>{
+    html += `<optgroup label="${escapeHtml(key)}">`;
+    groups[key].forEach(s=>{
+      html += `<option value="${escapeHtml(s.code)}" ${normalizeCode(selectedCode)===normalizeCode(s.code)?'selected':''}>${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`;
+    });
+    html += `</optgroup>`;
+  });
+  return html;
+}
+/* Live note shown under the subject dropdown, confirming the Abbr / Course
+   Type / Evaluation Type that picking this subject will fix for the section. */
+function subjectNoteHtml(code){
+  const subj = masterSubject(code);
+  if(!subj) return `<p style="color:var(--text-soft);font-size:12.5px;margin-top:6px;">Select a subject from Courses Applicable to fix the Abbr, Course Type &amp; Evaluation Type for this section.</p>`;
+  return `<p style="color:var(--brass);font-size:12.5px;margin-top:6px;">Abbr: <strong>${escapeHtml(subj.abbr)}</strong> · Course Type: <strong>${escapeHtml(subj.courseType)}</strong> · Evaluation Type fixed as <strong>${escapeHtml(evalTypeLabel(subj.abbr))}</strong>.</p>`;
+}
 const DEFAULT_EVAL_TYPE = 'ET1'; // legacy fallback for records created before ET existed
 function getTemplate(abbr){ return EVAL_TEMPLATES.find(e=>e.abbr===abbr) || null; }
 function evalTypeLabel(abbr){ const t = getTemplate(abbr); return t ? t.label : '— Not yet fixed by Coordinator —'; }
 function getCourseTemplate(course){ return getTemplate(course && course.evalType) || getTemplate(DEFAULT_EVAL_TYPE); }
 function getCourseComponents(course){ return getCourseTemplate(course).cie; }
 function getCourseSeeComponents(course){ return getCourseTemplate(course).see; }
-function evalTypeOptionsHtml(selected){
-  return `<option value="">— Select Evaluation Type —</option>` +
-    EVAL_TEMPLATES.map(t=>`<option value="${t.abbr}" ${selected===t.abbr?'selected':''}>${t.label}</option>`).join('');
-}
 const CIE_MAX = 50;
 
 const STATUS_LABEL = { draft:'Draft', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
@@ -1193,8 +1234,13 @@ const App = {
     }
   },
 
-  /* ---------- HOD → CC, CC → CI: assign / revoke ---------- */
-  assignRole(type, courseId, rawEmail, rawName, evalType){
+  /* ---------- HOD → CC, CC → CI: assign / revoke ----------
+     For CI assignment, `subjectCode` is a real code from the "Courses
+     Applicable" master list (MASTER_SUBJECTS) — not a hand-picked ET abbr.
+     Picking the subject is what fixes the Abbr / Course Type / Evaluation
+     Type for the section, and locks the section's code+name to that real
+     subject, so a course can never end up mismatched against the sheet. */
+  assignRole(type, courseId, rawEmail, rawName, subjectCode){
     const course = this.getCourse(courseId);
     if(!course){ toast('Choose a course first.', 'err'); return; }
     const actor = this.currentUser();
@@ -1202,11 +1248,13 @@ const App = {
     if(!email){ toast('A faculty email is required.', 'err'); return; }
     if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
     if(type==='CC' && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD can assign a Course Coordinator.', 'err'); return; }
+    let subj = null;
     if(type==='CI'){
       const ccA = getActiveAssignment(courseId,'CC');
       const isCoordinator = ccA && ccA.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
-      if(!getTemplate(evalType)){ toast('Choose an Evaluation Type for this course before assigning the Course Instructor.', 'err'); return; }
+      subj = masterSubject(subjectCode);
+      if(!subj){ toast('Choose a Subject from Courses Applicable before assigning the Course Instructor.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
     if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; syncAssignment(existing); }
@@ -1218,12 +1266,14 @@ const App = {
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
     let etNote = '';
     if(type==='CI'){
-      course.evalType = evalType;
+      course.evalType = subj.abbr;
+      course.code = subj.code;
+      course.name = subj.name;
       syncCourse(course);
-      etNote = ` · Evaluation Type fixed as: ${evalTypeLabel(evalType)}`;
+      etNote = ` · Subject fixed as: ${subj.code} — ${subj.name} (${evalTypeLabel(subj.abbr)})`;
     }
     this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
-    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`);
     toast(`${user.name} is now ${roleLabel} for ${course.code}.${etNote}`, 'ok');
     closeModal();
     renderSidebar();
@@ -1791,15 +1841,12 @@ window.onMarkChange = onMarkChange;
 function openAssignModal(type, courseId){
   const label = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
   const course = App.getCourse(courseId);
-  const detected = course.evalType || lookupAbbrForCode(course.code);
-  const detectedNote = (!course.evalType && detected)
-    ? `<p style="color:var(--brass);font-size:12.5px;margin-top:6px;">Auto-detected from Subject Table: <strong>${escapeHtml(evalTypeLabel(detected))}</strong> for ${escapeHtml(course.code)}. Change below if this isn't correct.</p>`
-    : (!course.evalType ? `<p style="color:var(--text-soft);font-size:12.5px;margin-top:6px;">Course code ${escapeHtml(course.code)} isn't in the Subject Table — select the Evaluation Type manually.</p>` : '');
+  const detectedCode = masterSubject(course.code) ? course.code : '';
   const etField = type==='CI' ? `
     <div class="config-field" style="margin-top:12px;">
-      <label>Evaluation Type <span style="text-transform:none;">(fixes which marks components this instructor enters)</span></label>
-      <select id="assign-evaltype">${evalTypeOptionsHtml(detected)}</select>
-      ${detectedNote}
+      <label>Subject <span style="text-transform:none;">(Courses Applicable — fixes Abbr, Course Type &amp; Evaluation Type)</span></label>
+      <select id="assign-subject" onchange="document.getElementById('assign-subject-note').innerHTML = subjectNoteHtml(this.value)">${subjectDropdownOptionsHtml(detectedCode)}</select>
+      <div id="assign-subject-note">${subjectNoteHtml(detectedCode)}</div>
     </div>` : '';
   openModal(`
     <button class="modal-close" onclick="closeModal()">&times;</button>
@@ -1817,7 +1864,7 @@ function openAssignModal(type, courseId){
     ${etField}
     <div style="display:flex;gap:10px;margin-top:18px;">
       <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
-      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value, ${type==='CI' ? "document.getElementById('assign-evaltype').value" : 'undefined'})">Assign &amp; Activate</button>
+      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value, ${type==='CI' ? "document.getElementById('assign-subject').value" : 'undefined'})">Assign &amp; Activate</button>
     </div>
   `);
 }
@@ -2321,8 +2368,8 @@ function renderCIEntry(params){
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my sections</button>
       <div class="page-eyebrow">Stage 1 · Submission</div>
-      <h2>${course.name}</h2>
-      <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
+      <h2>Subject: ${course.name}</h2>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     ${sentBackBanner(course)}
     <div class="card">
@@ -2352,25 +2399,25 @@ function renderCCList(){
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a section, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated courses, fix the Evaluation Type for it, then choose an instructor from the faculty directory uploaded for that branch. Whichever Evaluation Type you fix here decides which marks components the instructor will see and enter.</p>
+        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated sections, pick its real Subject from Courses Applicable, then choose an instructor from the faculty directory uploaded for that branch. The Subject you pick is what fixes the Abbr, Course Type &amp; Evaluation Type — and therefore which marks components the instructor will see and enter.</p>
         <div class="config-grid">
           <div class="config-field">
-            <label>Course</label>
+            <label>Course Section</label>
             <select id="cc-assign-course" onchange="updateCCInstructorOptions(this.value)">
               ${ccCourses.map(c=>`<option value="${c.id}">${c.code} — ${c.name} (${branchLabel(c.branch)})</option>`).join('')}
             </select>
           </div>
           <div class="config-field">
-            <label>Evaluation Type <span style="text-transform:none;">(auto-detected from Subject Table where possible)</span></label>
-            <select id="cc-assign-evaltype">${evalTypeOptionsHtml(ccCourses[0].evalType || lookupAbbrForCode(ccCourses[0].code))}</select>
-            <div id="cc-assign-evaltype-note">${evalTypeNoteHtml(ccCourses[0])}</div>
+            <label>Subject <span style="text-transform:none;">(Courses Applicable — fixes Abbr, Course Type &amp; Evaluation Type)</span></label>
+            <select id="cc-assign-subject" onchange="document.getElementById('cc-assign-subject-note').innerHTML = subjectNoteHtml(this.value)">${subjectDropdownOptionsHtml(masterSubject(ccCourses[0].code) ? ccCourses[0].code : '')}</select>
+            <div id="cc-assign-subject-note">${subjectNoteHtml(masterSubject(ccCourses[0].code) ? ccCourses[0].code : '')}</div>
           </div>
           <div class="config-field">
             <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
             <select id="cc-assign-instructor">${buildInstructorOptionsHtml(ccCourses[0].branch)}</select>
           </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '', document.getElementById('cc-assign-evaltype').value)">Assign &amp; Activate</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '', document.getElementById('cc-assign-subject').value)">Assign &amp; Activate</button>
       </div>
 
       <div class="card">
@@ -2388,20 +2435,15 @@ function buildInstructorOptionsHtml(branch){
   if(directoryFaculty.length===0) return `<option value="">— No faculty uploaded for ${escapeHtml(branchLabel(branch))} yet —</option>`;
   return directoryFaculty.map(f=>`<option value="${escapeHtml(f.email)}">${escapeHtml(f.name)} (${escapeHtml(f.email)})</option>`).join('');
 }
-function evalTypeNoteHtml(course){
-  if(course.evalType) return '';
-  const detected = lookupAbbrForCode(course.code);
-  if(detected) return `<p style="color:var(--brass);font-size:12.5px;margin-top:6px;">Auto-detected from Subject Table: <strong>${escapeHtml(evalTypeLabel(detected))}</strong>. Change below if this isn't correct.</p>`;
-  return `<p style="color:var(--text-soft);font-size:12.5px;margin-top:6px;">Course code ${escapeHtml(course.code)} isn't in the Subject Table — select the Evaluation Type manually.</p>`;
-}
 function updateCCInstructorOptions(courseId){
   const course = App.getCourse(courseId);
   const sel = document.getElementById('cc-assign-instructor');
   if(sel && course) sel.innerHTML = buildInstructorOptionsHtml(course.branch);
-  const etSel = document.getElementById('cc-assign-evaltype');
-  if(etSel && course) etSel.innerHTML = evalTypeOptionsHtml(course.evalType || lookupAbbrForCode(course.code));
-  const noteEl = document.getElementById('cc-assign-evaltype-note');
-  if(noteEl && course) noteEl.innerHTML = evalTypeNoteHtml(course);
+  const subjSel = document.getElementById('cc-assign-subject');
+  const preselect = course && masterSubject(course.code) ? course.code : '';
+  if(subjSel && course) subjSel.innerHTML = subjectDropdownOptionsHtml(preselect);
+  const noteEl = document.getElementById('cc-assign-subject-note');
+  if(noteEl) noteEl.innerHTML = subjectNoteHtml(preselect);
 }
 window.updateCCInstructorOptions = updateCCInstructorOptions;
 function renderCCBranchGroupsHtml(ccCourses, term){
