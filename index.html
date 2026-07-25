@@ -985,6 +985,7 @@ function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.pro
 function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk', {toastOnFail:true}) : Promise.resolve(); }
 function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id, {toastOnFail:true}); }
 function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id, {toastOnFail:true}); }
+function syncNewStudent(courseId, s){ return warnOnError(sb.from('students').upsert(rowOf.student(courseId, s)), 'student:'+s.id, {toastOnFail:true}); }
 function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId, {toastOnFail:true}) : Promise.resolve(); }
 function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id, {toastOnFail:true}); }
 function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
@@ -1232,6 +1233,38 @@ const App = {
     }catch(e){
       toast('Could not set password: ' + (e.message || e), 'err');
     }
+  },
+
+  /* ---------- HOD/Admin: create a course-section ----------
+     Section identity (code, name) comes straight from MASTER_SUBJECTS —
+     the real "Courses Applicable" list — so a section can never be created
+     against a subject that isn't on the official Evaluation Scheme sheet.
+     Note this only creates the section shell (draft, unassigned, no fixed
+     Evaluation Type yet) — the Coordinator still separately confirms the
+     Subject when assigning the Course Instructor, which is what actually
+     fixes the Evaluation Type. */
+  createCourseSection(subjectCode, section, branch){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can create a course section.', 'err'); return; }
+    const subj = masterSubject(subjectCode);
+    if(!subj){ toast('Choose a Subject from Courses Applicable.', 'err'); return; }
+    const sec = (section||'').trim().toUpperCase();
+    if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
+    if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
+    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && c.section===sec && c.branch===branch);
+    if(dupe){ toast(`${subj.code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
+    const course = {
+      id: uid('c'), code: subj.code, name: subj.name, section: sec, branch,
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
+      students: makeStudents(), history: []
+    };
+    this.state.courses.push(course);
+    syncCourse(course);
+    (course.students||[]).forEach(s=>syncNewStudent(course.id, s));
+    this.logHistory(course, `Course section created: ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
+    toast(`Created ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)}.`, 'ok');
+    renderSidebar();
+    renderContent();
   },
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ----------
@@ -1960,7 +1993,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
-    ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Once some are created (via the "courses" table), they will appear here for approval.') : list.map(c=>`
+    ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Go to "Manage Coordinators" to create one, then it will appear here once records start flowing through for approval.') : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
@@ -2047,7 +2080,29 @@ function renderHODCoordinators(){
       <h2>Manage Course Coordinators</h2>
       <p>Assign a Course Coordinator to each section using their university email — only the HOD or an Administrator can do this. Once assigned, that Coordinator picks the real Subject and assigns their own Course Instructor; you don't need to touch that layer.</p>
     </div>
-    ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet, so there\'s nothing to assign a Coordinator to. Course-sections need to exist (in the "courses" table) before you can fix a Coordinator for them.') : courses.map(c=>{
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Create Course Section</div>
+      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — then set the Section and Branch to create the section shell. You (or the Coordinator you assign next) can then take it from there.</p>
+      <div class="config-grid">
+        <div class="config-field">
+          <label>Subject <span style="text-transform:none;">(Courses Applicable — code &amp; name)</span></label>
+          <select id="hod-newcourse-subject">${subjectDropdownOptionsHtml('')}</select>
+        </div>
+        <div class="config-field">
+          <label>Section</label>
+          <input id="hod-newcourse-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
+        </div>
+        <div class="config-field">
+          <label>Branch</label>
+          <select id="hod-newcourse-branch">
+            <option value="">— Select Branch —</option>
+            ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-section').value, document.getElementById('hod-newcourse-branch').value)">Create Section</button>
+    </div>
+    ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Course Section" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
       return `
       <div class="card">
