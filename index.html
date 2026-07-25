@@ -1221,8 +1221,8 @@ const App = {
     if(!u) return;
     if(!password || password.length < 8){ toast('Set a password of at least 8 characters.', 'err'); return; }
     try{
-      await callAdminManageUser('set_password', { email: u.email, password });
-      toast(`Password updated for ${u.name}.`, 'ok');
+      const res = await callAdminManageUser('set_password', { email: u.email, password });
+      toast(res && res.created ? `Sign-in activated for ${u.name} — they can log in now.` : `Password updated for ${u.name}.`, 'ok');
       this.navigate('admin-users');
     }catch(e){
       toast('Could not set password: ' + (e.message || e), 'err');
