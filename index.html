@@ -501,6 +501,10 @@ function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
 //   Select Subject → Lookup Subject Table → Get Abbreviation → Fetch
 //   Evaluation Template → Generate Form Automatically
 //
+// NOTE: each template's `courses:[]` array below is legacy seed data and is
+// no longer read anywhere in the app — the live "Courses Applicable" list
+// now comes from the Supabase `subjects` table (see masterSubject() further
+// down). It's left in place only for reference/history.
 // Component shape: { key, label, rawMax, scaledMax }
 //   rawMax    = the raw marks the component is scored out of (what the CI enters)
 //   scaledMax = the weighted marks it contributes to CIE/SEE total
@@ -710,36 +714,22 @@ const EVAL_TEMPLATES = [
 // ETP1's SEE is split as SEE Theory (30) + SEE Practical (20) = 50, per the
 // official Evaluation Scheme sheet, so its Grand Total is 100 like the rest.
 
-// Subject Lookup Table: course code -> ET abbreviation, built from the
-// "Courses Applicable" column of the sheet. Powers the auto-detect flow:
-// Select Subject -> Lookup Subject Table -> Get Abbreviation -> Fetch Template.
-const SUBJECT_LOOKUP = {};
-EVAL_TEMPLATES.forEach(t=>{
-  (t.courses||[]).forEach(c=>{ SUBJECT_LOOKUP[normalizeCode(c.code)] = t.abbr; });
-});
 function normalizeCode(code){ return (code||'').toString().trim().toUpperCase().replace(/\s+/g,''); }
-function lookupAbbrForCode(code){ return SUBJECT_LOOKUP[normalizeCode(code)] || null; }
-function subjectNameForCode(code){
-  const norm = normalizeCode(code);
-  for(const t of EVAL_TEMPLATES){ const hit = (t.courses||[]).find(c=>normalizeCode(c.code)===norm); if(hit) return hit.name; }
-  return null;
-}
 
 // ============================================================================
-// MASTER_SUBJECTS — the flattened "Courses Applicable" master list: every
-// real subject on the official Evaluation Scheme sheet, each tagged with the
-// Abbr + Course Type it maps to. This is the single source of truth for any
+// MASTER SUBJECTS — the "Courses Applicable" master list now lives in the
+// live Supabase `subjects` table (id, code, abbr, course_type, name), not
+// hardcoded in this file. App.state.subjects is populated on login/refresh
+// by fetchStateFromSupabase(). This is the single source of truth for any
 // subject-picker in the app — no hand-typed or invented course codes. Any
 // dropdown built from this list is automatically, correctly mapped to its
 // Evaluation Type, so a Coordinator can never fix a subject to the wrong ET.
 // ============================================================================
-const MASTER_SUBJECTS = [];
-EVAL_TEMPLATES.forEach(t=>{
-  (t.courses||[]).forEach(c=>{
-    MASTER_SUBJECTS.push({ code:c.code, name:c.name, abbr:t.abbr, courseType:t.courseType });
-  });
-});
-function masterSubject(code){ return MASTER_SUBJECTS.find(s=>normalizeCode(s.code)===normalizeCode(code)) || null; }
+function masterSubject(code){ return (App.state.subjects||[]).find(s=>normalizeCode(s.code)===normalizeCode(code)) || null; }
+// Powers the auto-detect flow: Select Subject -> Lookup Subject Table ->
+// Get Abbreviation -> Fetch Template — now backed by App.state.subjects.
+function lookupAbbrForCode(code){ const s = masterSubject(code); return s ? s.abbr : null; }
+function subjectNameForCode(code){ const s = masterSubject(code); return s ? s.name : null; }
 
 /* Grouped <select> of every real subject (Courses Applicable), grouped by
    "Abbr — Course Type" so whoever is picking a subject can see exactly which
@@ -747,7 +737,7 @@ function masterSubject(code){ return MASTER_SUBJECTS.find(s=>normalizeCode(s.cod
 function subjectDropdownOptionsHtml(selectedCode){
   const groups = {};
   const order = [];
-  MASTER_SUBJECTS.forEach(s=>{
+  (App.state.subjects||[]).forEach(s=>{
     const key = `${s.abbr} — ${s.courseType}`;
     if(!groups[key]){ groups[key] = []; order.push(key); }
     groups[key].push(s);
@@ -882,7 +872,7 @@ function seedState(){
    row(s) that actually changed, instead of re-writing everything. */
 
 async function fetchStateFromSupabase(){
-  const [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR] = await Promise.all([
+  const [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR, subjectsR] = await Promise.all([
     sb.from('profiles').select('*').order('created_at', { ascending:true }),
     sb.from('courses').select('*').order('created_at', { ascending:true }),
     sb.from('students').select('*'),
@@ -891,11 +881,13 @@ async function fetchStateFromSupabase(){
     sb.from('course_history').select('*').order('ts', { ascending:false }),
     sb.from('term_test_history').select('*').order('ts', { ascending:false }),
     sb.from('app_settings').select('*'),
+    sb.from('subjects').select('*').order('code', { ascending:true }),
   ]);
 
   const named = [
     ['profiles',profilesR],['courses',coursesR],['students',studentsR],['assignments',assignmentsR],
     ['notifications',notificationsR],['course_history',historyR],['term_test_history',ttHistoryR],['app_settings',settingsR],
+    ['subjects',subjectsR],
   ];
   const firstErr = named.find(([,r])=>r.error);
   if(firstErr){
@@ -942,7 +934,9 @@ async function fetchStateFromSupabase(){
   const ctRow = (settingsR.data||[]).find(r=>r.key==='current_term_test');
   if(ctRow && ctRow.value!==null && ctRow.value!==undefined) currentTermTest = ctRow.value;
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory };
+  const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
+
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory, subjects };
 }
 
 // Lightweight, pre-login fetch — just the public directory, used to
@@ -1107,7 +1101,7 @@ function isValidEmail(email){ return /^\S+@\S+\.\S+$/.test(email); }
 
 /* ---------------- app state ---------------- */
 const App = {
-  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[] },
+  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[], subjects:[] },
   ui: { view:'', params:{} },
   ready:false,
 
@@ -1236,8 +1230,8 @@ const App = {
   },
 
   /* ---------- HOD/Admin: create a course-section ----------
-     Section identity (code, name) comes straight from MASTER_SUBJECTS —
-     the real "Courses Applicable" list — so a section can never be created
+     Section identity (code, name) comes straight from the live Supabase
+     `subjects` table — the real "Courses Applicable" list — so a section can never be created
      against a subject that isn't on the official Evaluation Scheme sheet.
      Note this only creates the section shell (draft, unassigned, no fixed
      Evaluation Type yet) — the Coordinator still separately confirms the
@@ -1269,7 +1263,7 @@ const App = {
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ----------
      For CI assignment, `subjectCode` is a real code from the "Courses
-     Applicable" master list (MASTER_SUBJECTS) — not a hand-picked ET abbr.
+     Applicable" master list (the Supabase `subjects` table) — not a hand-picked ET abbr.
      Picking the subject is what fixes the Abbr / Course Type / Evaluation
      Type for the section, and locks the section's code+name to that real
      subject, so a course can never end up mismatched against the sheet. */
