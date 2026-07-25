@@ -2079,6 +2079,46 @@ function openAuditModal(courseId){
 }
 window.openAuditModal = openAuditModal;
 
+/* Grouped <select> of every faculty member already in the directory
+   (uploaded by EA / created anywhere in the system), grouped by home
+   branch — lets HOD pick a known faculty member to assign as Coordinator
+   instead of retyping their email every time. Selecting an option fills
+   the email/name fields via fillCoordinatorFromDirectory() below. */
+function facultyDropdownOptionsHtml(){
+  const entries = App.state.users.filter(u=>u.systemRole==='FACULTY');
+  if(entries.length===0) return `<option value="">— No faculty in the directory yet —</option>`;
+  const branches = {};
+  const noBranch = [];
+  entries.forEach(u=>{ if(u.homeBranch){ (branches[u.homeBranch] = branches[u.homeBranch] || []).push(u); } else { noBranch.push(u); } });
+  let html = `<option value="">— Pick an existing faculty member (optional) —</option>`;
+  Object.keys(branches).sort().forEach(bk=>{
+    html += `<optgroup label="${escapeHtml(branchLabel(bk))}">`;
+    branches[bk].sort((a,b)=>a.name.localeCompare(b.name)).forEach(u=>{
+      html += `<option value="${u.id}">${escapeHtml(u.name)} — ${escapeHtml(u.email)}</option>`;
+    });
+    html += `</optgroup>`;
+  });
+  if(noBranch.length){
+    html += `<optgroup label="No branch set">`;
+    noBranch.sort((a,b)=>a.name.localeCompare(b.name)).forEach(u=>{
+      html += `<option value="${u.id}">${escapeHtml(u.name)} — ${escapeHtml(u.email)}</option>`;
+    });
+    html += `</optgroup>`;
+  }
+  return html;
+}
+function fillCoordinatorFromDirectory(userId){
+  const emailEl = document.getElementById('hod-newcourse-cc-email');
+  const nameEl = document.getElementById('hod-newcourse-cc-name');
+  if(!emailEl || !nameEl) return;
+  if(!userId){ return; }
+  const u = App.getUserById(userId);
+  if(!u) return;
+  emailEl.value = u.email;
+  nameEl.value = u.name;
+}
+window.fillCoordinatorFromDirectory = fillCoordinatorFromDirectory;
+
 function renderHODCoordinators(){
   const courses = App.state.courses;
   const actor = App.currentUser();
@@ -2092,7 +2132,7 @@ function renderHODCoordinators(){
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Create Section &amp; Assign Coordinator</div>
-      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — set the Section and Branch, then enter the Coordinator's university email and name to assign them in the same step. Leave the email blank to just create the section shell and assign a Coordinator later.</p>
+      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — set the Section and Branch, then pick the Coordinator from the existing faculty directory (all branches) or type a new email/name to assign them in the same step. Leave the Coordinator fields blank to just create the section shell and assign a Coordinator later.</p>
       <div class="config-grid">
         <div class="config-field">
           <label>Subject <span style="text-transform:none;">(Courses Applicable — code &amp; name)</span></label>
@@ -2108,6 +2148,10 @@ function renderHODCoordinators(){
             <option value="">— Select Branch —</option>
             ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
           </select>
+        </div>
+        <div class="config-field">
+          <label>Existing faculty <span style="text-transform:none;">(pick from directory, all branches)</span></label>
+          <select id="hod-newcourse-cc-pick" onchange="fillCoordinatorFromDirectory(this.value)">${facultyDropdownOptionsHtml()}</select>
         </div>
         <div class="config-field">
           <label>Coordinator email <span style="text-transform:none;">(optional — assign now)</span></label>
