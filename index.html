@@ -1236,8 +1236,12 @@ const App = {
      Note this only creates the section shell (draft, unassigned, no fixed
      Evaluation Type yet) — the Coordinator still separately confirms the
      Subject when assigning the Course Instructor, which is what actually
-     fixes the Evaluation Type. */
-  createCourseSection(subjectCode, section, branch){
+     fixes the Evaluation Type.
+
+     If rawEmail is provided, the Course Coordinator is assigned in the same
+     step (single "Subject + Section + Branch + Faculty email/name" form in
+     Manage Coordinators) — no separate "Assign Coordinator" click needed. */
+  createCourseSection(subjectCode, section, branch, rawEmail, rawName){
     const actor = this.currentUser();
     if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can create a course section.', 'err'); return; }
     const subj = masterSubject(subjectCode);
@@ -1245,6 +1249,8 @@ const App = {
     const sec = (section||'').trim().toUpperCase();
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
+    const email = (rawEmail||'').trim().toLowerCase();
+    if(email && !isValidEmail(email)){ toast('Enter a valid Coordinator email address.', 'err'); return; }
     const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && c.section===sec && c.branch===branch);
     if(dupe){ toast(`${subj.code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     const course = {
@@ -1256,7 +1262,17 @@ const App = {
     syncCourse(course);
     (course.students||[]).forEach(s=>syncNewStudent(course.id, s));
     this.logHistory(course, `Course section created: ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
-    toast(`Created ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)}.`, 'ok');
+    if(email){
+      // Assign the Course Coordinator right away, same as the "Assign
+      // Coordinator" flow — creates a FACULTY profile if one doesn't
+      // already exist for this email, then adds an active CC assignment.
+      // CC/CI are never written to profiles.system_role — that column only
+      // ever holds ADMIN/HOD/EA/EXAM/FACULTY; the role is derived from the
+      // `assignments` table at render time.
+      this.assignRole('CC', course.id, email, rawName, undefined);
+    } else {
+      toast(`Created ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)}.`, 'ok');
+    }
     renderSidebar();
     renderContent();
   },
@@ -2075,8 +2091,8 @@ function renderHODCoordinators(){
       <p>Assign a Course Coordinator to each section using their university email — only the HOD or an Administrator can do this. Once assigned, that Coordinator picks the real Subject and assigns their own Course Instructor; you don't need to touch that layer.</p>
     </div>
     <div class="card">
-      <div class="section-title" style="font-size:15px;">Create Course Section</div>
-      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — then set the Section and Branch to create the section shell. You (or the Coordinator you assign next) can then take it from there.</p>
+      <div class="section-title" style="font-size:15px;">Create Section &amp; Assign Coordinator</div>
+      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — set the Section and Branch, then enter the Coordinator's university email and name to assign them in the same step. Leave the email blank to just create the section shell and assign a Coordinator later.</p>
       <div class="config-grid">
         <div class="config-field">
           <label>Subject <span style="text-transform:none;">(Courses Applicable — code &amp; name)</span></label>
@@ -2093,10 +2109,18 @@ function renderHODCoordinators(){
             ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
           </select>
         </div>
+        <div class="config-field">
+          <label>Coordinator email <span style="text-transform:none;">(optional — assign now)</span></label>
+          <input id="hod-newcourse-cc-email" type="email" placeholder="name@suh.in">
+        </div>
+        <div class="config-field">
+          <label>Coordinator name <span style="text-transform:none;">(only needed for a new account)</span></label>
+          <input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe">
+        </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-section').value, document.getElementById('hod-newcourse-branch').value)">Create Section</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-section').value, document.getElementById('hod-newcourse-branch').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Create Section</button>
     </div>
-    ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Course Section" above to add one.') : courses.map(c=>{
+    ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
       return `
       <div class="card">
