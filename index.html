@@ -1678,11 +1678,12 @@ function renderContent(){
   c.appendChild(fn(App.ui.params));
 }
 function termTestBanner(){
-  if(!App.state.currentTermTest) return '';
+  const label = TERM_TEST_LABELS[App.state.currentTermTest];
+  if(!label) return ''; // covers null/empty AND any value that doesn't match a known term test key
   return `<div class="card" style="border-left:3px solid var(--brass);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
     <div>
       <div class="page-eyebrow">Active Examination Cycle</div>
-      <div class="section-title" style="margin-top:4px;">${TERM_TEST_LABELS[App.state.currentTermTest]}</div>
+      <div class="section-title" style="margin-top:4px;">${label}</div>
     </div>
     <span class="status-pill status-verified">Fixed by HOD · visible to CC, CI, EA, Exam Branch &amp; HOD</span>
   </div>`;
@@ -1959,7 +1960,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
-    ${list.map(c=>`
+    ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Once some are created (via the "courses" table), they will appear here for approval.') : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
@@ -2046,7 +2047,7 @@ function renderHODCoordinators(){
       <h2>Manage Course Coordinators</h2>
       <p>Assign a Course Coordinator to each section using their university email — only the HOD or an Administrator can do this. Once assigned, that Coordinator picks the real Subject and assigns their own Course Instructor; you don't need to touch that layer.</p>
     </div>
-    ${courses.map(c=>{
+    ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet, so there\'s nothing to assign a Coordinator to. Course-sections need to exist (in the "courses" table) before you can fix a Coordinator for them.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
       return `
       <div class="card">
