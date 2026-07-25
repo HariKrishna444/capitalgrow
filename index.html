@@ -1310,6 +1310,7 @@ const App = {
     if(!course){ toast('Course not found.', 'err'); return; }
     const isOwner = getCourseCCUser(courseId)?.id === actor.id;
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can edit its roster.', 'err'); return; }
+    if(course.status==='approved' && actor.systemRole!=='ADMIN'){ toast('This course is already approved — the roster is locked. Contact an Administrator if this needs to be corrected.', 'err'); return; }
     const wantedIds = new Set((selectedDirIds||[]).filter(Boolean));
     const dirById = {};
     (this.state.studentDirectory||[]).forEach(s=>{ dirById[s.id] = s; });
@@ -1358,6 +1359,7 @@ const App = {
     if(!course){ toast('Course not found.', 'err'); return; }
     const isOwner = getCourseCCUser(courseId)?.id === actor.id;
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can edit its roster.', 'err'); return; }
+    if(course.status==='approved' && actor.systemRole!=='ADMIN'){ toast('This course is already approved — the roster is locked. Contact an Administrator if this needs to be corrected.', 'err'); return; }
     if(!Array.isArray(rows) || rows.length===0){ toast('That file has no rows to import.', 'err'); return; }
 
     const existingByRoll = {};
@@ -1414,6 +1416,7 @@ const App = {
       const ccA = getActiveAssignment(courseId,'CC');
       const isCoordinator = ccA && ccA.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can assign a Course Instructor.', 'err'); return; }
+      if(course.status==='approved' && actor.systemRole!=='ADMIN'){ toast('This course is already approved — the Course Instructor can no longer be changed. Contact an Administrator if this needs to be corrected.', 'err'); return; }
       subj = masterSubject(subjectCode);
       if(!subj){ toast('Choose a Subject from Courses Applicable before assigning the Course Instructor.', 'err'); return; }
     }
@@ -1449,6 +1452,7 @@ const App = {
     if(type==='CI'){
       const isCoordinator = getActiveAssignment(courseId,'CC')?.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can revoke a Course Instructor.', 'err'); return; }
+      if(course.status==='approved' && actor.systemRole!=='ADMIN'){ toast('This course is already approved — the Course Instructor can no longer be revoked. Contact an Administrator if this needs to be corrected.', 'err'); return; }
     }
     existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id;
     syncAssignment(existing);
@@ -2939,11 +2943,16 @@ function renderCCBranchGroupsHtml(ccCourses, term){
           </div>
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
             <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}${c.evalType ? ' · Evaluation Type: '+escapeHtml(evalTypeLabel(c.evalType)) : ''} · Roster: ${c.students.length} student${c.students.length===1?'':'s'}</span>
-            <div style="display:flex;gap:10px;">
-              <button class="btn btn-outline btn-sm" onclick="App.navigate('cc-roster',{courseId:'${c.id}'})">Manage Roster</button>
-              ${ciUser
-                ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Instructor access for ${escapeHtml(ciUser.name)} on ${c.code}?')) App.revokeRole('CI','${c.id}')">Revoke Instructor</button>`
-                : `<button class="btn btn-sm btn-outline" onclick="openAssignModal('CI','${c.id}')">Assign Instructor</button>`}
+            <div style="display:flex;gap:10px;align-items:center;">
+              ${c.status==='approved' ? `
+                <span class="section-meta" style="font-weight:600;">Approved · locked — view only</span>
+                <button class="btn btn-outline btn-sm" onclick="App.navigate('cc-roster',{courseId:'${c.id}'})">View Roster</button>
+              ` : `
+                <button class="btn btn-outline btn-sm" onclick="App.navigate('cc-roster',{courseId:'${c.id}'})">Manage Roster</button>
+                ${ciUser
+                  ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Instructor access for ${escapeHtml(ciUser.name)} on ${c.code}?')) App.revokeRole('CI','${c.id}')">Revoke Instructor</button>`
+                  : `<button class="btn btn-sm btn-outline" onclick="openAssignModal('CI','${c.id}')">Assign Instructor</button>`}
+              `}
             </div>
           </div>
         </div>`;
@@ -2969,6 +2978,7 @@ function renderCCRoster(params){
     wrap.innerHTML = emptyStateHtml('Not your section', 'Only this section\'s Course Coordinator can manage its roster.');
     return wrap;
   }
+  const locked = course.status==='approved' && user.systemRole!=='ADMIN';
   const currentDirIds = new Set((course.students||[]).map(s=>s.dirId).filter(Boolean));
   const directoryForBranch = (App.state.studentDirectory||[]).filter(s=>s.branch===course.branch);
   const byBatch = {};
@@ -2979,8 +2989,9 @@ function renderCCRoster(params){
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>Roster — ${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}</h2>
-      <p>Import this section's students directly from a spreadsheet — whoever's on the roster below is who the Course Instructor sees and enters marks for.</p>
+      <p>${locked ? 'This course is approved, so the roster is locked — view only.' : 'Import this section\'s students directly from a spreadsheet — whoever\'s on the roster below is who the Course Instructor sees and enters marks for.'}</p>
     </div>
+    ${locked ? `<div class="card" style="border-color:var(--warn,#c8850a);"><div class="section-meta" style="font-weight:600;">Approved · locked — roster can no longer be changed. Contact an Administrator if this needs to be corrected.</div></div>` : `
     <div class="card">
       <div class="section-title" style="font-size:15px;">Import roster from Excel / CSV</div>
       <p class="section-meta" style="margin-top:4px;">File needs five columns — <strong>Roll No, Name, Email, Department, Semester</strong> — same template the Executive Assistant uses. Department must be ${branchLabel(course.branch)} (other rows are skipped). Existing roll numbers on this roster are updated; new ones are added — nothing already here gets removed.</p>
@@ -2992,18 +3003,20 @@ function renderCCRoster(params){
         <button class="btn btn-outline btn-sm" onclick="downloadStudentTemplate()">Download template</button>
       </div>
     </div>
+    `}
     <div class="card">
       <div class="section-title" style="font-size:15px;">Current roster <span class="section-meta">(${roster.length} student${roster.length===1?'':'s'})</span></div>
-      ${roster.length===0 ? emptyStateHtml('No students on this roster yet', 'Import a spreadsheet above to get started.') : roster.map(s=>`
+      ${roster.length===0 ? emptyStateHtml('No students on this roster yet', locked ? 'This roster is empty.' : 'Import a spreadsheet above to get started.') : roster.map(s=>`
         <div class="card card-row">
           <div>
             <div class="section-title">${s.rollNo ? escapeHtml(s.rollNo)+' — ' : ''}${escapeHtml(s.name)}</div>
             <div class="section-meta">${s.email ? escapeHtml(s.email) : 'No email on file'}${!s.dirId ? ' · Not linked to Student Directory' : ''}</div>
           </div>
-          <button class="btn btn-red btn-sm" onclick="if(confirm('Remove ${escapeHtml(s.name)} from this roster?')) removeCCRosterStudent('${course.id}','${s.id}')">Remove</button>
+          ${locked ? '' : `<button class="btn btn-red btn-sm" onclick="if(confirm('Remove ${escapeHtml(s.name)} from this roster?')) removeCCRosterStudent('${course.id}','${s.id}')">Remove</button>`}
         </div>
       `).join('')}
     </div>
+    ${locked ? '' : `
     <details class="card">
       <summary style="cursor:pointer;font-weight:600;">Or pick from the Student Directory instead</summary>
       <p class="section-meta" style="margin-top:8px;">Check students already in the Executive Assistant's directory for ${branchLabel(course.branch)}, then Save — this <strong>replaces</strong> directory-linked rows on the roster with your selection (rows added manually above are left alone).</p>
@@ -3026,6 +3039,7 @@ function renderCCRoster(params){
       </div>
       ${directoryForBranch.length>0 ? `<button class="btn" style="margin-top:14px;" onclick="saveCCRoster('${course.id}')">Save Roster</button>` : ''}
     </details>
+    `}
   `;
   return wrap;
 }
@@ -3044,6 +3058,8 @@ window.saveCCRoster = saveCCRoster;
 function removeCCRosterStudent(courseId, studentId){
   const course = App.getCourse(courseId);
   if(!course) return;
+  const actor = App.currentUser();
+  if(course.status==='approved' && actor.systemRole!=='ADMIN'){ toast('This course is already approved — the roster is locked. Contact an Administrator if this needs to be corrected.', 'err'); return; }
   const remainingDirIds = (course.students||[]).filter(s=>s.id!==studentId).map(s=>s.dirId).filter(Boolean);
   // route through setCourseRoster's directory-linked handling for directory rows,
   // but a manually-imported row (no dirId) needs a direct delete instead.
