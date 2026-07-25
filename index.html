@@ -1342,6 +1342,65 @@ const App = {
     this.navigate('cc-roster', { courseId });
   },
 
+  /* ---------- CC: import a roster directly onto one course from a
+     spreadsheet — Roll No, Name, Email, Department, Semester (same
+     template as the EA's Student Directory upload). This is additive: it
+     never removes existing roster rows, only adds new ones and refreshes
+     matching ones by roll no (marks are preserved either way). Rows whose
+     Department doesn't match this section's branch are skipped, since a
+     roster only ever belongs to one branch. If a roll no already exists in
+     the Student Directory for this branch, the new row is linked to it
+     (dirId) so it stays consistent with the EA's master list; otherwise
+     it's added as a course-only row. */
+  importCourseRosterRows(courseId, rows){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const isOwner = getCourseCCUser(courseId)?.id === actor.id;
+    if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can edit its roster.', 'err'); return; }
+    if(!Array.isArray(rows) || rows.length===0){ toast('That file has no rows to import.', 'err'); return; }
+
+    const existingByRoll = {};
+    (course.students||[]).forEach(s=>{ if(s.rollNo) existingByRoll[s.rollNo.toUpperCase()] = s; });
+
+    let added=0, updated=0, skipped=0;
+    rows.forEach(row=>{
+      const keys = Object.keys(row||{});
+      const findKey = (re) => keys.find(k=>re.test(String(k).trim()));
+      const rollKey = findKey(/^roll\s*-?no\.?$/i);
+      const nameKey = findKey(/^name$/i);
+      const emailKey = findKey(/^e-?mail$/i);
+      const deptKey = findKey(/^dep(artmen)?t$/i) || findKey(/^branch$/i);
+      const rollNo = rollKey ? String(row[rollKey]).trim().toUpperCase() : '';
+      const name = nameKey ? String(row[nameKey]).trim() : '';
+      const email = emailKey ? String(row[emailKey]).trim().toLowerCase() : '';
+      const dept = deptKey ? String(row[deptKey]).trim().toUpperCase() : '';
+      if(!rollNo || !name){ skipped++; return; }
+      if(dept && dept !== course.branch){ skipped++; return; } // wrong branch for this section
+      if(email && !isValidEmail(email)){ skipped++; return; }
+      const dirMatch = (this.state.studentDirectory||[]).find(d=>d.rollNo.toUpperCase()===rollNo && d.branch===course.branch);
+      const existing = existingByRoll[rollNo];
+      if(existing){
+        Object.assign(existing, { name, email: email||existing.email, dirId: dirMatch ? dirMatch.id : existing.dirId });
+        updated++;
+      } else {
+        const newRow = { id: uid('cst'), name, rollNo, email, dirId: dirMatch ? dirMatch.id : null, marks:{} };
+        course.students.push(newRow);
+        existingByRoll[rollNo] = newRow;
+        added++;
+      }
+    });
+    course.students.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+    course.students.forEach(s=>syncNewStudent(course.id, s));
+
+    if(added+updated===0){
+      toast(`Import found nothing usable — check Roll No/Name are filled in and Department matches ${branchLabel(course.branch)}.`, 'err');
+    } else {
+      toast(`Import complete — ${added} added, ${updated} updated${skipped?`, ${skipped} skipped`:''}.`, 'ok');
+    }
+    this.navigate('cc-roster', { courseId });
+  },
+
   assignRole(type, courseId, rawEmail, rawName, subjectCode){
     const course = this.getCourse(courseId);
     if(!course){ toast('Choose a course first.', 'err'); return; }
@@ -2911,20 +2970,44 @@ function renderCCRoster(params){
     return wrap;
   }
   const currentDirIds = new Set((course.students||[]).map(s=>s.dirId).filter(Boolean));
-  const manualCount = (course.students||[]).filter(s=>!s.dirId).length;
   const directoryForBranch = (App.state.studentDirectory||[]).filter(s=>s.branch===course.branch);
   const byBatch = {};
   directoryForBranch.forEach(s=>{ (byBatch[s.batch] = byBatch[s.batch] || []).push(s); });
+  const roster = [...(course.students||[])].sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
 
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>Roster — ${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}</h2>
-      <p>Pick students from the Executive Assistant's Student Directory (${branchLabel(course.branch)} only) to build this section's roster. Whoever you check here is who the Course Instructor sees and enters marks for — check the box, then Save.</p>
+      <p>Import this section's students directly from a spreadsheet — whoever's on the roster below is who the Course Instructor sees and enters marks for.</p>
     </div>
-    ${manualCount ? `<div class="card" style="border-color:var(--warn,#c8850a);"><div class="section-meta">${manualCount} student${manualCount===1?'':'s'} on this roster ${manualCount===1?'was':'were'} added before the Student Directory existed and ${manualCount===1?'has':'have'} no linked directory record — ${manualCount===1?'it stays':'they stay'} on the roster untouched unless you remove ${manualCount===1?'it':'them'} manually from the Supabase students table.</div></div>` : ''}
     <div class="card">
-      <input id="cc-roster-search" class="search-input" type="text" placeholder="Search by roll no or name..." oninput="filterCCRosterList(this.value)">
+      <div class="section-title" style="font-size:15px;">Import roster from Excel / CSV</div>
+      <p class="section-meta" style="margin-top:4px;">File needs five columns — <strong>Roll No, Name, Email, Department, Semester</strong> — same template the Executive Assistant uses. Department must be ${branchLabel(course.branch)} (other rows are skipped). Existing roll numbers on this roster are updated; new ones are added — nothing already here gets removed.</p>
+      <div class="import-row" style="margin-top:10px;">
+        <label class="file-input-label">
+          📄 Choose file (.xlsx, .xls, .csv)
+          <input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleCCRosterExcelImport(this, '${course.id}')">
+        </label>
+        <button class="btn btn-outline btn-sm" onclick="downloadStudentTemplate()">Download template</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Current roster <span class="section-meta">(${roster.length} student${roster.length===1?'':'s'})</span></div>
+      ${roster.length===0 ? emptyStateHtml('No students on this roster yet', 'Import a spreadsheet above to get started.') : roster.map(s=>`
+        <div class="card card-row">
+          <div>
+            <div class="section-title">${s.rollNo ? escapeHtml(s.rollNo)+' — ' : ''}${escapeHtml(s.name)}</div>
+            <div class="section-meta">${s.email ? escapeHtml(s.email) : 'No email on file'}${!s.dirId ? ' · Not linked to Student Directory' : ''}</div>
+          </div>
+          <button class="btn btn-red btn-sm" onclick="if(confirm('Remove ${escapeHtml(s.name)} from this roster?')) removeCCRosterStudent('${course.id}','${s.id}')">Remove</button>
+        </div>
+      `).join('')}
+    </div>
+    <details class="card">
+      <summary style="cursor:pointer;font-weight:600;">Or pick from the Student Directory instead</summary>
+      <p class="section-meta" style="margin-top:8px;">Check students already in the Executive Assistant's directory for ${branchLabel(course.branch)}, then Save — this <strong>replaces</strong> directory-linked rows on the roster with your selection (rows added manually above are left alone).</p>
+      <input id="cc-roster-search" class="search-input" type="text" placeholder="Search by roll no or name..." oninput="filterCCRosterList(this.value)" style="margin-top:8px;">
       <div id="cc-roster-list" style="margin-top:14px;">
         ${directoryForBranch.length===0 ? emptyStateHtml('No directory students for this branch yet', `The Executive Assistant hasn't uploaded any ${branchLabel(course.branch)} students yet.`) :
           Object.keys(byBatch).sort().map(batch=>`
@@ -2942,7 +3025,7 @@ function renderCCRoster(params){
         }
       </div>
       ${directoryForBranch.length>0 ? `<button class="btn" style="margin-top:14px;" onclick="saveCCRoster('${course.id}')">Save Roster</button>` : ''}
-    </div>
+    </details>
   `;
   return wrap;
 }
@@ -2958,6 +3041,45 @@ function saveCCRoster(courseId){
   App.setCourseRoster(courseId, ids);
 }
 window.saveCCRoster = saveCCRoster;
+function removeCCRosterStudent(courseId, studentId){
+  const course = App.getCourse(courseId);
+  if(!course) return;
+  const remainingDirIds = (course.students||[]).filter(s=>s.id!==studentId).map(s=>s.dirId).filter(Boolean);
+  // route through setCourseRoster's directory-linked handling for directory rows,
+  // but a manually-imported row (no dirId) needs a direct delete instead.
+  const target = (course.students||[]).find(s=>s.id===studentId);
+  if(target && !target.dirId){
+    course.students = (course.students||[]).filter(s=>s.id!==studentId);
+    deleteStudent(studentId);
+    toast(`${target.name} removed from the roster.`, 'err');
+    App.navigate('cc-roster', { courseId });
+  } else {
+    App.setCourseRoster(courseId, remainingDirIds);
+  }
+}
+window.removeCCRosterStudent = removeCCRosterStudent;
+function handleCCRosterExcelImport(input, courseId){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  if(typeof XLSX === 'undefined'){ toast('The spreadsheet reader failed to load. Check your internet connection and try again.', 'err'); input.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      App.importCourseRosterRows(courseId, rows);
+    }catch(err){
+      console.warn(err);
+      toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
+    }
+    input.value = '';
+  };
+  reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
+  reader.readAsArrayBuffer(file);
+}
+window.handleCCRosterExcelImport = handleCCRosterExcelImport;
 
 function renderCCReview(params){
   const course = App.getCourse(params.courseId);
