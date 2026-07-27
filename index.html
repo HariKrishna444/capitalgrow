@@ -931,7 +931,7 @@ async function fetchStateFromSupabase(){
 
   const notifications = (notificationsR.data||[]).map(n=>({
     id:n.id, forUserId:n.for_user_id, courseId:n.course_id, title:n.title, body:n.body,
-    ts:new Date(n.ts).getTime(), read:!!n.read, notifyEmail:!!n.notify_email
+    ts:new Date(n.ts).getTime(), read:!!n.read, notifyEmail:!!n.notify_email, fromEmail:n.from_email||null
   }));
 
   const termTestHistory = (ttHistoryR.data||[]).map(t=>({ id:t.id, ts:new Date(t.ts).getTime(), by:t.by_name, value:t.value }));
@@ -966,7 +966,7 @@ const rowOf = {
     revoked_at:a.revokedAt ? new Date(a.revokedAt).toISOString() : null,
     revoked_by:a.revokedBy || null,
   }),
-  notification:(n)=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read, notify_email:!!n.notifyEmail }),
+  notification:(n)=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read, notify_email:!!n.notifyEmail, from_email:n.fromEmail||null }),
   history:(courseId,h)=>({ id:h.id, course_id:courseId, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' }),
   termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }),
   studentDirectoryEntry:(s)=>({ id:s.id, roll_no:s.rollNo, name:s.name, email:s.email||null, branch:s.branch, batch:s.batch, semester:s.semester||null }),
@@ -1169,8 +1169,8 @@ const App = {
     course.history.unshift(entry);
     syncHistory(course.id, entry);
   },
-  notifyUser(userId, course, title, body, notifyEmail=false){
-    const n = { id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false, notifyEmail };
+  notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null){
+    const n = { id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false, notifyEmail, fromEmail };
     this.state.notifications.unshift(n);
     syncNotification(n);
     renderBell();
@@ -1445,7 +1445,7 @@ const App = {
       etNote = ` · Subject fixed as: ${subj.code} — ${subj.name} (${evalTypeLabel(subj.abbr)})`;
     }
     this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
-    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`, true);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`, true, actor.email);
     toast(`${user.name} is now ${roleLabel} for ${course.code}.${etNote}`, 'ok');
     closeModal();
     renderSidebar();
