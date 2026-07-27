@@ -877,10 +877,16 @@ function seedState(){
    row(s) that actually changed, instead of re-writing everything. */
 
 async function fetchStateFromSupabase(){
-  const [profilesR, coursesR, studentsR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR, subjectsR, studentDirR] = await Promise.all([
+  const [profilesR, coursesR, completionR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR, subjectsR, studentDirR] = await Promise.all([
     sb.from('profiles').select('*').order('created_at', { ascending:true }),
     sb.from('courses').select('*').order('created_at', { ascending:true }),
-    sb.from('students').select('*'),
+    // Lightweight completion status instead of the full students table —
+    // dashboards get { student_count, cie_complete, see_complete } per
+    // course without downloading a single mark or name. Full roster/marks
+    // are fetched lazily per-course by App.ensureCourseStudentsLoaded()
+    // only when someone actually opens that section (mark entry, roster,
+    // review/approval pages) — see course_completion_status in the DB.
+    sb.from('course_completion_status').select('*'),
     sb.from('assignments').select('*').order('assigned_at', { ascending:true }),
     // Append-only logs: capped, most-recent-first. This is a partial
     // mitigation, not full pagination — see the note this was delivered
@@ -894,7 +900,7 @@ async function fetchStateFromSupabase(){
   ]);
 
   const named = [
-    ['profiles',profilesR],['courses',coursesR],['students',studentsR],['assignments',assignmentsR],
+    ['profiles',profilesR],['courses',coursesR],['course_completion_status',completionR],['assignments',assignmentsR],
     ['notifications',notificationsR],['course_history',historyR],['term_test_history',ttHistoryR],['app_settings',settingsR],
     ['subjects',subjectsR],['student_directory',studentDirR],
   ];
@@ -908,18 +914,28 @@ async function fetchStateFromSupabase(){
 
   const users = profilesR.data.map(p=>({ id:p.id, name:p.name, email:p.email, systemRole:p.system_role, homeBranch:p.home_branch||undefined, authId:p.auth_id||null }));
 
-  const courses = coursesR.data.map(c=>({
-    id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
-    status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
-    evalType:c.eval_type || null,
-    students:[], history:[]
-  }));
+  const completionByCourse = {};
+  (completionR.data||[]).forEach(row=>{ completionByCourse[row.course_id] = row; });
+
+  const courses = coursesR.data.map(c=>{
+    const comp = completionByCourse[c.id];
+    return {
+      id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
+      status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
+      evalType:c.eval_type || null,
+      // Roster/marks are NOT fetched here — only a lightweight count +
+      // completion flags from the view. Call App.ensureCourseStudentsLoaded
+      // (courseId) before any page needs the real per-student data; that
+      // flips studentsLoaded to true and populates `students` for real.
+      students:[], studentsLoaded:false,
+      studentCount: comp ? comp.student_count : 0,
+      cieComplete: comp ? !!comp.cie_complete : false,
+      seeComplete: comp ? !!comp.see_complete : false,
+      history:[]
+    };
+  });
   const courseById = id => courses.find(c=>c.id===id);
 
-  (studentsR.data||[]).forEach(s=>{
-    const course = courseById(s.course_id);
-    if(course) course.students.push({ id:s.id, name:s.name, marks: s.marks || {}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null });
-  });
   (historyR.data||[]).forEach(h=>{
     const course = courseById(h.course_id);
     if(course) course.history.push({ id:h.id, ts:new Date(h.ts).getTime(), user:h.user_name, role:h.role, action:h.action, remark:h.remark||'' });
@@ -1123,6 +1139,23 @@ const App = {
   currentUser(){ return this.state.users.find(u=>u.id===this.state.currentUserId) || null; },
   getUserById(id){ return this.state.users.find(u=>u.id===id) || null; },
   getCourse(id){ return this.state.courses.find(c=>c.id===id); },
+  /* ---------- lazy roster/marks loader ----------
+     Full student rows (name/roll/email/marks) are never fetched at login —
+     only the lightweight course_completion_status view. This loads the real
+     rows for ONE course, on demand, the first time a page actually needs
+     them (mark entry, roster management, review/approval pages). Safe to
+     call repeatedly — it's a no-op once studentsLoaded is true, so render
+     functions can just `await` it every time without worrying about
+     re-fetching on every re-render. */
+  async ensureCourseStudentsLoaded(courseId){
+    const course = this.getCourse(courseId);
+    if(!course || course.studentsLoaded) return course;
+    const { data, error } = await sb.from('students').select('*').eq('course_id', courseId);
+    if(error){ toast('Could not load this section\'s roster: ' + (error.message||error), 'err'); return course; }
+    course.students = (data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null }));
+    course.studentsLoaded = true;
+    return course;
+  },
 
   /* ---------- auth ---------- */
   // Called by the login form's submit handler / button.
@@ -1796,10 +1829,12 @@ function computeGrandTotal(student, course){
   return { cieTotal:cie.total, seeTotal:see.total, total: round1(cie.total + see.total), complete: cie.complete && see.complete };
 }
 function courseCIEComplete(course){
+  if(!course.studentsLoaded) return !!course.cieComplete; // from course_completion_status, computed server-side
   const components = getCourseComponents(course);
   return course.students.length>0 && course.students.every(s=>computeCIE(s, components).complete);
 }
 function courseSEEComplete(course){
+  if(!course.studentsLoaded) return !!course.seeComplete; // from course_completion_status, computed server-side
   const components = getCourseSeeComponents(course);
   return course.students.length>0 && course.students.every(s=>computeSEE(s, components).complete);
 }
@@ -1904,6 +1939,11 @@ function renderSidebar(){
   const sb = document.getElementById('sidebar');
   sb.innerHTML = nav.map(n=>`<button class="nav-item ${App.ui.view===n.v?'active':''}" onclick="App.navigate('${n.v}')">${n.label}</button>`).join('');
 }
+// Routes that read full course.students (marks/roster), not just the
+// lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
+// before they render, since the initial login fetch deliberately skips the
+// full students table (see fetchStateFromSupabase).
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -1931,16 +1971,30 @@ function renderContent(){
   };
   const fn = routes[view] || renderFacultyEmpty;
   const c = document.getElementById('content');
-  c.innerHTML = '';
-  if(user.systemRole !== 'ADMIN'){
-    const bannerHtml = termTestBanner();
-    if(bannerHtml){
-      const bannerWrap = el('<div></div>');
-      bannerWrap.innerHTML = bannerHtml;
-      c.appendChild(bannerWrap.firstElementChild);
+
+  const build = () => {
+    c.innerHTML = '';
+    if(user.systemRole !== 'ADMIN'){
+      const bannerHtml = termTestBanner();
+      if(bannerHtml){
+        const bannerWrap = el('<div></div>');
+        bannerWrap.innerHTML = bannerHtml;
+        c.appendChild(bannerWrap.firstElementChild);
+      }
+    }
+    c.appendChild(fn(App.ui.params));
+  };
+
+  const courseId = App.ui.params && App.ui.params.courseId;
+  if(ROUTES_NEEDING_STUDENTS[view] && courseId){
+    const course = App.getCourse(courseId);
+    if(course && !course.studentsLoaded){
+      c.innerHTML = emptyStateHtml('Loading roster…', 'Fetching this section\'s students and marks.');
+      App.ensureCourseStudentsLoaded(courseId).then(build);
+      return;
     }
   }
-  c.appendChild(fn(App.ui.params));
+  build();
 }
 function termTestBanner(){
   const label = TERM_TEST_LABELS[App.state.currentTermTest];
@@ -2529,7 +2583,7 @@ function renderExamList(){
     <div class="page-head">
       <div class="page-eyebrow">Examination Branch</div>
       <h2>Approved Records</h2>
-      <p>Read-only, finalized results only. Draft and in-progress submissions never appear here.</p>
+      <p>Read-only, finalized results only. Draft and in-progress submissions never appear here. Full marks are loaded on demand per record, not all at once, to keep this page fast as records accumulate.</p>
     </div>
     ${approved.length===0 ? emptyStateHtml('No finalized records yet','Approved course-sections will appear here once the HOD locks them.') :
       approved.map(c=>`
@@ -2538,21 +2592,40 @@ function renderExamList(){
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
+            <div class="section-meta" style="margin-top:4px;">${c.studentCount} student${c.studentCount===1?'':'s'} · CIE ${c.cieComplete?'complete':'incomplete'} · SEE ${c.seeComplete?'complete':'incomplete'}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
             ${statusPill(c)}
             ${etPill(c)}
             <button class="btn btn-outline btn-sm" onclick="exportCSV('${c.id}')">Export CSV</button>
             <button class="btn btn-sm" onclick="exportPrint('${c.id}')">Export / Print PDF</button>
+            <button class="btn btn-outline btn-sm" id="exam-toggle-${c.id}" onclick="toggleExamMarks('${c.id}')">View Full Marks</button>
           </div>
         </div>
-        <div style="margin-top:14px;">${marksViewTable(c)}</div>
+        <div id="exam-marks-${c.id}" style="margin-top:14px;"></div>
       </div>`).join('')}
   `;
   return wrap;
 }
-function exportCSV(courseId){
-  const course = App.getCourse(courseId);
+async function toggleExamMarks(courseId){
+  const container = document.getElementById(`exam-marks-${courseId}`);
+  const btn = document.getElementById(`exam-toggle-${courseId}`);
+  if(!container) return;
+  if(container.dataset.open === '1'){
+    container.innerHTML = '';
+    container.dataset.open = '0';
+    if(btn) btn.textContent = 'View Full Marks';
+    return;
+  }
+  container.innerHTML = emptyStateHtml('Loading marks…', 'Fetching this section\'s full roster.');
+  const course = await App.ensureCourseStudentsLoaded(courseId);
+  container.innerHTML = marksViewTable(course);
+  container.dataset.open = '1';
+  if(btn) btn.textContent = 'Hide Full Marks';
+}
+window.toggleExamMarks = toggleExamMarks;
+async function exportCSV(courseId){
+  const course = await App.ensureCourseStudentsLoaded(courseId);
   const template = getCourseTemplate(course);
   const cieComponents = template.cie, seeComponents = template.see;
   const header = ['Student', ...cieComponents.map(c=>c.label), 'CIE Total', ...seeComponents.map(c=>c.label), 'SEE Total', 'Grand Total'];
@@ -2569,8 +2642,8 @@ function exportCSV(courseId){
   URL.revokeObjectURL(a.href);
 }
 window.exportCSV = exportCSV;
-function exportPrint(courseId){
-  const course = App.getCourse(courseId);
+async function exportPrint(courseId){
+  const course = await App.ensureCourseStudentsLoaded(courseId);
   const area = document.getElementById('print-area');
   area.innerHTML = `
     <h2 style="font-family:'Fraunces',serif;">${escapeHtml(course.name)} — ${escapeHtml(course.code)}</h2>
@@ -2958,7 +3031,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
             </div>
           </div>
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}${c.evalType ? ' · Evaluation Type: '+escapeHtml(evalTypeLabel(c.evalType)) : ''} · Roster: ${c.students.length} student${c.students.length===1?'':'s'}</span>
+            <span class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'}${c.evalType ? ' · Evaluation Type: '+escapeHtml(evalTypeLabel(c.evalType)) : ''} · Roster: ${c.studentCount} student${c.studentCount===1?'':'s'}</span>
             <div style="display:flex;gap:10px;align-items:center;">
               ${c.status==='approved' ? `
                 <span class="section-meta" style="font-weight:600;">Approved · locked — view only</span>
