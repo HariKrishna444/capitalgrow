@@ -882,9 +882,12 @@ async function fetchStateFromSupabase(){
     sb.from('courses').select('*').order('created_at', { ascending:true }),
     sb.from('students').select('*'),
     sb.from('assignments').select('*').order('assigned_at', { ascending:true }),
-    sb.from('notifications').select('*').order('ts', { ascending:false }),
-    sb.from('course_history').select('*').order('ts', { ascending:false }),
-    sb.from('term_test_history').select('*').order('ts', { ascending:false }),
+    // Append-only logs: capped, most-recent-first. This is a partial
+    // mitigation, not full pagination — see the note this was delivered
+    // with for why a proper fix needs server-side aggregation instead.
+    sb.from('notifications').select('*').order('ts', { ascending:false }).limit(300),
+    sb.from('course_history').select('*').order('ts', { ascending:false }).limit(1000),
+    sb.from('term_test_history').select('*').order('ts', { ascending:false }).limit(200),
     sb.from('app_settings').select('*'),
     sb.from('subjects').select('*').order('code', { ascending:true }),
     sb.from('student_directory').select('*').order('roll_no', { ascending:true }),
@@ -1957,13 +1960,13 @@ function etPill(course){
   if(!course || !course.evalType) return `<span class="status-pill status-draft">ET: Not fixed yet</span>`;
   return `<span class="status-pill" style="background:var(--brass);color:#FBF7EC;border-color:var(--brass);">ET: ${escapeHtml(evalTypeLabel(course.evalType))}</span>`;
 }
-function courseMeta(course){ return `${course.code} · Section ${course.section} · ${branchLabel(course.branch)}`; }
+function courseMeta(course){ return `${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}`; }
 function assignmentSummary(courseId){
   const course = App.getCourse(courseId);
   const ccUser = getCourseCCUser(courseId);
   const ciUser = getCourseCIUser(courseId);
-  const etPart = course && course.evalType ? ` · Evaluation Type: ${evalTypeLabel(course.evalType)}` : '';
-  return `Coordinator: ${ccUser ? ccUser.name : 'Unassigned'} · Instructor: ${ciUser ? ciUser.name : 'Unassigned'}${etPart}`;
+  const etPart = course && course.evalType ? ` · Evaluation Type: ${escapeHtml(evalTypeLabel(course.evalType))}` : '';
+  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'}${etPart}`;
 }
 function courseMetaBlock(course){
   return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
@@ -2132,7 +2135,7 @@ function openAssignModal(type, courseId){
   openModal(`
     <button class="modal-close" onclick="closeModal()">&times;</button>
     <h3>Assign ${label}</h3>
-    <p style="color:var(--text-soft);margin-top:6px;">${course.code} — ${course.name} · Section ${course.section}</p>
+    <p style="color:var(--text-soft);margin-top:6px;">${escapeHtml(course.code)} — ${escapeHtml(course.name)} · Section ${escapeHtml(course.section)}</p>
     <p style="color:var(--text-soft);font-size:13px;margin-top:10px;">Enter the faculty member's university email. If they don't already have an account, one is created automatically and the role activates immediately — no separate approval step.</p>
     <div class="config-field" style="margin-top:14px;">
       <label>Faculty email</label>
@@ -2226,7 +2229,7 @@ function renderHODList(){
       <div class="card">
         <div class="card-row">
           <div>
-            <div class="section-title">${c.name}</div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
@@ -2249,7 +2252,7 @@ function renderHODReview(params){
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('hod-list')">← Back to pending approval</button>
       <div class="page-eyebrow">Stage 3 · Approval</div>
-      <h2>${course.name}</h2>
+      <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
@@ -2389,7 +2392,7 @@ function renderHODCoordinators(){
       <div class="card">
         <div class="card-row">
           <div>
-            <div class="section-title">${c.name}</div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
             <div class="section-meta">${courseMeta(c)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -2478,7 +2481,7 @@ function renderEAList(){
       <div class="card">
         <div class="card-row">
           <div>
-            <div class="section-title">${c.name}</div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
@@ -2501,7 +2504,7 @@ function renderEAReview(params){
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ea-list')">← Back to queue</button>
       <div class="page-eyebrow">Stage 2 · Verification</div>
-      <h2>${course.name}</h2>
+      <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
@@ -2533,7 +2536,7 @@ function renderExamList(){
       <div class="card">
         <div class="card-row">
           <div>
-            <div class="section-title">${c.name}</div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
@@ -2570,7 +2573,7 @@ function exportPrint(courseId){
   const course = App.getCourse(courseId);
   const area = document.getElementById('print-area');
   area.innerHTML = `
-    <h2 style="font-family:'Fraunces',serif;">${course.name} — ${course.code}</h2>
+    <h2 style="font-family:'Fraunces',serif;">${escapeHtml(course.name)} — ${escapeHtml(course.code)}</h2>
     <p class="mono" style="font-size:12px;">${courseMeta(course)} · Approved</p>
     ${marksViewTable(course)}
   `;
@@ -2822,7 +2825,7 @@ function renderCISections(){
       <div class="card">
         <div class="card-row">
           <div>
-            <div class="section-title">${c.name}</div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
@@ -2846,7 +2849,7 @@ function renderCIEntry(params){
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my sections</button>
       <div class="page-eyebrow">Stage 1 · Submission</div>
-      <h2>Subject: ${course.name}</h2>
+      <h2>Subject: ${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     ${sentBackBanner(course)}
@@ -2882,7 +2885,7 @@ function renderCCList(){
           <div class="config-field">
             <label>Course Section</label>
             <select id="cc-assign-course" onchange="updateCCInstructorOptions(this.value)">
-              ${ccCourses.map(c=>`<option value="${c.id}">${c.code} — ${c.name} (${branchLabel(c.branch)})</option>`).join('')}
+              ${ccCourses.map(c=>`<option value="${c.id}">${escapeHtml(c.code)} — ${escapeHtml(c.name)} (${branchLabel(c.branch)})</option>`).join('')}
             </select>
           </div>
           <div class="config-field">
@@ -2945,7 +2948,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
         <div class="card">
           <div class="card-row">
             <div>
-              <div class="section-title">${c.name}</div>
+              <div class="section-title">${escapeHtml(c.name)}</div>
               <div class="section-meta">${courseMeta(c)}</div>
             </div>
             <div style="display:flex;align-items:center;gap:14px;">
@@ -3117,7 +3120,7 @@ function renderCCReview(params){
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>
       <div class="page-eyebrow">Coordinator oversight</div>
-      <h2>${course.name}</h2>
+      <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
