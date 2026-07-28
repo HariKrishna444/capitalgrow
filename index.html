@@ -781,6 +781,25 @@ const TERM_TEST_LABELS = { TT1:'Term Test 1', TT2:'Term Test 2', TT3:'Term Test 
 
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
+/* ---------------- readable, business-code ids ----------------
+   slugId turns any value into an uppercase A-Z0-9 token. bizId joins a
+   few natural fields (subject code, roll no, email, etc) behind a
+   prefix — e.g. bizId('CRS', ['CSE301','A']) -> 'CRS-CSE301-A' — and
+   only falls back to the old random uid() when there's genuinely no
+   natural field to build from. `existingIds` is whatever array of ids
+   the new row would collide with; a numeric suffix is added until the
+   candidate is unique. */
+function slugId(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]+/g,'').slice(0,24); }
+function bizId(prefix, parts, existingIds){
+  const base = (parts||[]).filter(p=>p!==null && p!==undefined && p!=='').map(slugId).join('-');
+  if(!base) return uid(prefix.toLowerCase());
+  const taken = new Set(existingIds||[]);
+  let candidate = prefix + '-' + base;
+  let n = 2;
+  while(taken.has(candidate)){ candidate = prefix + '-' + base + '-' + n; n++; }
+  return candidate;
+}
+
 /* fills every student's marks with plausible, complete values — used to seed a fully-approved demo record for the Examination Branch */
 function fillFullMarks(course){
   const template = getCourseTemplate(course);
@@ -1123,7 +1142,7 @@ function createFacultyIfNeeded(email, name){
   const existing = App.state.users.find(u=>u.email.toLowerCase()===email.toLowerCase());
   if(existing) return { user:existing, isNew:false };
   const finalName = (name && name.trim()) ? name.trim() : email.split('@')[0].replace(/[._]+/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
-  const user = { id:uid('fac'), name:finalName, email, systemRole:'FACULTY' };
+  const user = { id:bizId('FAC', [email.split('@')[0]], App.state.users.map(u=>u.id)), name:finalName, email, systemRole:'FACULTY' };
   App.state.users.push(user);
   return { user, isNew:true };
 }
@@ -1200,12 +1219,12 @@ const App = {
   /* ---------- audit ---------- */
   logHistory(course, action, remark=''){
     const u = this.currentUser();
-    const entry = { id:uid('h'), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark };
+    const entry = { id:bizId('HIST', [course.code, course.section, course.history.length+1], course.history.map(h=>h.id)), ts:Date.now(), user:u.name, role:u.systemRole==='FACULTY' ? facultyBadgeShort(u) || 'FACULTY' : u.systemRole, action, remark };
     course.history.unshift(entry);
     syncHistory(course.id, entry);
   },
   notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null){
-    const n = { id:uid('note'), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false, notifyEmail, fromEmail };
+    const n = { id:bizId('NOTE', [course ? course.code : 'GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false, notifyEmail, fromEmail };
     this.state.notifications.unshift(n);
     syncNotification(n);
     renderBell();
@@ -1224,7 +1243,7 @@ const App = {
     if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
     if(!password || password.length < 8){ toast('Set a password of at least 8 characters.', 'err'); return; }
     if(this.state.users.find(u=>u.email.toLowerCase()===email)){ toast('A user with this email already exists.', 'err'); return; }
-    const id = uid('u'); // generated up front so the Edge Function's profiles insert has an id to use
+    const id = bizId('USR', [role, email.split('@')[0]], this.state.users.map(u=>u.id)); // generated up front so the Edge Function's profiles insert has an id to use
     try{
       await callAdminManageUser('create_user', { id, name, email, role, password });
       const user = { id, name, email, systemRole:role };
@@ -1301,7 +1320,7 @@ const App = {
     const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && c.section===sec && c.branch===branch);
     if(dupe){ toast(`${subj.code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     const course = {
-      id: uid('c'), code: subj.code, name: subj.name, section: sec, branch,
+      id: bizId('CRS', [subj.code, sec], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: sec, branch,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
@@ -1367,7 +1386,7 @@ const App = {
         already.name = dir.name; already.rollNo = dir.rollNo; already.email = dir.email;
         nextStudents.push(already);
       } else {
-        nextStudents.push({ id: uid('cst'), name: dir.name, rollNo: dir.rollNo, email: dir.email, dirId: dir.id, marks:{} });
+        nextStudents.push({ id: bizId('CST', [course.code, course.section, dir.rollNo], (course.students||[]).map(s=>s.id)), name: dir.name, rollNo: dir.rollNo, email: dir.email, dirId: dir.id, marks:{} });
       }
     });
     nextStudents.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
@@ -1425,7 +1444,7 @@ const App = {
         Object.assign(existing, { name, email: email||existing.email, dirId: dirMatch ? dirMatch.id : existing.dirId });
         updated++;
       } else {
-        const newRow = { id: uid('cst'), name, rollNo, email, dirId: dirMatch ? dirMatch.id : null, marks:{} };
+        const newRow = { id: bizId('CST', [course.code, course.section, rollNo], (course.students||[]).map(s=>s.id)), name, rollNo, email, dirId: dirMatch ? dirMatch.id : null, marks:{} };
         course.students.push(newRow);
         existingByRoll[rollNo] = newRow;
         added++;
@@ -1467,7 +1486,7 @@ const App = {
     // first — otherwise the assignment insert can race ahead of it and fail
     // with "violates foreign key constraint assignments_user_id_fkey".
     if(isNew) await syncProfile(user);
-    const rec = { id:uid('asg'), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
+    const rec = { id:bizId('ASG', [type, course.code, course.section], this.state.assignments.map(a=>a.id)), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
     this.state.assignments.push(rec);
     syncAssignment(rec);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
@@ -1641,13 +1660,13 @@ const App = {
     this.state.currentTermTest = value;
     syncAppSetting('current_term_test', value);
     this.state.termTestHistory = this.state.termTestHistory || [];
-    const ttEntry = { id:uid('tt'), ts:Date.now(), by:actor.name, value };
+    const ttEntry = { id:bizId('TT', [value, this.state.termTestHistory.length+1], this.state.termTestHistory.map(t=>t.id)), ts:Date.now(), by:actor.name, value };
     this.state.termTestHistory.unshift(ttEntry);
     syncTermTest(ttEntry);
     const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
     ccUserIds.forEach(uidTarget=>{
       const n = {
-        id:uid('note'), forUserId:uidTarget, courseId:null,
+        id:bizId('NOTE', ['GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:uidTarget, courseId:null,
         title:`${TERM_TEST_LABELS[value]} is now the active cycle`,
         body:`${actor.name} (HOD) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
         ts:Date.now(), read:false
@@ -1677,7 +1696,7 @@ const App = {
       existing.homeBranch = branch;
       row = existing;
     } else {
-      row = { id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch };
+      row = { id:bizId('FAC', [email.split('@')[0]], this.state.users.map(u=>u.id)), name, email, systemRole:'FACULTY', homeBranch:branch };
       this.state.users.push(row);
     }
     syncProfile(row);
@@ -1713,7 +1732,7 @@ const App = {
       const existing = this.state.users.find(u=>u.email.toLowerCase()===email);
       if(existing && existing.systemRole!=='FACULTY'){ skipped++; return; }
       if(existing){ existing.name=name; existing.homeBranch=branch; updated++; touched.push(existing); }
-      else { const u2={ id:uid('fac'), name, email, systemRole:'FACULTY', homeBranch:branch }; this.state.users.push(u2); added++; touched.push(u2); }
+      else { const u2={ id:bizId('FAC', [email.split('@')[0]], this.state.users.map(u=>u.id)), name, email, systemRole:'FACULTY', homeBranch:branch }; this.state.users.push(u2); added++; touched.push(u2); }
     });
     syncProfiles(touched);
     if(added+updated===0){
@@ -1747,7 +1766,7 @@ const App = {
       Object.assign(existing, { name, email, branch, semester });
       row = existing;
     } else {
-      row = { id:uid('stu'), rollNo, name, email, branch, batch, semester };
+      row = { id:bizId('STU', [rollNo, batch], this.state.studentDirectory.map(s=>s.id)), rollNo, name, email, branch, batch, semester };
       this.state.studentDirectory.push(row);
     }
     syncStudentDirectoryEntry(row);
@@ -1791,7 +1810,7 @@ const App = {
       if(email && !isValidEmail(email)){ skipped++; return; }
       const existing = this.state.studentDirectory.find(s=>s.rollNo===rollNo && s.batch===batch);
       if(existing){ Object.assign(existing, { name, email, branch, semester }); updated++; }
-      else { this.state.studentDirectory.push({ id:uid('stu'), rollNo, name, email, branch, batch, semester }); added++; }
+      else { this.state.studentDirectory.push({ id:bizId('STU', [rollNo, batch], this.state.studentDirectory.map(s=>s.id)), rollNo, name, email, branch, batch, semester }); added++; }
       bySort[branch] = (bySort[branch]||0) + 1;
     });
     const touched = this.state.studentDirectory.filter(s=>s.batch===batch);
