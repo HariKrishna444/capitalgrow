@@ -2048,11 +2048,13 @@ function marksViewTable(course){
     const gt = computeGrandTotal(s, course);
     const cieCells = cieComponents.map(comp=>{
       const v = s.marks[comp.key];
-      return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+      const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
+      return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
     }).join('');
     const seeCells = seeComponents.map(comp=>{
       const v = s.marks[comp.key];
-      return `<td>${v===undefined||v===null?'—':v} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+      const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
+      return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
     }).join('');
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
@@ -2101,7 +2103,9 @@ function marksEntryTabs(course){
     const cie = computeCIE(s, cieComponents);
     const cells = cieComponents.map(comp=>{
       const val = s.marks[comp.key];
+      const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
@@ -2114,7 +2118,9 @@ function marksEntryTabs(course){
     const gt = computeGrandTotal(s, course);
     const seeCells = seeComponents.map(comp=>{
       const val = s.marks[comp.key];
+      const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
