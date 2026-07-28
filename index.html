@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
@@ -2714,26 +2713,48 @@ function renderEAFacultyDirectory(){
   `;
   return wrap;
 }
+// XLSX.js (~1MB minified) is only used by EA/CC import features — loaded on
+// demand the first time any of them is actually used, instead of blocking
+// every page load (including Admin/Exam Branch/CI sessions that never touch
+// it) with the full library. Cached after first load.
+let _xlsxLoadPromise = null;
+function ensureXLSXLoaded(){
+  if(typeof XLSX !== 'undefined') return Promise.resolve();
+  if(_xlsxLoadPromise) return _xlsxLoadPromise;
+  _xlsxLoadPromise = new Promise((resolve, reject)=>{
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => { _xlsxLoadPromise = null; reject(new Error('Failed to load the spreadsheet reader.')); };
+    document.head.appendChild(script);
+  });
+  return _xlsxLoadPromise;
+}
+
 function handleFacultyExcelImport(input){
   const file = input.files && input.files[0];
   if(!file) return;
-  if(typeof XLSX === 'undefined'){ toast('The spreadsheet reader failed to load. Check your internet connection and try again.', 'err'); input.value=''; return; }
-  const reader = new FileReader();
-  reader.onload = (e)=>{
-    try{
-      const data = new Uint8Array(e.target.result);
-      const wb = XLSX.read(data, { type:'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
-      App.bulkImportFaculty(rows);
-    }catch(err){
-      console.warn(err);
-      toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
-    }
+  ensureXLSXLoaded().then(()=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type:'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+        App.bulkImportFaculty(rows);
+      }catch(err){
+        console.warn(err);
+        toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
+      }
+      input.value = '';
+    };
+    reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
+    reader.readAsArrayBuffer(file);
+  }).catch(err=>{
+    toast(err.message || 'Could not load the spreadsheet reader. Check your internet connection and try again.', 'err');
     input.value = '';
-  };
-  reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
-  reader.readAsArrayBuffer(file);
+  });
 }
 window.handleFacultyExcelImport = handleFacultyExcelImport;
 
@@ -2849,23 +2870,27 @@ function handleStudentExcelImport(input){
   if(!file) return;
   const batchEl = document.getElementById('sd-import-batch');
   const batch = batchEl ? batchEl.value : '';
-  if(typeof XLSX === 'undefined'){ toast('The spreadsheet reader failed to load. Check your internet connection and try again.', 'err'); input.value=''; return; }
-  const reader = new FileReader();
-  reader.onload = (e)=>{
-    try{
-      const data = new Uint8Array(e.target.result);
-      const wb = XLSX.read(data, { type:'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
-      App.bulkImportStudents(rows, batch);
-    }catch(err){
-      console.warn(err);
-      toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
-    }
+  ensureXLSXLoaded().then(()=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type:'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+        App.bulkImportStudents(rows, batch);
+      }catch(err){
+        console.warn(err);
+        toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
+      }
+      input.value = '';
+    };
+    reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
+    reader.readAsArrayBuffer(file);
+  }).catch(err=>{
+    toast(err.message || 'Could not load the spreadsheet reader. Check your internet connection and try again.', 'err');
     input.value = '';
-  };
-  reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
-  reader.readAsArrayBuffer(file);
+  });
 }
 window.handleStudentExcelImport = handleStudentExcelImport;
 function downloadStudentTemplate(){
@@ -3166,23 +3191,27 @@ window.removeCCRosterStudent = removeCCRosterStudent;
 function handleCCRosterExcelImport(input, courseId){
   const file = input.files && input.files[0];
   if(!file) return;
-  if(typeof XLSX === 'undefined'){ toast('The spreadsheet reader failed to load. Check your internet connection and try again.', 'err'); input.value=''; return; }
-  const reader = new FileReader();
-  reader.onload = (e)=>{
-    try{
-      const data = new Uint8Array(e.target.result);
-      const wb = XLSX.read(data, { type:'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
-      App.importCourseRosterRows(courseId, rows);
-    }catch(err){
-      console.warn(err);
-      toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
-    }
+  ensureXLSXLoaded().then(()=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type:'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+        App.importCourseRosterRows(courseId, rows);
+      }catch(err){
+        console.warn(err);
+        toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
+      }
+      input.value = '';
+    };
+    reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
+    reader.readAsArrayBuffer(file);
+  }).catch(err=>{
+    toast(err.message || 'Could not load the spreadsheet reader. Check your internet connection and try again.', 'err');
     input.value = '';
-  };
-  reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
-  reader.readAsArrayBuffer(file);
+  });
 }
 window.handleCCRosterExcelImport = handleCCRosterExcelImport;
 
