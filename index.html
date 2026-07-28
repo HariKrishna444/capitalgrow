@@ -395,7 +395,10 @@ table.data-table{
   .content{padding:22px 16px 50px;}
   .notif-panel{right:16px;width:280px;}
 }
+#print-area{display:none;}
 @media print{
+  #app{display:none !important;}
+  #print-area{display:block !important;}
   .topbar,.sidebar,.toast-container,#modal-root .modal-close, .no-print{display:none !important;}
   body{background:#fff;}
   .content{padding:0;max-width:none;}
@@ -2675,6 +2678,7 @@ async function exportPrint(courseId){
     ${marksViewTable(course)}
   `;
   window.print();
+  area.innerHTML = '';
 }
 window.exportPrint = exportPrint;
 
