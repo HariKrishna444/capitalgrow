@@ -1337,8 +1337,11 @@ const App = {
     // Awaited: the CC assignment inserted just below references this course's
     // id via a foreign key, so the course row must exist on the server first —
     // otherwise the assignment insert can race ahead of it and fail with
-    // "violates foreign key constraint assignments_course_id_fkey".
-    await syncCourse(course);
+    // "violates foreign key constraint assignments_course_id_fkey". If the
+    // course insert itself failed (RLS, constraint, network), stop here
+    // instead of racing ahead into that confusing follow-on error.
+    const { error: courseErr } = await syncCourse(course);
+    if(courseErr){ this.state.courses = this.state.courses.filter(x=>x.id!==course.id); renderContent(); return; }
     (course.students||[]).forEach(s=>syncNewStudent(course.id, s));
     this.logHistory(course, `Course coordination created: ${subj.code} — ${subj.name} (by ${actor.name})`);
     if(email){
@@ -1385,7 +1388,8 @@ const App = {
       students: [], history: []
     };
     this.state.courses.push(course);
-    await syncCourse(course);
+    const { error: courseErr } = await syncCourse(course);
+    if(courseErr){ this.state.courses = this.state.courses.filter(x=>x.id!==course.id); renderContent(); return; }
     this.logHistory(course, `Section created under ${subj.code} coordination: Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
     // Coordinator on the new section is whoever coordinates the base subject
     // (usually the acting user; kept explicit so an Admin can do this on
@@ -1536,7 +1540,10 @@ const App = {
     // id via a foreign key, so a brand-new profile must exist on the server
     // first — otherwise the assignment insert can race ahead of it and fail
     // with "violates foreign key constraint assignments_user_id_fkey".
-    if(isNew) await syncProfile(user);
+    if(isNew){
+      const { error: profileErr } = await syncProfile(user);
+      if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==user.id); return; }
+    }
     const rec = { id:bizId('ASG', [type, course.code, course.section], this.state.assignments.map(a=>a.id)), type, courseId, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
     this.state.assignments.push(rec);
     syncAssignment(rec);
