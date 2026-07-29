@@ -1562,6 +1562,10 @@ const App = {
     const existing = getActiveAssignment(courseId, type);
     if(!existing){ toast('No active assignment to revoke.', 'err'); return; }
     if(type==='CC' && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can revoke a Course Coordinator.', 'err'); return; }
+    if(type==='CC'){
+      const siblings = this.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(course.code));
+      if(siblings.some(c=>c.status==='approved') && actor.systemRole!=='ADMIN'){ toast('This subject has an approved, locked record — the Course Coordinator can no longer be revoked. Contact an Administrator if this needs to be corrected.', 'err'); return; }
+    }
     if(type==='CI'){
       const isCoordinator = getActiveAssignment(courseId,'CC')?.userId===actor.id;
       if(!isCoordinator && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the assigned Course Coordinator can revoke a Course Instructor.', 'err'); return; }
@@ -2646,6 +2650,7 @@ function renderHODCoordinators(){
     </div>
     ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
+      const approvedLock = App.state.courses.some(x=>normalizeCode(x.code)===normalizeCode(c.code) && x.status==='approved');
       return `
       <div class="card" ${ccUser ? `style="cursor:pointer;" onclick="App.navigate('hod-cc-detail',{courseId:'${c.id}'})"` : ''}>
         <div class="card-row">
@@ -2657,7 +2662,9 @@ function renderHODCoordinators(){
             ${ccUser
               ? `<span class="status-pill status-approved">${escapeHtml(ccUser.name)}</span>
                  <button class="btn btn-outline btn-sm" onclick="App.navigate('hod-cc-detail',{courseId:'${c.id}'})">Open</button>
-                 <button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Coordinator access for ${escapeHtml(ccUser.name)} on ${c.code}? This also revokes their Course Instructor for any of their sections.')) App.revokeRole('CC','${c.id}')">Revoke</button>`
+                 ${approvedLock
+                   ? `<span class="section-meta" style="font-weight:600;">Approved · Coordinator locked</span>`
+                   : `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Coordinator access for ${escapeHtml(ccUser.name)} on ${c.code}? This also revokes their Course Instructor for any of their sections.')) App.revokeRole('CC','${c.id}')">Revoke</button>`}`
               : `<span class="status-pill status-draft">Unassigned</span>
                  <button class="btn btn-sm" onclick="openAssignModal('CC','${c.id}')">Assign Coordinator</button>`}
           </div>
