@@ -2211,6 +2211,18 @@ function etPill(course){
   if(!course || !course.evalType) return `<span class="status-pill status-draft">ET: Not fixed yet</span>`;
   return `<span class="status-pill" style="background:var(--brass);color:#FBF7EC;border-color:var(--brass);">ET: ${escapeHtml(evalTypeLabel(course.evalType))}</span>`;
 }
+// Same pill, but for HOD-level views where the subject (and therefore its
+// Evaluation Type) is already fixed from Courses Applicable at shell-creation
+// time — regardless of whether a Course Instructor is currently assigned to
+// actually enter marks. Falls back to the course's own evalType first (covers
+// any edge case where the subject isn't in the master list) then to the
+// master subject record, so revoking a Coordinator/Instructor no longer makes
+// an already-known Evaluation Type look "not fixed yet".
+function etPillFixed(course){
+  const abbr = (course && course.evalType) || masterSubject(course && course.code)?.abbr;
+  if(!abbr) return `<span class="status-pill status-draft">ET: Not fixed yet</span>`;
+  return `<span class="status-pill" style="background:var(--brass);color:#FBF7EC;border-color:var(--brass);">ET: ${escapeHtml(evalTypeLabel(abbr))}</span>`;
+}
 function courseMeta(course){ return `${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}`; }
 function assignmentSummary(courseId){
   const course = App.getCourse(courseId);
@@ -2663,7 +2675,7 @@ function renderHODCoordinators(){
         <div class="card-row">
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
-            <div class="section-meta">${escapeHtml(c.code)} · ${etPill(c)}</div>
+            <div class="section-meta">${escapeHtml(c.code)} · ${etPillFixed(c)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;" onclick="event.stopPropagation()">
             ${ccUser
