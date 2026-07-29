@@ -875,7 +875,8 @@ function seedState(){
   c7.status = 'approved';
   const c7t = t0 - 5*86400000;
   c7.history.push(
-    { id:uid('h'), ts:c7t+2*3600000, user:'Dr. Ananya Rao', role:'CI', action:'Submitted directly to the Executive Assistant for verification', remark:'' },
+    { id:uid('h'), ts:c7t+2*3600000, user:'Dr. Ananya Rao', role:'CI', action:'Submitted to the Course Coordinator for verification', remark:'' },
+    { id:uid('h'), ts:c7t+14*3600000, user:'Prof. Rahul Sen', role:'CC', action:'Verified by the Course Coordinator and forwarded to the Executive Assistant', remark:'' },
     { id:uid('h'), ts:c7t+26*3600000, user:'Ms. Priya Fernandes', role:'EA', action:'Verified for completeness and forwarded to HOD', remark:'All components complete and within range.' },
     { id:uid('h'), ts:c7t+50*3600000, user:'Dr. Suresh Menon', role:'HOD', action:'Approved — record locked for result processing', remark:'' },
   );
@@ -1668,17 +1669,50 @@ const App = {
     course.status = 'submitted';
     course.sentBack = false;
     syncCourse(course);
-    this.logHistory(course, 'Submitted directly to the Executive Assistant for verification');
-    this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
-      this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been submitted and is awaiting your verification.`, true)
-    );
-    toast(`${course.code} submitted to the Executive Assistant.`, 'ok');
+    this.logHistory(course, 'Submitted to the Course Coordinator for verification');
+    const ccUser = getCourseCCUser(courseId);
+    if(ccUser){
+      this.notifyUser(ccUser.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been submitted and is awaiting your verification.`, true);
+      toast(`${course.code} submitted to the Course Coordinator.`, 'ok');
+    } else {
+      // Safety net: no active Course Coordinator on this section (shouldn't
+      // normally happen, since a CC must exist before a CI can be assigned).
+      // Fall back to notifying the Executive Assistant directly so the
+      // record doesn't silently stall.
+      this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
+        this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been submitted and has no active Course Coordinator — please verify directly.`, true)
+      );
+      toast(`${course.code} submitted, but has no active Course Coordinator — sent to the Executive Assistant instead.`, 'ok');
+    }
     this.navigate('ci-sections');
   },
   ciSaveDraft(courseId){ this.saveMarks(courseId); toast('Draft saved.', 'ok'); },
 
+  /* ---------- CC: verify the instructor's submission and forward to the
+     Executive Assistant. Sits between the CI's submission and the EA's
+     verification in the approval chain. ---------- */
+  ccForward(courseId){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    const actor = this.currentUser();
+    const ccUser = getCourseCCUser(courseId);
+    if(ccUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can verify and forward this record.', 'err'); return; }
+    if(course.status !== 'submitted'){ toast('This record is not awaiting coordinator verification.', 'err'); return; }
+    const remarkEl = document.getElementById('cc-remark-input');
+    const remark = remarkEl ? remarkEl.value.trim() : '';
+    course.status = 'coordinated';
+    syncCourse(course);
+    this.logHistory(course, 'Verified by the Course Coordinator and forwarded to the Executive Assistant', remark);
+    this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
+      this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been verified by the Course Coordinator and is awaiting your verification.`, true)
+    );
+    toast(`${course.code} forwarded to the Executive Assistant.`, 'ok');
+    this.navigate('cc-list');
+  },
+
   eaForward(courseId){
     const course = this.getCourse(courseId);
+    if(course.status !== 'coordinated'){ toast('This record is not awaiting your verification yet.', 'err'); return; }
     const remarkEl = document.getElementById('ea-remark-input');
     course.eaRemark = remarkEl ? remarkEl.value.trim() : course.eaRemark;
     course.status = 'verified';
@@ -2462,7 +2496,7 @@ function renderHODReview(params){
   wrap.innerHTML = `
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('hod-list')">← Back to pending approval</button>
-      <div class="page-eyebrow">Stage 3 · Approval</div>
+      <div class="page-eyebrow">Stage 4 · Approval</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
@@ -2712,10 +2746,37 @@ function renderHODTermTest(){
   return wrap;
 }
 
-function renderHODAudit(){
+function getAuditEntries(){
   const entries = [];
   App.state.courses.forEach(c=>{ c.history.forEach(h=> entries.push({...h, code:c.code, name:c.name})); });
   entries.sort((a,b)=>b.ts-a.ts);
+  return entries;
+}
+function auditDateKey(ts){
+  const d = new Date(ts);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function auditDateLabel(ts){
+  return new Date(ts).toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'});
+}
+function renderAuditEntriesHtml(entries){
+  if(entries.length===0) return emptyStateHtml('No activity on this date', 'Try a different date, or choose "All dates".');
+  return `<div class="card">${entries.map(h=>`
+    <div class="audit-item">
+      <div class="a-head">${escapeHtml(h.code)} — ${escapeHtml(h.action)} — ${escapeHtml(h.role)}</div>
+      <div class="a-body">${escapeHtml(h.user)}${h.remark ? ': "'+escapeHtml(h.remark)+'"' : ''}</div>
+      <div class="a-time">${fmtDate(h.ts)}</div>
+    </div>`).join('')}</div>`;
+}
+function renderHODAudit(){
+  const entries = getAuditEntries();
+  // entries are already newest-first, so the date keys come out sorted too
+  const dateKeys = [];
+  const dateTsByKey = {};
+  entries.forEach(h=>{
+    const k = auditDateKey(h.ts);
+    if(!(k in dateTsByKey)){ dateKeys.push(k); dateTsByKey[k] = h.ts; }
+  });
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -2723,16 +2784,25 @@ function renderHODAudit(){
       <h2>Audit Log</h2>
       <p>An immutable record of every mark entry, correction, staffing change, and workflow transition across all course-sections.</p>
     </div>
-    ${entries.length===0 ? emptyStateHtml('No activity yet','Actions will appear here as records move through the workflow.') :
-      `<div class="card">${entries.map(h=>`
-        <div class="audit-item">
-          <div class="a-head">${escapeHtml(h.code)} — ${escapeHtml(h.action)} — ${escapeHtml(h.role)}</div>
-          <div class="a-body">${escapeHtml(h.user)}${h.remark ? ': "'+escapeHtml(h.remark)+'"' : ''}</div>
-          <div class="a-time">${fmtDate(h.ts)}</div>
-        </div>`).join('')}</div>`}
+    ${entries.length===0 ? emptyStateHtml('No activity yet','Actions will appear here as records move through the workflow.') : `
+    <div class="card no-print" style="margin-bottom:14px;">
+      <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-bottom:8px;">Filter by date</label>
+      <select id="hod-audit-date-filter" onchange="updateHODAuditList(this.value)">
+        <option value="">All dates</option>
+        ${dateKeys.map(k=>`<option value="${k}">${auditDateLabel(dateTsByKey[k])}</option>`).join('')}
+      </select>
+    </div>
+    <div id="hod-audit-list">${renderAuditEntriesHtml(entries)}</div>
+    `}
   `;
   return wrap;
 }
+function updateHODAuditList(dateKey){
+  const entries = getAuditEntries().filter(h=> !dateKey || auditDateKey(h.ts)===dateKey);
+  const target = document.getElementById('hod-audit-list');
+  if(target) target.innerHTML = renderAuditEntriesHtml(entries);
+}
+window.updateHODAuditList = updateHODAuditList;
 
 /* ================= EA VIEWS ================= */
 function renderEAList(){
@@ -2742,7 +2812,7 @@ function renderEAList(){
     <div class="page-head">
       <div class="page-eyebrow">Executive Assistant</div>
       <h2>Verification Queue</h2>
-      <p>Submissions now come to you directly from the Course Instructor — no Course Coordinator sign-off in between. Check each record for completeness before it reaches the HOD.</p>
+      <p>Submissions reach you after the Course Coordinator has verified them. Check each record for completeness before it reaches the HOD.</p>
     </div>
     ${list.map(c=>`
       <div class="card">
@@ -2754,8 +2824,8 @@ function renderEAList(){
           <div style="display:flex;align-items:center;gap:14px;">
             ${statusPill(c)}
             ${etPill(c)}
-            <button class="btn ${c.status==='submitted'?'':'btn-outline'} btn-sm" onclick="App.navigate('ea-review',{courseId:'${c.id}'})">
-              ${c.status==='submitted' ? 'Verify' : 'View'}
+            <button class="btn ${c.status==='coordinated'?'':'btn-outline'} btn-sm" onclick="App.navigate('ea-review',{courseId:'${c.id}'})">
+              ${c.status==='coordinated' ? 'Verify' : 'View'}
             </button>
           </div>
         </div>
@@ -2765,12 +2835,12 @@ function renderEAList(){
 }
 function renderEAReview(params){
   const course = App.getCourse(params.courseId);
-  const actionable = course.status === 'submitted';
+  const actionable = course.status === 'coordinated';
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ea-list')">← Back to queue</button>
-      <div class="page-eyebrow">Stage 2 · Verification</div>
+      <div class="page-eyebrow">Stage 3 · Verification</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
@@ -3174,6 +3244,10 @@ function renderCIEntry(params){
     ${course.status==='approved' && course.editRequestStatus==='pending' ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Correction requested</div><p style="margin:8px 0 0;color:var(--text-soft);">Waiting for the HOD to approve: "${escapeHtml(course.editRequestRemark||'')}"</p></div>` : ''}
     ${course.status==='approved' && course.editRequestStatus==='denied' ? `<div class="card" style="border-left:3px solid var(--seal-red);"><div class="section-title" style="font-size:14px;color:var(--seal-red);">Correction request denied</div></div>` : ''}
     <div class="card">
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
+        <button class="btn btn-outline btn-sm" onclick="exportCSV('${course.id}')">Export CSV</button>
+        <button class="btn btn-sm btn-outline" onclick="exportPrint('${course.id}')">Export / Print PDF</button>
+      </div>
       ${editable ? marksEntryTabs(course) : marksViewTable(course)}
       ${editable ? `
         <div style="display:flex;gap:10px;margin-top:18px;align-items:center;flex-wrap:wrap;">
@@ -3207,7 +3281,7 @@ function renderCCList(){
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Add a Branch/Section and assign its Course Instructor, choosing from the Executive Assistant's faculty directory for that branch. You can repeat this for as many sections as you have instructors for — the Subject, Abbr, Course Type &amp; Evaluation Type are already fixed by the HOD, so you don't re-pick them here. Marks review and approval are handled directly by the Executive Assistant and HOD — you don't need to sign off on submissions.</p>
+      <p>Add a Branch/Section and assign its Course Instructor, choosing from the Executive Assistant's faculty directory for that branch. You can repeat this for as many sections as you have instructors for — the Subject, Abbr, Course Type &amp; Evaluation Type are already fixed by the HOD, so you don't re-pick them here. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
     </div>
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
@@ -3278,7 +3352,9 @@ function renderCCBranchGroupsHtml(ccCourses, term){
             <div style="display:flex;align-items:center;gap:14px;">
               ${statusPill(c)}
               ${etPill(c)}
-              <button class="btn btn-outline btn-sm" onclick="App.navigate('cc-review',{courseId:'${c.id}'})">View</button>
+              <button class="btn ${c.status==='submitted'?'':'btn-outline'} btn-sm" onclick="App.navigate('cc-review',{courseId:'${c.id}'})">
+                ${c.status==='submitted' ? 'Verify' : 'View'}
+              </button>
             </div>
           </div>
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
@@ -3443,18 +3519,28 @@ window.handleCCRosterExcelImport = handleCCRosterExcelImport;
 
 function renderCCReview(params){
   const course = App.getCourse(params.courseId);
+  const actionable = course.status === 'submitted';
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>
-      <div class="page-eyebrow">Coordinator oversight</div>
+      <div class="page-eyebrow">Stage 2 · Coordinator verification</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
     <div class="card">
-      <p style="color:var(--text-soft);font-size:13.5px;margin:0 0 14px;">Marks review and approval are handled directly by the Executive Assistant and HOD once the instructor submits. As coordinator you can track progress here and manage the instructor assignment from My Coordination.</p>
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
+        <button class="btn btn-outline btn-sm" onclick="exportCSV('${course.id}')">Export CSV</button>
+        <button class="btn btn-sm btn-outline" onclick="exportPrint('${course.id}')">Export / Print PDF</button>
+      </div>
       ${marksViewTable(course)}
+      ${actionable ? `
+        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional)</label>
+        <textarea id="cc-remark-input" class="remark-box" placeholder="Note anything relevant for the Executive Assistant's review..."></textarea>
+        <div style="display:flex;gap:10px;margin-top:14px;">
+          <button class="btn" onclick="App.ccForward('${course.id}')">Verify &amp; Forward to Executive Assistant</button>
+        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is not currently actionable.</p>`}
     </div>
   `;
   return wrap;
