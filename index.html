@@ -944,6 +944,7 @@ async function fetchStateFromSupabase(){
       id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
       evalType:c.eval_type || null,
+      editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       // Roster/marks are NOT fetched here — only a lightweight count +
       // completion flags from the view. Call App.ensureCourseStudentsLoaded
       // (courseId) before any page needs the real per-student data; that
@@ -998,7 +999,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1310,21 +1311,23 @@ const App = {
      If rawEmail is provided, the Course Coordinator is assigned in the same
      step (single "Subject + Section + Branch + Faculty email/name" form in
      Manage Coordinators) — no separate "Assign Coordinator" click needed. */
-  async createCourseSection(subjectCode, section, branch, rawEmail, rawName){
+  async createCourseSection(subjectCode, rawEmail, rawName){
     const actor = this.currentUser();
     if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can create a course section.', 'err'); return; }
     const subj = masterSubject(subjectCode);
     if(!subj){ toast('Choose a Subject from Courses Applicable.', 'err'); return; }
-    const sec = (section||'').trim().toUpperCase();
-    if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
-    if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
     const email = (rawEmail||'').trim().toLowerCase();
     if(email && !isValidEmail(email)){ toast('Enter a valid Coordinator email address.', 'err'); return; }
-    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && c.section===sec && c.branch===branch);
-    if(dupe){ toast(`${subj.code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
+    // A subject only needs one coordination "shell" — the Coordinator
+    // splits it into branch/section combos themselves afterwards (see
+    // App.ccCreateSectionAndAssignInstructor), so branch/section are no
+    // longer collected here at all.
+    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && !c.branch);
+    if(dupe){ toast(`${subj.code} already has a coordination shell — open it from Manage Coordinators.`, 'err'); return; }
     const course = {
-      id: bizId('CRS', [subj.code, sec], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: sec, branch,
+      id: bizId('CRS', [subj.code, 'shell'], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: '', branch: '',
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false,
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
       students: [], history: []
@@ -1336,7 +1339,7 @@ const App = {
     // "violates foreign key constraint assignments_course_id_fkey".
     await syncCourse(course);
     (course.students||[]).forEach(s=>syncNewStudent(course.id, s));
-    this.logHistory(course, `Course section created: ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
+    this.logHistory(course, `Course coordination created: ${subj.code} — ${subj.name} (by ${actor.name})`);
     if(email){
       // Assign the Course Coordinator right away, same as the "Assign
       // Coordinator" flow — creates a FACULTY profile if one doesn't
@@ -1346,10 +1349,54 @@ const App = {
       // `assignments` table at render time.
       await this.assignRole('CC', course.id, email, rawName, undefined);
     } else {
-      toast(`Created ${subj.code} — ${subj.name} · Section ${sec} · ${branchLabel(branch)}.`, 'ok');
+      toast(`Created ${subj.code} — ${subj.name}.`, 'ok');
     }
     renderSidebar();
     renderContent();
+  },
+
+  /* ---------- CC: split a subject coordination into a real branch/section
+     and assign its Course Instructor, all in one step. Reuses the subject
+     already fixed on the base coordination row — the Coordinator no longer
+     re-picks a Subject here, they just pick Branch + Section + Instructor.
+     Can be called repeatedly to allocate several instructors across
+     different sections under the same coordination. */
+  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail){
+    const actor = this.currentUser();
+    const base = this.getCourse(baseCourseId);
+    if(!base){ toast('Choose a coordination to add a section to.', 'err'); return; }
+    const ccUser = getCourseCCUser(baseCourseId);
+    const isOwner = ccUser?.id === actor.id;
+    if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this subject\'s Course Coordinator can add a section.', 'err'); return; }
+    const subj = masterSubject(base.code);
+    if(!subj){ toast('Could not find this subject in Courses Applicable.', 'err'); return; }
+    if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
+    const sec = (section||'').trim().toUpperCase();
+    if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
+    const email = (instructorEmail||'').trim().toLowerCase();
+    if(!email){ toast('Choose an Instructor.', 'err'); return; }
+    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && c.section===sec && c.branch===branch);
+    if(dupe){ toast(`${subj.code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
+    const course = {
+      id: bizId('CRS', [subj.code, branch, sec], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: sec, branch,
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false,
+      students: [], history: []
+    };
+    this.state.courses.push(course);
+    await syncCourse(course);
+    this.logHistory(course, `Section created under ${subj.code} coordination: Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
+    // Coordinator on the new section is whoever coordinates the base subject
+    // (usually the acting user; kept explicit so an Admin can do this on
+    // their behalf without silently reassigning coordination).
+    if(ccUser){
+      const rec = { id:bizId('ASG', ['CC', course.code, course.section], this.state.assignments.map(a=>a.id)), type:'CC', courseId:course.id, userId:ccUser.id, email:ccUser.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
+      this.state.assignments.push(rec);
+      syncAssignment(rec);
+    }
+    await this.assignRole('CI', course.id, email, '', subj.code);
+    renderSidebar();
+    this.navigate('cc-list');
   },
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ----------
@@ -1529,8 +1576,28 @@ const App = {
     toast(`${roleLabel} capability revoked for ${course.code}.`, 'err');
     // Cascade: a section can't have an active Course Instructor without an
     // active Course Coordinator (the CI's Subject/Evaluation Type was fixed
-    // by that Coordinator), so revoking CC also revokes any active CI.
+    // by that Coordinator), so revoking CC also revokes any active CI —
+    // on this row AND on every other section the same Coordinator split
+    // this subject into (a subject coordination now spans multiple rows).
     if(type==='CC'){
+      const siblings = this.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(course.code) && c.id!==courseId);
+      siblings.forEach(sibling=>{
+        const sibCC = getActiveAssignment(sibling.id,'CC');
+        if(!sibCC || sibCC.userId!==existing.userId) return;
+        sibCC.status='revoked'; sibCC.revokedAt=Date.now(); sibCC.revokedBy=actor.id;
+        syncAssignment(sibCC);
+        this.logHistory(sibling, `Course Coordinator capability also revoked (Coordinator was revoked on the parent subject): ${user ? user.name+' ('+user.email+')' : sibCC.email}`);
+        const sibCI = getActiveAssignment(sibling.id, 'CI');
+        if(sibCI){
+          sibCI.status='revoked'; sibCI.revokedAt=Date.now(); sibCI.revokedBy=actor.id;
+          syncAssignment(sibCI);
+          sibling.evalType = null;
+          syncCourse(sibling);
+          const sibCIUser = this.getUserById(sibCI.userId);
+          this.logHistory(sibling, `Course Instructor capability also revoked (Coordinator was revoked): ${sibCIUser ? sibCIUser.name+' ('+sibCIUser.email+')' : sibCI.email}`);
+          if(sibCIUser) this.notifyUser(sibCIUser.id, sibling, `Course Instructor access revoked`, `${actor.name} revoked the Course Coordinator for ${course.code}, so your Course Instructor role for Section ${sibling.section} · ${branchLabel(sibling.branch)} was revoked too. A new Coordinator will need to reassign it.`);
+        }
+      });
       const ciA = getActiveAssignment(courseId, 'CI');
       if(ciA){
         ciA.status='revoked'; ciA.revokedAt=Date.now(); ciA.revokedBy=actor.id;
@@ -1588,9 +1655,10 @@ const App = {
   },
   validateComplete(course){
     if(!course.evalType) return { ok:false, msg:'The Course Coordinator has not yet fixed an Evaluation Type for this section.' };
-    const cieCheck = this.validateCIEComplete(course);
-    if(!cieCheck.ok) return cieCheck;
-    return this.validateSEEComplete(course);
+    // SEE entry is temporarily disabled for Course Instructors — the
+    // Examination Branch will handle it later — so only CIE completeness
+    // gates submission for now.
+    return this.validateCIEComplete(course);
   },
   ciSubmit(courseId){
     this.saveMarks(courseId);
@@ -1636,6 +1704,68 @@ const App = {
     toast(`${course.code} approved and locked.`, 'ok');
     closeModal();
     this.navigate('hod-list');
+  },
+  /* ---------- CI: request permission to correct marks on an already-approved
+     record. Does not reopen the whole pipeline — just asks the HOD for a
+     one-time edit unlock, so an Instructor is never editing an approved
+     record without HOD sign-off. ---------- */
+  ciRequestEditApproved(courseId, remark){
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const rmk = (remark||'').trim();
+    if(!rmk){ toast('Describe what needs correcting.', 'err'); return; }
+    if(course.status!=='approved'){ toast('This record is not approved yet — edit it directly.', 'err'); return; }
+    if(course.editRequestStatus==='pending'){ toast('A correction request is already pending HOD approval.', 'err'); return; }
+    course.editRequestStatus = 'pending';
+    course.editRequestRemark = rmk;
+    course.editUnlocked = false;
+    syncCourse(course);
+    this.logHistory(course, 'Requested permission to correct marks after approval', rmk);
+    this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>
+      this.notifyUser(u.id, course, `Correction requested for ${course.code}`, `The Course Instructor is requesting permission to correct marks on the approved record ${course.code} — ${course.name}: "${rmk}"`, true)
+    );
+    toast('Correction request sent to the HOD.', 'ok');
+    closeModal();
+    this.navigate('ci-entry', { courseId });
+  },
+  hodApproveEdit(courseId){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    course.editRequestStatus = 'approved';
+    course.editUnlocked = true;
+    syncCourse(course);
+    this.logHistory(course, 'Approved instructor\'s request to correct marks — record temporarily unlocked for editing');
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `Correction approved for ${course.code}`, `Your request to correct marks for ${course.code} — ${course.name} was approved. The record is unlocked for editing until you finish and re-lock it.`, true);
+    toast('Correction approved — the instructor can now edit marks.', 'ok');
+    this.navigate('hod-review', { courseId });
+  },
+  hodDenyEdit(courseId){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    course.editRequestStatus = 'denied';
+    course.editUnlocked = false;
+    syncCourse(course);
+    this.logHistory(course, 'Denied instructor\'s request to correct marks');
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `Correction request denied for ${course.code}`, `Your request to correct marks for ${course.code} — ${course.name} was not approved.`, true);
+    toast('Correction request denied.', 'err');
+    this.navigate('hod-review', { courseId });
+  },
+  ciFinishEdit(courseId){
+    this.saveMarks(courseId);
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    course.editUnlocked = false;
+    course.editRequestStatus = null;
+    course.editRequestRemark = '';
+    syncCourse(course);
+    this.logHistory(course, 'Finished correcting marks — record re-locked');
+    this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>
+      this.notifyUser(u.id, course, `${course.code} correction complete`, `The Course Instructor finished correcting marks for ${course.code} — ${course.name} and re-locked the record.`, true)
+    );
+    toast('Marks updated and re-locked.', 'ok');
+    this.navigate('ci-sections');
   },
   hodSendBack(courseId){
     const course = this.getCourse(courseId);
@@ -1975,6 +2105,7 @@ function renderContent(){
     'hod-list': renderHODList,
     'hod-review': renderHODReview,
     'hod-coordinators': renderHODCoordinators,
+    'hod-cc-detail': renderHODCCDetail,
     'hod-termtest': renderHODTermTest,
     'hod-faculty': renderHODFacultyDirectory,
     'hod-audit': renderHODAudit,
@@ -2119,7 +2250,11 @@ function marksEntryTabs(course){
   const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
   const grandMax = round1(CIE_MAX + seeTotalMax);
   const cieDone = courseCIEComplete(course);
-  if(activeMarksTab==='see' && !cieDone) activeMarksTab = 'cie';
+  // SEE entry is temporarily disabled here — it will be handled by the
+  // Examination Branch at the end of the workflow — so the tab always
+  // stays locked for the Course Instructor regardless of CIE completion.
+  const seeEnabledForCI = false;
+  if(activeMarksTab==='see' && !seeEnabledForCI) activeMarksTab = 'cie';
 
   const cieRows = course.students.map(s=>{
     const cie = computeCIE(s, cieComponents);
@@ -2167,7 +2302,7 @@ function marksEntryTabs(course){
     </div>
     <div class="tab-bar">
       <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
-      <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''} ${cieDone?'':'locked'}" onclick="switchMarksTab('see')">Semester End Exam (SEE) ${cieDone?'':'🔒'}</button>
+      <button type="button" class="tab-btn locked" disabled title="Handled by the Examination Branch">Semester End Exam (SEE) 🔒</button>
     </div>
     <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
       <p class="section-meta" style="margin-bottom:8px;">CIE is ${CIE_MAX} marks total: ${cieComponentList}.</p>
@@ -2175,16 +2310,11 @@ function marksEntryTabs(course){
         <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
       </div>
     </div>
-    <div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
-      ${cieDone ? `
-        <p class="section-meta" style="margin-bottom:8px;">SEE is ${seeTotalMax} marks total: ${seeComponentList}. Grand total = CIE (${CIE_MAX}) + SEE (${seeTotalMax}) = ${grandMax}.</p>
-        <div class="table-scroll">
-          <table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>SEE Total</th><th>Grand Total</th></tr></thead><tbody>${seeRows}</tbody></table>
-        </div>` : `
-        <div class="empty-state">
-          <div class="em-title">Semester End Examination marks are locked</div>
-          Complete ${cieNamesOnly} for every student on the CIE tab first.
-        </div>`}
+    <div id="tab-see" class="tab-panel hidden">
+      <div class="empty-state">
+        <div class="em-title">Semester End Examination marks entry is disabled here for now</div>
+        SEE marks will be entered by the Examination Branch at the end of the workflow — you only need to complete ${cieNamesOnly} above.
+      </div>
     </div>`;
 }
 function switchMarksTab(tab){
@@ -2298,7 +2428,7 @@ function renderAdminUsers(){
 
 /* ================= HOD VIEWS ================= */
 function renderHODList(){
-  const list = App.state.courses;
+  const list = App.state.courses.filter(c=>c.branch);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -2338,6 +2468,16 @@ function renderHODReview(params){
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
     ${course.eaRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">EA verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : ''}
+    ${course.status==='approved' && course.editRequestStatus==='pending' ? `
+      <div class="card" style="border-left:3px solid var(--brass);">
+        <div class="section-title" style="font-size:14px;">Instructor requested a marks correction</div>
+        <p style="margin:8px 0 0;color:var(--text-soft);">"${escapeHtml(course.editRequestRemark||'')}"</p>
+        <div style="display:flex;gap:10px;margin-top:14px;">
+          <button class="btn btn-red btn-sm" onclick="if(confirm('Deny this correction request?')) App.hodDenyEdit('${course.id}')">Deny</button>
+          <button class="btn btn-green btn-sm" onclick="App.hodApproveEdit('${course.id}')">Approve Correction</button>
+        </div>
+      </div>` : ''}
+    ${course.status==='approved' && course.editUnlocked ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Unlocked for correction</div><p style="margin:8px 0 0;color:var(--text-soft);">The instructor is currently editing this record. It's still shown as Approved above and will re-lock once they finish.</p></div>` : ''}
     <div class="card">
       ${marksViewTable(course)}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;flex-wrap:wrap;gap:10px;">
@@ -2365,6 +2505,20 @@ function openSendBackModal(courseId){
   `);
 }
 window.openSendBackModal = openSendBackModal;
+
+function openRequestEditModal(courseId){
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>Request marks correction</h3>
+    <p style="color:var(--text-soft);margin-top:8px;">This record is already approved and locked. Describe what needs correcting — the HOD must approve before you can edit it.</p>
+    <textarea id="request-edit-remark" class="remark-box" placeholder="Describe what needs to be corrected..."></textarea>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="App.ciRequestEditApproved('${courseId}', document.getElementById('request-edit-remark').value)">Send Request</button>
+    </div>
+  `);
+}
+window.openRequestEditModal = openRequestEditModal;
 
 function openAuditModal(courseId){
   const course = App.getCourse(courseId);
@@ -2435,22 +2589,11 @@ function renderHODCoordinators(){
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Create Section &amp; Assign Coordinator</div>
-      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — set the Section and Branch, then pick the Coordinator from the existing faculty directory (all branches) or type a new email/name to assign them in the same step. Leave the Coordinator fields blank to just create the section shell and assign a Coordinator later.</p>
+      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — then pick the Coordinator from the existing faculty directory (all branches) or type a new email/name to assign them in the same step. Leave the Coordinator fields blank to just create the coordination shell and assign a Coordinator later. Branch and Section are no longer set here — the Coordinator adds those (and can allocate several Instructors across different sections) from their own dashboard.</p>
       <div class="config-grid">
         <div class="config-field">
           <label>Subject <span style="text-transform:none;">(Courses Applicable — code &amp; name)</span></label>
           <select id="hod-newcourse-subject">${subjectDropdownOptionsHtml('')}</select>
-        </div>
-        <div class="config-field">
-          <label>Section</label>
-          <input id="hod-newcourse-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
-        </div>
-        <div class="config-field">
-          <label>Branch</label>
-          <select id="hod-newcourse-branch">
-            <option value="">— Select Branch —</option>
-            ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
-          </select>
         </div>
         <div class="config-field">
           <label>Existing faculty <span style="text-transform:none;">(pick from directory, all branches)</span></label>
@@ -2465,27 +2608,70 @@ function renderHODCoordinators(){
           <input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe">
         </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-section').value, document.getElementById('hod-newcourse-branch').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Create Section</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Create Section</button>
     </div>
     ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
       return `
-      <div class="card">
+      <div class="card" ${ccUser ? `style="cursor:pointer;" onclick="App.navigate('hod-cc-detail',{courseId:'${c.id}'})"` : ''}>
         <div class="card-row">
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
-            <div class="section-meta">${courseMeta(c)}</div>
+            <div class="section-meta">${escapeHtml(c.code)} · ${etPill(c)}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;" onclick="event.stopPropagation()">
             ${ccUser
               ? `<span class="status-pill status-approved">${escapeHtml(ccUser.name)}</span>
-                 <button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Coordinator access for ${escapeHtml(ccUser.name)} on ${c.code}? This also revokes their Course Instructor for this section, if any.')) App.revokeRole('CC','${c.id}')">Revoke</button>`
+                 <button class="btn btn-outline btn-sm" onclick="App.navigate('hod-cc-detail',{courseId:'${c.id}'})">Open</button>
+                 <button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Coordinator access for ${escapeHtml(ccUser.name)} on ${c.code}? This also revokes their Course Instructor for any of their sections.')) App.revokeRole('CC','${c.id}')">Revoke</button>`
               : `<span class="status-pill status-draft">Unassigned</span>
                  <button class="btn btn-sm" onclick="openAssignModal('CC','${c.id}')">Assign Coordinator</button>`}
           </div>
         </div>
       </div>`;
     }).join('')}
+  `;
+  return wrap;
+}
+
+/* ---------- HOD: drill into one CC's subject coordination — shows every
+   branch/section the Coordinator has split it into, who the Instructor is
+   for each, and lets the HOD view that Instructor's entered marks (read-only)
+   without waiting for the full approval pipeline. ---------- */
+function renderHODCCDetail(params){
+  const base = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  if(!base){ wrap.innerHTML = emptyStateHtml('Not found', 'Go back to Manage Coordinators.'); return wrap; }
+  const ccUser = getCourseCCUser(base.id);
+  const children = App.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(base.code) && c.branch);
+  wrap.innerHTML = `
+    <div class="page-head">
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('hod-coordinators')">← Back to Manage Coordinators</button>
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>${escapeHtml(base.name)}</h2>
+      <p>${escapeHtml(base.code)} · Coordinator: <strong>${ccUser ? escapeHtml(ccUser.name)+' ('+escapeHtml(ccUser.email)+')' : 'Unassigned'}</strong></p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Sections &amp; Instructors</div>
+      <p class="section-meta" style="margin-top:4px;">The Coordinator assigns each Instructor by Branch/Section from their own dashboard. Marks the Instructor enters appear below as soon as they save — you don't need to wait for approval to see them.</p>
+      ${children.length===0 ? emptyStateHtml('No sections yet', 'This Coordinator has not added any Branch/Section + Instructor assignments yet.') : children.map(c=>{
+        const ciUser = getCourseCIUser(c.id);
+        return `
+        <div class="card">
+          <div class="card-row">
+            <div>
+              <div class="section-title">Section ${escapeHtml(c.section)} · ${branchLabel(c.branch)}</div>
+              <div class="section-meta">Instructor: ${ciUser ? escapeHtml(ciUser.name)+' ('+escapeHtml(ciUser.email)+')' : 'Unassigned'} · ${c.studentCount||(c.students||[]).length} student${(c.studentCount||(c.students||[]).length)===1?'':'s'}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;">
+              ${statusPill(c)}
+              ${etPill(c)}
+              <button class="btn btn-outline btn-sm" onclick="App.navigate('hod-review',{courseId:'${c.id}'})">View Marks</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
   `;
   return wrap;
 }
@@ -2550,7 +2736,7 @@ function renderHODAudit(){
 
 /* ================= EA VIEWS ================= */
 function renderEAList(){
-  const list = App.state.courses;
+  const list = App.state.courses.filter(c=>c.branch);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -2955,11 +3141,13 @@ function renderCISections(){
             <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
           </div>
-          <div style="display:flex;align-items:center;gap:14px;">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             ${statusPill(c)}
             ${etPill(c)}
-            <button class="btn ${c.status==='draft'?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
-              ${c.status==='draft' ? 'Enter Marks' : 'View Record'}
+            ${c.status==='approved' && c.editRequestStatus==='pending' ? `<span class="status-pill status-submitted">Correction pending HOD</span>` : ''}
+            ${c.status==='approved' && c.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
+            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
+              ${c.status==='draft'||c.editUnlocked ? 'Enter Marks' : 'View Record'}
             </button>
           </div>
         </div>
@@ -2969,63 +3157,83 @@ function renderCISections(){
 }
 function renderCIEntry(params){
   const course = App.getCourse(params.courseId);
-  const editable = course.status === 'draft';
+  const correctionMode = course.status==='approved' && course.editUnlocked;
+  const editable = course.status === 'draft' || correctionMode;
   const complete = App.validateComplete(course).ok;
   const wrap = el('<div></div>');
+  const approvedNotEditing = course.status==='approved' && !correctionMode;
   wrap.innerHTML = `
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my sections</button>
-      <div class="page-eyebrow">Stage 1 · Submission</div>
+      <div class="page-eyebrow">${correctionMode ? 'Correction unlocked' : 'Stage 1 · Submission'}</div>
       <h2>Subject: ${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     ${sentBackBanner(course)}
+    ${correctionMode ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Temporarily unlocked for correction</div><p style="margin:8px 0 0;color:var(--text-soft);">The HOD approved your request to correct marks. Edit below, then use "Finish &amp; Re-lock" when done.</p></div>` : ''}
+    ${course.status==='approved' && course.editRequestStatus==='pending' ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Correction requested</div><p style="margin:8px 0 0;color:var(--text-soft);">Waiting for the HOD to approve: "${escapeHtml(course.editRequestRemark||'')}"</p></div>` : ''}
+    ${course.status==='approved' && course.editRequestStatus==='denied' ? `<div class="card" style="border-left:3px solid var(--seal-red);"><div class="section-title" style="font-size:14px;color:var(--seal-red);">Correction request denied</div></div>` : ''}
     <div class="card">
       ${editable ? marksEntryTabs(course) : marksViewTable(course)}
       ${editable ? `
         <div style="display:flex;gap:10px;margin-top:18px;align-items:center;flex-wrap:wrap;">
-          <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save Draft</button>
-          <button class="btn" ${complete?'':'disabled'} onclick="App.ciSubmit('${course.id}')">Submit for Review</button>
-          ${complete ? '' : `<span class="section-meta">Complete every CIE component and the SEE score for all students to enable submission.</span>`}
-        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is currently read-only.</p>`}
+          ${correctionMode ? `
+            <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save</button>
+            <button class="btn" onclick="if(confirm('Finish correcting and re-lock this record?')) App.ciFinishEdit('${course.id}')">Finish &amp; Re-lock</button>
+          ` : `
+            <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save Draft</button>
+            <button class="btn" ${complete?'':'disabled'} onclick="App.ciSubmit('${course.id}')">Submit for Review</button>
+            ${complete ? '' : `<span class="section-meta">Complete every CIE component for all students to enable submission.</span>`}
+          `}
+        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is currently read-only.</p>
+        ${approvedNotEditing && course.editRequestStatus!=='pending' ? `<button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openRequestEditModal('${course.id}')">Request Marks Correction</button>` : ''}`}
     </div>
   `;
   return wrap;
 }
 
 /* ================= FACULTY: CC VIEWS (dynamic role) ================= */
+function ccCoordinationOptionsHtml(ccCourses){
+  const seen = {};
+  ccCourses.forEach(c=>{ if(!seen[c.code]) seen[c.code] = c; });
+  return Object.values(seen).map(c=>`<option value="${c.id}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
+}
 function renderCCList(){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
   const wrap = el('<div></div>');
+  const firstBranch = Object.keys(BRANCH_LABELS)[0];
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Assign the Course Instructor for each section you coordinate, choosing from the Executive Assistant's faculty directory for that branch. Marks review and approval are now handled directly by the Executive Assistant and HOD — you don't need to sign off on submissions.</p>
+      <p>Add a Branch/Section and assign its Course Instructor, choosing from the Executive Assistant's faculty directory for that branch. You can repeat this for as many sections as you have instructors for — the Subject, Abbr, Course Type &amp; Evaluation Type are already fixed by the HOD, so you don't re-pick them here. Marks review and approval are handled directly by the Executive Assistant and HOD — you don't need to sign off on submissions.</p>
     </div>
-    ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a section, it will appear here.') : `
+    ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
-        <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick one of your coordinated sections, pick its real Subject from Courses Applicable, then choose an instructor from the faculty directory uploaded for that branch. The Subject you pick is what fixes the Abbr, Course Type &amp; Evaluation Type — and therefore which marks components the instructor will see and enter.</p>
+        <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
+        <p class="section-meta" style="margin-top:4px;">Pick which subject coordination this is for (if you coordinate more than one), then the Branch, Section, and Instructor for that section.</p>
         <div class="config-grid">
           <div class="config-field">
-            <label>Course Section</label>
-            <select id="cc-assign-course" onchange="updateCCInstructorOptions(this.value)">
-              ${ccCourses.map(c=>`<option value="${c.id}">${escapeHtml(c.code)} — ${escapeHtml(c.name)} (${branchLabel(c.branch)})</option>`).join('')}
+            <label>Coordination <span style="text-transform:none;">(Subject)</span></label>
+            <select id="cc-assign-base">${ccCoordinationOptionsHtml(ccCourses)}</select>
+          </div>
+          <div class="config-field">
+            <label>Branch</label>
+            <select id="cc-assign-branch" onchange="document.getElementById('cc-assign-instructor').innerHTML = buildInstructorOptionsHtml(this.value)">
+              ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
             </select>
           </div>
           <div class="config-field">
-            <label>Subject <span style="text-transform:none;">(Courses Applicable — fixes Abbr, Course Type &amp; Evaluation Type)</span></label>
-            <select id="cc-assign-subject" onchange="document.getElementById('cc-assign-subject-note').innerHTML = subjectNoteHtml(this.value)">${subjectDropdownOptionsHtml(masterSubject(ccCourses[0].code) ? ccCourses[0].code : '')}</select>
-            <div id="cc-assign-subject-note">${subjectNoteHtml(masterSubject(ccCourses[0].code) ? ccCourses[0].code : '')}</div>
+            <label>Section</label>
+            <input id="cc-assign-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
           </div>
           <div class="config-field">
             <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
-            <select id="cc-assign-instructor">${buildInstructorOptionsHtml(ccCourses[0].branch)}</select>
+            <select id="cc-assign-instructor">${buildInstructorOptionsHtml(firstBranch)}</select>
           </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.assignRole('CI', document.getElementById('cc-assign-course').value, document.getElementById('cc-assign-instructor').value, '', document.getElementById('cc-assign-subject').value)">Assign &amp; Activate</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value)">Add Section &amp; Assign</button>
       </div>
 
       <div class="card">
@@ -3033,7 +3241,7 @@ function renderCCList(){
         <input id="cc-search-input" class="search-input" type="text" placeholder="Search by course code, name, branch, or instructor..." style="margin-top:10px;" oninput="updateCCBranchGroups(this.value)">
       </div>
 
-      <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses,'')}</div>
+      <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch),'')}</div>
     `}
   `;
   return wrap;
@@ -3043,17 +3251,6 @@ function buildInstructorOptionsHtml(branch){
   if(directoryFaculty.length===0) return `<option value="">— No faculty uploaded for ${escapeHtml(branchLabel(branch))} yet —</option>`;
   return directoryFaculty.map(f=>`<option value="${escapeHtml(f.email)}">${escapeHtml(f.name)} (${escapeHtml(f.email)})</option>`).join('');
 }
-function updateCCInstructorOptions(courseId){
-  const course = App.getCourse(courseId);
-  const sel = document.getElementById('cc-assign-instructor');
-  if(sel && course) sel.innerHTML = buildInstructorOptionsHtml(course.branch);
-  const subjSel = document.getElementById('cc-assign-subject');
-  const preselect = course && masterSubject(course.code) ? course.code : '';
-  if(subjSel && course) subjSel.innerHTML = subjectDropdownOptionsHtml(preselect);
-  const noteEl = document.getElementById('cc-assign-subject-note');
-  if(noteEl) noteEl.innerHTML = subjectNoteHtml(preselect);
-}
-window.updateCCInstructorOptions = updateCCInstructorOptions;
 function renderCCBranchGroupsHtml(ccCourses, term){
   const q = (term||'').trim().toLowerCase();
   const branches = {};
@@ -3107,7 +3304,7 @@ function updateCCBranchGroups(term){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
   const target = document.getElementById('cc-branch-groups');
-  if(target) target.innerHTML = renderCCBranchGroupsHtml(ccCourses, term);
+  if(target) target.innerHTML = renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch), term);
 }
 window.updateCCBranchGroups = updateCCBranchGroups;
 
