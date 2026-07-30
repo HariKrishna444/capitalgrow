@@ -2481,14 +2481,32 @@ function renderAdminUsers(){
 }
 
 /* ================= HOD VIEWS ================= */
+let hodListFilter = 'all';
+function setHodListFilter(f){ hodListFilter = f; renderContent(); }
+window.setHodListFilter = setHodListFilter;
+function hodStatusPill(course){
+  // On the HOD's Pending Approval list, 'draft' is shown as 'Pending' —
+  // clearer for the HOD than the internal 'Draft' stage name used elsewhere.
+  const label = course.status === 'draft' ? 'Pending' : STATUS_LABEL[course.status];
+  return `<span class="status-pill ${STATUS_CLASS[course.status]}">${label}</span>`;
+}
 function renderHODList(){
-  const list = App.state.courses.filter(c=>c.branch);
+  const all = App.state.courses.filter(c=>c.branch);
+  const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
+    : hodListFilter==='pending' ? all.filter(c=>c.status!=='approved')
+    : all;
+  const filterBtn = (v,label) => `<button class="btn btn-sm ${hodListFilter===v?'':'btn-outline'}" onclick="setHodListFilter('${v}')">${label}</button>`;
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Head of Department</div>
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+      ${filterBtn('all','All')}
+      ${filterBtn('pending','Pending')}
+      ${filterBtn('approved','Approved')}
     </div>
     ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Go to "Manage Coordinators" to create one, then it will appear here once records start flowing through for approval.') : list.map(c=>`
       <div class="card">
@@ -2498,7 +2516,7 @@ function renderHODList(){
             ${courseMetaBlock(c)}
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
-            ${statusPill(c)}
+            ${hodStatusPill(c)}
             ${etPill(c)}
             <button class="btn ${c.status==='verified'?'':'btn-outline'} btn-sm" onclick="App.navigate('hod-review',{courseId:'${c.id}'})">
               ${c.status==='verified' ? 'Review' : 'View'}
@@ -2662,7 +2680,7 @@ function renderHODCoordinators(){
           <input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe">
         </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Create Section</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Assign Coordinator</button>
     </div>
     ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
@@ -2965,9 +2983,19 @@ window.exportPrint = exportPrint;
 function facultyDirectoryEntries(){
   return App.state.users.filter(u=>u.systemRole==='FACULTY' && u.homeBranch);
 }
-function facultyDirectoryBranchGroupsHtml(editable){
-  const entries = facultyDirectoryEntries();
-  if(entries.length===0) return emptyStateHtml('No faculty uploaded yet', editable ? 'Add faculty below to build the branch-wise directory Course Coordinators assign from.' : 'The Executive Assistant hasn\'t uploaded any faculty yet.');
+function facultyDirectoryBranchGroupsHtml(editable, term){
+  const q = (term||'').trim().toLowerCase();
+  let entries = facultyDirectoryEntries();
+  if(q){
+    entries = entries.filter(u=>{
+      const hay = [u.name, u.email, branchLabel(u.homeBranch)].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  if(entries.length===0){
+    if(q) return emptyStateHtml('No matches', 'Try a different search term.');
+    return emptyStateHtml('No faculty uploaded yet', editable ? 'Add faculty below to build the branch-wise directory Course Coordinators assign from.' : 'The Executive Assistant hasn\'t uploaded any faculty yet.');
+  }
   const branches = {};
   entries.forEach(u=>{ (branches[u.homeBranch] = branches[u.homeBranch] || []).push(u); });
   return Object.keys(branches).map(bk=>`
@@ -2986,6 +3014,11 @@ function facultyDirectoryBranchGroupsHtml(editable){
     }).join('')}
   `).join('');
 }
+function updateFacultyDirectoryGroups(editable, term){
+  const target = document.getElementById('faculty-directory-groups');
+  if(target) target.innerHTML = facultyDirectoryBranchGroupsHtml(editable, term);
+}
+window.updateFacultyDirectoryGroups = updateFacultyDirectoryGroups;
 function renderEAFacultyDirectory(){
   const wrap = el('<div></div>');
   wrap.innerHTML = `
@@ -3017,7 +3050,11 @@ function renderEAFacultyDirectory(){
         <button class="btn btn-outline btn-sm" onclick="downloadFacultyTemplate()">Download template</button>
       </div>
     </div>
-    ${facultyDirectoryBranchGroupsHtml(true)}
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Search faculty</div>
+      <input id="fd-search-input" class="search-input" type="text" placeholder="Search by name, email, or branch..." style="margin-top:10px;" oninput="updateFacultyDirectoryGroups(true, this.value)">
+    </div>
+    <div id="faculty-directory-groups">${facultyDirectoryBranchGroupsHtml(true,'')}</div>
   `;
   return wrap;
 }
@@ -3086,7 +3123,11 @@ function renderHODFacultyDirectory(){
       <h2>Faculty Directory</h2>
       <p>Read-only, branch-wise view of the faculty roster uploaded by the Executive Assistant. Course Coordinators use this list to assign Course Instructors.</p>
     </div>
-    ${facultyDirectoryBranchGroupsHtml(false)}
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Search faculty</div>
+      <input id="fd-search-input" class="search-input" type="text" placeholder="Search by name, email, or branch..." style="margin-top:10px;" oninput="updateFacultyDirectoryGroups(false, this.value)">
+    </div>
+    <div id="faculty-directory-groups">${facultyDirectoryBranchGroupsHtml(false,'')}</div>
   `;
   return wrap;
 }
