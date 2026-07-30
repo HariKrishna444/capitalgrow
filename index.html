@@ -771,7 +771,18 @@ function getTemplate(abbr){ return EVAL_TEMPLATES.find(e=>e.abbr===abbr) || null
 function evalTypeLabel(abbr){ const t = getTemplate(abbr); return t ? t.label : '— Not yet fixed by Coordinator —'; }
 function getCourseTemplate(course){ return getTemplate(course && course.evalType) || getTemplate(DEFAULT_EVAL_TYPE); }
 function getCourseComponents(course){ return getCourseTemplate(course).cie; }
-function getCourseSeeComponents(course){ return getCourseTemplate(course).see; }
+/* SEE Theory is entered separately (by the Examination Branch) and, wherever a
+   template also has a Practical/other SEE component, is no longer shown or
+   counted on the frontend — only that other component is kept and folded
+   straight into the combined Total (CIE 50 + SEE-Practical-scale = 65/70/75
+   etc., per subject). Pure-theory templates (SEE = Theory only, e.g. ET1/2/3)
+   are unaffected since there's nothing else to fall back on. */
+function seeDisplayComponents(template){
+  const seeComps = (template && template.see) || [];
+  const hasOther = seeComps.some(c=>c.key!=='seeTheory');
+  return hasOther ? seeComps.filter(c=>c.key!=='seeTheory') : seeComps;
+}
+function getCourseSeeComponents(course){ return seeDisplayComponents(getCourseTemplate(course)); }
 const CIE_MAX = 50;
 
 const STATUS_LABEL = { draft:'Draft', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
@@ -2021,7 +2032,7 @@ function computeSEE(student, components){
 function computeGrandTotal(student, course){
   const template = getCourseTemplate(course);
   const cie = computeCIE(student, template.cie);
-  const see = computeSEE(student, template.see);
+  const see = computeSEE(student, seeDisplayComponents(template));
   return { cieTotal:cie.total, seeTotal:see.total, total: round1(cie.total + see.total), complete: cie.complete && see.complete };
 }
 function courseCIEComplete(course){
@@ -2251,7 +2262,7 @@ function marksViewTable(course){
   }
   const template = getCourseTemplate(course);
   const cieComponents = template.cie;
-  const seeComponents = template.see;
+  const seeComponents = seeDisplayComponents(template);
   const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
   const grandMax = round1(CIE_MAX + seeTotalMax);
   const rows = course.students.map(s=>{
@@ -2271,7 +2282,6 @@ function marksViewTable(course){
       ${cieCells}
       <td class="total-cell">${gt.cieTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
       ${seeCells}
-      <td class="total-cell">${gt.seeTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${seeTotalMax}</span></td>
       <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>
     </tr>`;
   }).join('');
@@ -2284,7 +2294,7 @@ function marksViewTable(course){
     </div>
     <div class="table-scroll">
       <table class="data-table" style="margin-top:14px;min-width:920px;">
-        <thead><tr><th>Student</th>${cieHead}<th>CIE Total</th>${seeHead}<th>SEE Total</th><th>Grand Total</th></tr></thead>
+        <thead><tr><th>Student</th>${cieHead}<th>CIE Total</th>${seeHead}<th>Total</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -2303,7 +2313,7 @@ function marksEntryTabs(course){
   }
   const template = getCourseTemplate(course);
   const cieComponents = template.cie;
-  const seeComponents = template.see;
+  const seeComponents = seeDisplayComponents(template);
   const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
   const grandMax = round1(CIE_MAX + seeTotalMax);
   const cieDone = courseCIEComplete(course);
@@ -2339,7 +2349,6 @@ function marksEntryTabs(course){
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
       ${seeCells}
-      <td class="total-cell">${gt.seeTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${seeTotalMax}</span></td>
       <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>
     </tr>`;
   }).join('');
@@ -2365,9 +2374,9 @@ function marksEntryTabs(course){
       </div>
     </div>
     <div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">SEE is ${seeTotalMax} marks total: ${seeComponentList}. SEE Theory 🔒 is entered separately by the Examination Branch and stays locked here.</p>
+      <p class="section-meta" style="margin-bottom:8px;">SEE counted here is ${seeTotalMax} marks: ${seeComponentList}, folded straight into the Total below (CIE ${CIE_MAX} + SEE ${seeTotalMax} = ${grandMax}). SEE Theory is entered and evaluated separately by the Examination Branch and no longer appears on this screen.</p>
       <div class="table-scroll">
-        <table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>SEE Total</th><th>Grand Total</th></tr></thead><tbody>${seeRows}</tbody></table>
+        <table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>Total</th></tr></thead><tbody>${seeRows}</tbody></table>
       </div>
     </div>`;
 }
@@ -2951,11 +2960,11 @@ window.toggleExamMarks = toggleExamMarks;
 async function exportCSV(courseId){
   const course = await App.ensureCourseStudentsLoaded(courseId);
   const template = getCourseTemplate(course);
-  const cieComponents = template.cie, seeComponents = template.see;
-  const header = ['Student', ...cieComponents.map(c=>c.label), 'CIE Total', ...seeComponents.map(c=>c.label), 'SEE Total', 'Grand Total'];
+  const cieComponents = template.cie, seeComponents = seeDisplayComponents(template);
+  const header = ['Student', ...cieComponents.map(c=>c.label), 'CIE Total', ...seeComponents.map(c=>c.label), 'Total'];
   const rows = course.students.map(s=>{
     const gt = computeGrandTotal(s, course);
-    return [s.name, ...cieComponents.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, ...seeComponents.map(c=>s.marks[c.key] ?? ''), gt.seeTotal, gt.total];
+    return [s.name, ...cieComponents.map(c=>s.marks[c.key] ?? ''), gt.cieTotal, ...seeComponents.map(c=>s.marks[c.key] ?? ''), gt.total];
   });
   const csv = [header, ...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
