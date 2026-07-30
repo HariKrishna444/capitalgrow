@@ -1831,7 +1831,7 @@ const App = {
     this.navigate('hod-list');
   },
 
-  /* ---------- HOD: fix the active Term Test cycle, visible to every role ---------- */
+  /* ---------- Admin: fix the active Term Test cycle, visible to every role ---------- */
   setTermTest(value){
     if(!TERM_TEST_LABELS[value]){ toast('Choose a valid term test.', 'err'); return; }
     const actor = this.currentUser();
@@ -1846,7 +1846,7 @@ const App = {
       const n = {
         id:bizId('NOTE', ['GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:uidTarget, courseId:null,
         title:`${TERM_TEST_LABELS[value]} is now the active cycle`,
-        body:`${actor.name} (HOD) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
+        body:`${actor.name} (Admin) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
         ts:Date.now(), read:false
       };
       this.state.notifications.unshift(n);
@@ -2107,11 +2107,11 @@ function getNavForUser(user){
   if(user.systemRole==='ADMIN') return [
     {v:'admin-users', label:'Manage System Accounts'},
     {v:'hod-coordinators', label:'Manage Coordinators'},
+    {v:'hod-termtest', label:'Term Test Cycle'},
   ];
   if(user.systemRole==='HOD') return [
     {v:'hod-list', label:'Pending Approval'},
     {v:'hod-coordinators', label:'Manage Coordinators'},
-    {v:'hod-termtest', label:'Term Test Cycle'},
     {v:'hod-faculty', label:'Faculty Directory'},
     {v:'hod-audit', label:'Audit Log'},
   ];
@@ -2307,11 +2307,6 @@ function marksEntryTabs(course){
   const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
   const grandMax = round1(CIE_MAX + seeTotalMax);
   const cieDone = courseCIEComplete(course);
-  // SEE entry is temporarily disabled here — it will be handled by the
-  // Examination Branch at the end of the workflow — so the tab always
-  // stays locked for the Course Instructor regardless of CIE completion.
-  const seeEnabledForCI = false;
-  if(activeMarksTab==='see' && !seeEnabledForCI) activeMarksTab = 'cie';
 
   const cieRows = course.students.map(s=>{
     const cie = computeCIE(s, cieComponents);
@@ -2333,10 +2328,12 @@ function marksEntryTabs(course){
     const seeCells = seeComponents.map(comp=>{
       const val = s.marks[comp.key];
       const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
+      const isTheory = comp.key === 'seeTheory';
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
-        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
+        value="${val===undefined||val===null?'':val}" placeholder="${isTheory?'Exam Branch':'/'+comp.rawMax}"
+        ${isTheory ? 'disabled title="Entered by the Examination Branch"' : ''}
         onchange="onMarkChange(this)"></td>`;
     }).join('');
     return `<tr>
@@ -2359,7 +2356,7 @@ function marksEntryTabs(course){
     </div>
     <div class="tab-bar">
       <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
-      <button type="button" class="tab-btn locked" disabled title="Handled by the Examination Branch">Semester End Exam (SEE) 🔒</button>
+      <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''}" onclick="switchMarksTab('see')">Semester End Exam (SEE)</button>
     </div>
     <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
       <p class="section-meta" style="margin-bottom:8px;">CIE is ${CIE_MAX} marks total: ${cieComponentList}.</p>
@@ -2367,10 +2364,10 @@ function marksEntryTabs(course){
         <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
       </div>
     </div>
-    <div id="tab-see" class="tab-panel hidden">
-      <div class="empty-state">
-        <div class="em-title">Semester End Examination marks entry is disabled here for now</div>
-        SEE marks will be entered by the Examination Branch at the end of the workflow — you only need to complete ${cieNamesOnly} above.
+    <div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
+      <p class="section-meta" style="margin-bottom:8px;">SEE is ${seeTotalMax} marks total: ${seeComponentList}. SEE Theory 🔒 is entered separately by the Examination Branch and stays locked here.</p>
+      <div class="table-scroll">
+        <table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>SEE Total</th><th>Grand Total</th></tr></thead><tbody>${seeRows}</tbody></table>
       </div>
     </div>`;
 }
@@ -2742,7 +2739,7 @@ function renderHODTermTest(){
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
-      <div class="page-eyebrow">Head of Department</div>
+      <div class="page-eyebrow">Administrator</div>
       <h2>Term Test Cycle</h2>
       <p>Fix which examination cycle is currently active. Once set, it's sent to every Course Coordinator and shown as a banner to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.</p>
     </div>
@@ -2979,12 +2976,12 @@ function facultyDirectoryBranchGroupsHtml(editable){
       const { ccCourses, ciCourses } = getFacultyCourses(u.id);
       const load = [ccCourses.length?`CC×${ccCourses.length}`:null, ciCourses.length?`CI×${ciCourses.length}`:null].filter(Boolean).join(' · ') || 'No current assignment';
       return `
-      <div class="card card-row">
+      <div class="card card-row" style="cursor:pointer;" onclick="openFacultyDetailModal('${u.id}')">
         <div>
           <div class="section-title">${escapeHtml(u.name)}</div>
           <div class="section-meta">${escapeHtml(u.email)} · ${load}</div>
         </div>
-        ${editable ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Remove ${escapeHtml(u.name)} from the ${branchLabel(bk)} directory?')) App.removeFacultyFromDirectory('${u.id}')">Remove</button>` : ''}
+        ${editable ? `<button class="btn btn-red btn-sm" onclick="event.stopPropagation(); if(confirm('Remove ${escapeHtml(u.name)} from the ${branchLabel(bk)} directory?')) App.removeFacultyFromDirectory('${u.id}')">Remove</button>` : ''}
       </div>`;
     }).join('')}
   `).join('');
@@ -3093,6 +3090,34 @@ function renderHODFacultyDirectory(){
   `;
   return wrap;
 }
+
+/* ---------- Faculty detail modal: shows a faculty member's current CC/CI assignments ---------- */
+function openFacultyDetailModal(userId){
+  const user = App.state.users.find(u=>u.id===userId);
+  if(!user) return;
+  const { ccCourses, ciCourses } = getFacultyCourses(userId);
+  const courseListHtml = (list) => list.length===0
+    ? `<p class="section-meta" style="margin-top:6px;">No current assignment.</p>`
+    : `<div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;">${list.map(c=>`
+        <div class="audit-item">
+          <div class="section-title" style="font-size:13.5px;">${escapeHtml(c.name)}</div>
+          <div class="section-meta">${courseMeta(c)}</div>
+        </div>`).join('')}</div>`;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>${escapeHtml(user.name)}</h3>
+    <p class="section-meta" style="margin-top:2px;">${escapeHtml(user.email)} · ${branchLabel(user.homeBranch)}</p>
+    <div style="margin-top:16px;">
+      <div class="section-title" style="font-size:14px;">Course Coordinator (CC)</div>
+      ${courseListHtml(ccCourses)}
+    </div>
+    <div style="margin-top:16px;">
+      <div class="section-title" style="font-size:14px;">Course Instructor (CI)</div>
+      ${courseListHtml(ciCourses)}
+    </div>
+  `);
+}
+window.openFacultyDetailModal = openFacultyDetailModal;
 
 /* ---------- EA: student directory, uploaded batch- and branch-wise ---------- */
 function studentDirectoryGroupsHtml(){
