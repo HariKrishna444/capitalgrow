@@ -785,6 +785,47 @@ function seeDisplayComponents(template){
 function getCourseSeeComponents(course){ return seeDisplayComponents(getCourseTemplate(course)); }
 const CIE_MAX = 50;
 
+// ============================================================================
+// APPROVAL GROUPING — per the fixed institutional rule:
+//   • Term Test 1 + Term Test 2 + Lab Internal (Practical Internal Test) are
+//     entered together and need explicit HOD approval before they're locked.
+//   • Lab External (SEE Practical) is entered separately and also needs
+//     explicit HOD approval before it's locked.
+//   • Everything else (SIA, MOOCs/Assignments, Tutorials, Seminars, Skill
+//     components, Regular Lab/Skill Performance, Project Assessment, etc.)
+//     is scaled per the Evaluation Type as usual and needs NO HOD approval —
+//     it stays editable by the Course Instructor like before.
+// A given template only shows the groups it actually has components for
+// (e.g. a pure-theory ET1/2/3 template has Term Tests but no Lab Internal/
+// External at all, so only the Term Test approval group appears).
+// ============================================================================
+function labInternalComponent(template){ return (template.cie||[]).find(c=>c.key==='pracInternal') || null; }
+function labExternalComponent(template){ return (template.see||[]).find(c=>c.key==='seePractical'||c.key==='seePracticalProject') || null; }
+function termTestComponentsInTemplate(template){ return (template.cie||[]).filter(c=>c.key==='tt1'||c.key==='tt2'||c.key==='termTest'); }
+/* The "Term Test & Lab Internal" HOD-approval group's CIE components. */
+function ttLabApprovalComponents(template){
+  const comps = termTestComponentsInTemplate(template).slice();
+  const lab = labInternalComponent(template);
+  if(lab) comps.push(lab);
+  return comps;
+}
+/* The "Lab External" HOD-approval group's SEE component(s) (usually one). */
+function labExternalApprovalComponents(template){
+  const c = labExternalComponent(template);
+  return c ? [c] : [];
+}
+/* Remaining CIE components — no HOD approval required. */
+function otherCieComponents(template){
+  const approvalKeys = new Set(ttLabApprovalComponents(template).map(c=>c.key));
+  return (template.cie||[]).filter(c=>!approvalKeys.has(c.key));
+}
+/* Remaining SEE components (after SEE Theory is already excluded and Lab
+   External is pulled into its own approval tab) — no HOD approval required. */
+function otherSeeComponents(template){
+  const labKey = labExternalComponent(template)?.key;
+  return seeDisplayComponents(template).filter(c=>c.key!==labKey);
+}
+
 const STATUS_LABEL = { draft:'Draft', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
 const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coordinated:'status-coordinated', verified:'status-verified', approved:'status-approved' };
 
@@ -792,6 +833,80 @@ const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coord
 const STUDENT_POOL = ['Aarav Sharma','Diya Kulkarni','Rohan Gupta','Sneha Reddy','Kabir Malhotra','Isha Bansal','Arjun Nair','Meera Pillai','Karthik Iyer','Ananya Joshi'];
 
 const TERM_TEST_LABELS = { TT1:'Term Test 1', TT2:'Term Test 2', TT3:'Term Test 3' };
+
+// ============================================================================
+// TERM TEST QUESTION TEMPLATE — fixed for every student, every course,
+// regardless of Evaluation Type. Structure (per the official Term Test
+// paper pattern):
+//   Short answers: Q1–Q5, 2 marks each = 10 marks, all compulsory.
+//   Long answers:  Q6–Q11, 16 marks each, arranged as 3 "either/or" choice
+//                  pairs — (Q6 or Q7) from Unit 1, (Q8 or Q9) from Unit 2,
+//                  (Q10 or Q11) from Unit 3. The student attempts exactly
+//                  ONE question per pair (3 attempted out of 6 offered), so
+//                  only one side of each pair may carry marks — the app
+//                  enforces this. Each long question is further split into
+//                  parts (a) and (b) that together make up its 16 marks.
+//   Raw long-answer total (3 attempted x 16 = 48) is scaled down to 40.
+//   Term Test total = 10 (short, unscaled) + 40 (long, scaled) = 50 marks,
+//   matching the raw/50 the existing CIE templates already expect for
+//   tt1 / tt2 / termTest.
+// ============================================================================
+const TT_SHORT_KEYS = ['q1','q2','q3','q4','q5'];
+const TT_SHORT_EACH_MAX = 2;
+const TT_SHORT_TOTAL_MAX = 10;
+const TT_LONG_PAIRS = [
+  { unit:'Unit 1', a:'q6',  b:'q7'  },
+  { unit:'Unit 2', a:'q8',  b:'q9'  },
+  { unit:'Unit 3', a:'q10', b:'q11' },
+];
+const TT_LONG_QUESTION_MAX = 16;
+const TT_LONG_RAW_MAX = 48;   // 3 attempted questions x 16
+const TT_LONG_SCALED_MAX = 40;
+const TT_TOTAL_MAX = 50;      // 10 short + 40 scaled-long
+
+/* Which raw CIE component key (as defined on the Evaluation Type template)
+   a given Term Test cycle feeds into. Templates with two separate slots
+   (tt1/tt2) map TT1->tt1 and TT2->tt2; templates with a single combined
+   slot (termTest) always feed that one slot, whichever cycle is active.
+   No template currently defines a third slot, so TT3 has no target unless
+   one is added to EVAL_TEMPLATES later. */
+function termTestComponentKey(template, cycle){
+  if(!template) return null;
+  const keys = (template.cie||[]).map(c=>c.key);
+  if(cycle==='TT1' && keys.includes('tt1')) return 'tt1';
+  if(cycle==='TT2' && keys.includes('tt2')) return 'tt2';
+  if(keys.includes('termTest')) return 'termTest';
+  return null;
+}
+/* Reads one student's stored answer-sheet (s.marks.ttDetail[cycle]) and
+   computes the short total, long raw/scaled total, grand /50 total, and any
+   choice-pair validation errors (both sides of a pair carrying marks). */
+function computeTermTestRaw(detail){
+  detail = detail || {};
+  let shortTotal = 0;
+  TT_SHORT_KEYS.forEach(k=>{
+    const v = detail[k];
+    if(typeof v === 'number' && !isNaN(v)) shortTotal += Math.min(Math.max(v,0), TT_SHORT_EACH_MAX);
+  });
+  shortTotal = Math.min(round1(shortTotal), TT_SHORT_TOTAL_MAX);
+  let longRaw = 0, attempted = 0;
+  const errors = [];
+  TT_LONG_PAIRS.forEach(({unit,a,b})=>{
+    const da = detail[a] || {}, db = detail[b] || {};
+    const totalA = (typeof da.a==='number'?da.a:0) + (typeof da.b==='number'?da.b:0);
+    const totalB = (typeof db.a==='number'?db.a:0) + (typeof db.b==='number'?db.b:0);
+    const hasA = totalA > 0, hasB = totalB > 0;
+    if(hasA && hasB){
+      errors.push(`${unit}: only ${a.toUpperCase()} OR ${b.toUpperCase()} may carry marks (choice question) — clear one before entering the other.`);
+    } else if(hasA || hasB){
+      attempted++;
+      longRaw += Math.min(Math.max(hasA?totalA:totalB, 0), TT_LONG_QUESTION_MAX);
+    }
+  });
+  const longScaled = round1((longRaw / TT_LONG_RAW_MAX) * TT_LONG_SCALED_MAX);
+  const total = round1(shortTotal + longScaled);
+  return { shortTotal, longRaw, longScaled, attempted, total, errors, valid: errors.length===0 };
+}
 
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -957,6 +1072,7 @@ async function fetchStateFromSupabase(){
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
       evalType:c.eval_type || null,
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
+      ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
       // Roster/marks are NOT fetched here — only a lightweight count +
       // completion flags from the view. Call App.ensureCourseStudentsLoaded
       // (courseId) before any page needs the real per-student data; that
@@ -1011,7 +1127,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1312,34 +1428,35 @@ const App = {
   },
 
   /* ---------- HOD/Admin: create a course-section ----------
-     Section identity (code, name) comes straight from the live Supabase
-     `subjects` table — the real "Courses Applicable" list — so a section can never be created
-     against a subject that isn't on the official Evaluation Scheme sheet.
-     Note this only creates the section shell (draft, unassigned, no fixed
-     Evaluation Type yet) — the Coordinator still separately confirms the
-     Subject when assigning the Course Instructor, which is what actually
-     fixes the Evaluation Type.
+     The HOD no longer picks a real Subject here (and so no longer fixes an
+     Evaluation Type at this stage) — the Course Coordinator is the one who
+     later selects the real Subject from "Courses Applicable" when assigning
+     the Course Instructor (see App.ccCreateSectionAndAssignInstructor /
+     App.assignRole), and THAT is what fixes the Abbr, Course Type &
+     Evaluation Type. Here the HOD just needs a working title (code/name) to
+     create the coordination shell and hand it to a Coordinator.
 
      If rawEmail is provided, the Course Coordinator is assigned in the same
-     step (single "Subject + Section + Branch + Faculty email/name" form in
-     Manage Coordinators) — no separate "Assign Coordinator" click needed. */
-  async createCourseSection(subjectCode, rawEmail, rawName){
+     step (single "Code + Name + Faculty email/name" form in Manage
+     Coordinators) — no separate "Assign Coordinator" click needed. */
+  async createCourseSection(rawCode, rawName, rawEmail, rawCcName){
     const actor = this.currentUser();
     if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can create a course section.', 'err'); return; }
-    const subj = masterSubject(subjectCode);
-    if(!subj){ toast('Choose a Subject from Courses Applicable.', 'err'); return; }
+    const code = (rawCode||'').trim().toUpperCase();
+    const name = (rawName||'').trim();
+    if(!code || !name){ toast('Enter both a working Course Code and Course Name for this coordination.', 'err'); return; }
     const email = (rawEmail||'').trim().toLowerCase();
     if(email && !isValidEmail(email)){ toast('Enter a valid Coordinator email address.', 'err'); return; }
     // A subject only needs one coordination "shell" — the Coordinator
     // splits it into branch/section combos themselves afterwards (see
     // App.ccCreateSectionAndAssignInstructor), so branch/section are no
     // longer collected here at all.
-    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && !c.branch);
-    if(dupe){ toast(`${subj.code} already has a coordination shell — open it from Manage Coordinators.`, 'err'); return; }
+    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && !c.branch);
+    if(dupe){ toast(`${code} already has a coordination shell — open it from Manage Coordinators.`, 'err'); return; }
     const course = {
-      id: bizId('CRS', [subj.code, 'shell'], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: '', branch: '',
+      id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '',
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
-      editRequestStatus:null, editRequestRemark:'', editUnlocked:false,
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null,
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
       students: [], history: []
@@ -1354,7 +1471,7 @@ const App = {
     const { error: courseErr } = await syncCourse(course);
     if(courseErr){ this.state.courses = this.state.courses.filter(x=>x.id!==course.id); renderContent(); return; }
     (course.students||[]).forEach(s=>syncNewStudent(course.id, s));
-    this.logHistory(course, `Course coordination created: ${subj.code} — ${subj.name} (by ${actor.name})`);
+    this.logHistory(course, `Course coordination created: ${code} — ${name} (by ${actor.name})`);
     if(email){
       // Assign the Course Coordinator right away, same as the "Assign
       // Coordinator" flow — creates a FACULTY profile if one doesn't
@@ -1362,29 +1479,31 @@ const App = {
       // CC/CI are never written to profiles.system_role — that column only
       // ever holds ADMIN/HOD/EA/EXAM/FACULTY; the role is derived from the
       // `assignments` table at render time.
-      await this.assignRole('CC', course.id, email, rawName, undefined);
+      await this.assignRole('CC', course.id, email, rawCcName, undefined);
     } else {
-      toast(`Created ${subj.code} — ${subj.name}.`, 'ok');
+      toast(`Created ${code} — ${name}.`, 'ok');
     }
     renderSidebar();
     renderContent();
   },
 
   /* ---------- CC: split a subject coordination into a real branch/section
-     and assign its Course Instructor, all in one step. Reuses the subject
-     already fixed on the base coordination row — the Coordinator no longer
-     re-picks a Subject here, they just pick Branch + Section + Instructor.
-     Can be called repeatedly to allocate several instructors across
-     different sections under the same coordination. */
-  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail){
+     and assign its Course Instructor, all in one step. THIS is where the
+     Coordinator selects the real Subject from "Courses Applicable" — that
+     selection is what fixes the Abbr, Course Type & Evaluation Type for the
+     new section (the HOD's working code/name on the base coordination shell
+     is just a label and no longer carries an Evaluation Type). Can be called
+     repeatedly to allocate several instructors/subjects across different
+     sections under the same coordination. */
+  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, subjectCode){
     const actor = this.currentUser();
     const base = this.getCourse(baseCourseId);
     if(!base){ toast('Choose a coordination to add a section to.', 'err'); return; }
     const ccUser = getCourseCCUser(baseCourseId);
     const isOwner = ccUser?.id === actor.id;
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this subject\'s Course Coordinator can add a section.', 'err'); return; }
-    const subj = masterSubject(base.code);
-    if(!subj){ toast('Could not find this subject in Courses Applicable.', 'err'); return; }
+    const subj = masterSubject(subjectCode);
+    if(!subj){ toast('Choose a Subject from Courses Applicable — this fixes the Abbr, Course Type & Evaluation Type.', 'err'); return; }
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
     const sec = (section||'').trim().toUpperCase();
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
@@ -1395,7 +1514,7 @@ const App = {
     const course = {
       id: bizId('CRS', [subj.code, branch, sec], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: sec, branch,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
-      editRequestStatus:null, editRequestRemark:'', editUnlocked:false,
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null,
       students: [], history: []
     };
     this.state.courses.push(course);
@@ -1681,7 +1800,16 @@ const App = {
     // SEE entry is temporarily disabled for Course Instructors — the
     // Examination Branch will handle it later — so only CIE completeness
     // gates submission for now.
-    return this.validateCIEComplete(course);
+    const cieCheck = this.validateCIEComplete(course);
+    if(!cieCheck.ok) return cieCheck;
+    const template = getCourseTemplate(course);
+    if(ttLabApprovalComponents(template).length && course.ttLabApproval!=='approved'){
+      return { ok:false, msg:'Term Test 1/2 & Lab Internal marks still need HOD approval before this record can be submitted.' };
+    }
+    if(labExternalApprovalComponents(template).length && course.labExternalApproval!=='approved'){
+      return { ok:false, msg:'Lab External marks still need HOD approval before this record can be submitted.' };
+    }
+    return { ok:true };
   },
   ciSubmit(courseId){
     this.saveMarks(courseId);
@@ -1823,6 +1951,76 @@ const App = {
     toast('Marks updated and re-locked.', 'ok');
     this.navigate('ci-sections');
   },
+
+  /* ---------- CI: submit the Term Test 1/2 + Lab Internal group, or the
+     Lab External group, for HOD approval. These two groups are entered by
+     the Course Instructor exactly like any other CIE/SEE component, but
+     can't be locked in until the HOD explicitly signs off — unlike the
+     rest of CIE (SIA, Assignments, Seminars, etc.) which needs no such
+     approval and stays freely editable until the whole record is
+     submitted in the normal Stage 1→2→3 flow. */
+  submitApprovalGroup(courseId, group){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can submit this for HOD approval.', 'err'); return; }
+    if(!course.evalType){ toast('The Course Coordinator hasn\'t fixed an Evaluation Type for this section yet.', 'err'); return; }
+    const template = getCourseTemplate(course);
+    const comps = group==='ttlab' ? ttLabApprovalComponents(template) : labExternalApprovalComponents(template);
+    if(!comps.length){ toast('This section\'s Evaluation Type has no components in this group.', 'err'); return; }
+    if(!course.students.length){ toast('Add students to the roster before submitting.', 'err'); return; }
+    const incomplete = course.students.some(s=>comps.some(c=>typeof s.marks[c.key] !== 'number'));
+    if(incomplete){ toast('Enter marks for every student in this group before submitting for HOD approval.', 'err'); return; }
+    const field = group==='ttlab' ? 'ttLabApproval' : 'labExternalApproval';
+    if(course[field]==='approved'){ toast('This group is already approved and locked.', 'err'); return; }
+    course[field] = 'pending';
+    syncCourse(course);
+    const groupLabel = group==='ttlab' ? 'Term Test 1/2 & Lab Internal' : 'Lab External';
+    this.logHistory(course, `Submitted "${groupLabel}" marks for HOD approval`);
+    this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>
+      this.notifyUser(u.id, course, `${course.code} — ${groupLabel} awaiting approval`, `${actor.name} submitted the "${groupLabel}" marks for ${course.code} — ${course.name} and is awaiting your approval.`, true)
+    );
+    toast(`"${groupLabel}" submitted to the HOD for approval.`, 'ok');
+    renderContent();
+  },
+  /* ---------- HOD: approve one of the two groups above. Approving locks
+     that group's inputs on the Course Instructor's entry screen — it can
+     only be reopened by an Administrator revoking the approval by hand
+     (mirrors how an approved whole-record needs an Admin/HOD correction
+     request to reopen). */
+  hodApproveGroup(courseId, group){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can approve this.', 'err'); return; }
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    const field = group==='ttlab' ? 'ttLabApproval' : 'labExternalApproval';
+    course[field] = 'approved';
+    syncCourse(course);
+    const groupLabel = group==='ttlab' ? 'Term Test 1/2 & Lab Internal' : 'Lab External';
+    this.logHistory(course, `Approved "${groupLabel}" marks`);
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} approved`, `${actor.name} approved the "${groupLabel}" marks for ${course.code} — ${course.name}. This group is now locked.`, true);
+    toast(`"${groupLabel}" approved for ${course.code}.`, 'ok');
+    renderContent();
+  },
+  /* ---------- HOD: send a group back for correction instead of approving it. ---------- */
+  hodRejectGroup(courseId, group, remark){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can do this.', 'err'); return; }
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    const field = group==='ttlab' ? 'ttLabApproval' : 'labExternalApproval';
+    course[field] = null;
+    syncCourse(course);
+    const groupLabel = group==='ttlab' ? 'Term Test 1/2 & Lab Internal' : 'Lab External';
+    const rmk = (remark||'').trim();
+    this.logHistory(course, `Sent back "${groupLabel}" marks for correction`, rmk);
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} sent back`, `${actor.name} sent the "${groupLabel}" marks for ${course.code} — ${course.name} back for correction.${rmk?` Remark: "${rmk}"`:''}`, true);
+    toast(`"${groupLabel}" sent back for correction.`, 'err');
+    renderContent();
+  },
   hodSendBack(courseId){
     const course = this.getCourse(courseId);
     const remarkEl = document.getElementById('sendback-remark');
@@ -1866,6 +2064,43 @@ const App = {
     toast(`${TERM_TEST_LABELS[value]} set as the active cycle and sent to all Course Coordinators.`, 'ok');
     renderContent();
     renderBell();
+  },
+
+  /* ---------- CI: save one answer-cell of the structured Term Test entry
+     form (short Q1-5, or long Q6-11 part a/b) and re-derive the raw /50
+     score, which is written straight into the course's fixed tt1/tt2/
+     termTest CIE component — the existing CIE scaling pipeline (scaledMax
+     per template) takes it from there, exactly like any other CIE mark. */
+  setTermTestMark(courseId, studentId, cycle, qKey, subpart, rawValue){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can enter Term Test marks.', 'err'); return; }
+    if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked — Term Test marks can no longer be edited.', 'err'); return; }
+    const s = (course.students||[]).find(x=>x.id===studentId);
+    if(!s) return;
+    s.marks = s.marks || {};
+    s.marks.ttDetail = s.marks.ttDetail || {};
+    s.marks.ttDetail[cycle] = s.marks.ttDetail[cycle] || {};
+    const cap = TT_LONG_PAIRS.some(p=>p.a===qKey||p.b===qKey) ? TT_LONG_QUESTION_MAX : TT_SHORT_EACH_MAX;
+    const val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : Math.min(Math.max(parseFloat(rawValue)||0, 0), cap);
+    if(subpart){
+      s.marks.ttDetail[cycle][qKey] = s.marks.ttDetail[cycle][qKey] || {};
+      if(val===undefined) delete s.marks.ttDetail[cycle][qKey][subpart]; else s.marks.ttDetail[cycle][qKey][subpart] = val;
+    } else {
+      if(val===undefined) delete s.marks.ttDetail[cycle][qKey]; else s.marks.ttDetail[cycle][qKey] = val;
+    }
+    const template = getCourseTemplate(course);
+    const compKey = termTestComponentKey(template, cycle);
+    const calc = computeTermTestRaw(s.marks.ttDetail[cycle]);
+    if(compKey){
+      if(calc.valid) s.marks[compKey] = calc.total;
+      // While a choice-pair violation exists, don't overwrite the live CIE
+      // score — the entry screen shows the error inline until it's fixed.
+    }
+    syncStudent(courseId, s);
+    renderContent();
   },
 
   /* ---------- EA: faculty directory, uploaded branch-wise ---------- */
@@ -2136,6 +2371,7 @@ function getNavForUser(user){
   const { ccCourses, ciCourses } = getFacultyCourses(user.id);
   const nav = [];
   if(ciCourses.length) nav.push({v:'ci-sections', label:'My Sections'});
+  if(ciCourses.length) nav.push({v:'ci-termtest', label:'Term Test'});
   if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
@@ -2150,7 +2386,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -2172,6 +2408,8 @@ function renderContent(){
     'exam-list': renderExamList,
     'ci-sections': renderCISections,
     'ci-entry': renderCIEntry,
+    'ci-termtest': renderCITermTestSections,
+    'ci-termtest-entry': renderCITermTestEntry,
     'cc-list': renderCCList,
     'cc-roster': renderCCRoster,
     'cc-review': renderCCReview,
@@ -2253,7 +2491,7 @@ function sentBackBanner(course){
   </div>`;
 }
 
-let activeMarksTab = 'cie';
+let activeMarksTab = 'ttlab';
 
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
 function marksViewTable(course){
@@ -2301,8 +2539,52 @@ function marksViewTable(course){
 }
 
 /* Editable, tabbed CIE/SEE entry UI — used only on the Course Instructor's entry page.
-   The SEE tab stays locked until every student's CIE components for the course's fixed
-   Evaluation Type template are fully entered. */
+   Split into up to 4 tabs per the fixed institutional rule:
+     • "Term Test & Lab Internal" — needs HOD approval before it locks.
+     • "Lab External"             — needs HOD approval before it locks (only
+       shown for Evaluation Types that actually have a Lab External/SEE
+       Practical component).
+     • "Other CIE"                — SIA, Assignments/MOOCs, Tutorials, Skill/
+       Project components etc. — no HOD approval needed, always editable.
+     • "Semester End Exam (SEE)"  — any remaining SEE components (after Lab
+       External is pulled out above and SEE Theory is excluded as before);
+       hidden if nothing's left to show. */
+function approvalGroupPanel(course, template, group, comps, editableOverride){
+  const statusField = group==='ttlab' ? 'ttLabApproval' : 'labExternalApproval';
+  const status = course[statusField];
+  const locked = status==='approved';
+  const editable = editableOverride && !locked;
+  const rows = course.students.map(s=>{
+    const cells = comps.map(comp=>{
+      const val = s.marks[comp.key];
+      const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
+      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        class="${overMax?'invalid':''}"
+        data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
+        ${editable?'':'disabled'}
+        onchange="onMarkChange(this)"></td>`;
+    }).join('');
+    const groupCalc = computeCIE(s, comps);
+    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${groupCalc.total}</td></tr>`;
+  }).join('');
+  const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const groupLabel = group==='ttlab' ? 'Term Test 1/2 & Lab Internal' : 'Lab External';
+  const badge = locked ? `<span class="status-pill status-approved">Approved by HOD — locked</span>`
+    : status==='pending' ? `<span class="status-pill status-submitted">Pending HOD approval</span>`
+    : `<span class="status-pill status-draft">Not yet submitted</span>`;
+  const submitBtn = (editableOverride && !locked && status!=='pending')
+    ? `<button class="btn btn-sm" style="margin-top:10px;" onclick="App.submitApprovalGroup('${course.id}','${group}')">Submit ${groupLabel} for HOD Approval</button>`
+    : '';
+  return `
+    <p class="section-meta" style="margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      ${comps.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ')} ${badge}
+    </p>
+    <div class="table-scroll">
+      <table class="data-table"><thead><tr><th>Student</th>${head}<th>Group Total</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>
+    ${submitBtn}`;
+}
 function marksEntryTabs(course){
   if(!course.evalType){
     return `
@@ -2312,15 +2594,16 @@ function marksEntryTabs(course){
       </div>`;
   }
   const template = getCourseTemplate(course);
-  const cieComponents = template.cie;
-  const seeComponents = seeDisplayComponents(template);
-  const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
-  const grandMax = round1(CIE_MAX + seeTotalMax);
-  const cieDone = courseCIEComplete(course);
+  const ttLabComps = ttLabApprovalComponents(template);
+  const labExtComps = labExternalApprovalComponents(template);
+  const otherCie = otherCieComponents(template);
+  const otherSee = otherSeeComponents(template);
+  const showLabExtTab = labExtComps.length > 0;
+  const showSeeTab = otherSee.length > 0;
 
   const cieRows = course.students.map(s=>{
-    const cie = computeCIE(s, cieComponents);
-    const cells = cieComponents.map(comp=>{
+    const cie = computeCIE(s, otherCie);
+    const cells = otherCie.map(comp=>{
       const val = s.marks[comp.key];
       const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
@@ -2329,34 +2612,35 @@ function marksEntryTabs(course){
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
     }).join('');
-    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td></tr>`;
+    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total}</td></tr>`;
   }).join('');
-  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = otherCie.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
   const seeRows = course.students.map(s=>{
-    const gt = computeGrandTotal(s, course);
-    const seeCells = seeComponents.map(comp=>{
+    const seeCalc = computeCIE(s, otherSee);
+    const seeCells = otherSee.map(comp=>{
       const val = s.marks[comp.key];
       const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
-      const isTheory = comp.key === 'seeTheory';
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
-        value="${val===undefined||val===null?'':val}" placeholder="${isTheory?'Exam Branch':'/'+comp.rawMax}"
-        ${isTheory ? 'disabled title="Entered by the Examination Branch"' : ''}
+        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
     }).join('');
-    return `<tr>
-      <td>${escapeHtml(s.name)}</td>
-      ${seeCells}
-      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>
-    </tr>`;
+    return `<tr><td>${escapeHtml(s.name)}</td>${seeCells}<td class="total-cell">${seeCalc.total}</td></tr>`;
   }).join('');
-  const seeHead = seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const seeHead = otherSee.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
-  const cieComponentList = cieComponents.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
-  const cieNamesOnly = cieComponents.map(c=>c.label).join(', ');
-  const seeComponentList = seeComponents.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ');
+  const correctionMode = course.status==='approved' && course.editUnlocked;
+  const editable = course.status==='draft' || correctionMode;
+
+  const tabs = [
+    { key:'ttlab', label:'Term Test & Lab Internal' },
+    ...(showLabExtTab ? [{ key:'labext', label:'Lab External' }] : []),
+    { key:'othercie', label:'Other CIE' },
+    ...(showSeeTab ? [{ key:'see', label:'Semester End Exam (SEE)' }] : []),
+  ];
+  if(!tabs.some(t=>t.key===activeMarksTab)) activeMarksTab = 'ttlab';
 
   return `
     <div class="et-banner" style="margin-bottom:14px;padding:10px 14px;background:var(--parchment-2);border:1px solid var(--rule);border-radius:2px;">
@@ -2364,21 +2648,22 @@ function marksEntryTabs(course){
       <div style="font-family:'Fraunces',serif;font-weight:600;color:var(--ink);font-size:15px;margin-top:2px;">${escapeHtml(template.label)} <span style="font-family:inherit;font-weight:400;font-size:12px;color:var(--text-soft);">(${escapeHtml(template.courseType)})</span></div>
     </div>
     <div class="tab-bar">
-      <button type="button" class="tab-btn ${activeMarksTab==='cie'?'active':''}" onclick="switchMarksTab('cie')">CIE Marks</button>
-      <button type="button" class="tab-btn ${activeMarksTab==='see'?'active':''}" onclick="switchMarksTab('see')">Semester End Exam (SEE)</button>
+      ${tabs.map(t=>`<button type="button" class="tab-btn ${activeMarksTab===t.key?'active':''}" onclick="switchMarksTab('${t.key}')">${t.label}</button>`).join('')}
     </div>
-    <div id="tab-cie" class="tab-panel ${activeMarksTab==='cie'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">CIE is ${CIE_MAX} marks total: ${cieComponentList}.</p>
-      <div class="table-scroll">
-        <table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>CIE Total</th></tr></thead><tbody>${cieRows}</tbody></table>
-      </div>
+    <div id="tab-ttlab" class="tab-panel ${activeMarksTab==='ttlab'?'':'hidden'}">
+      ${ttLabComps.length ? approvalGroupPanel(course, template, 'ttlab', ttLabComps, editable) : `<p class="section-meta">No Term Test or Lab Internal component on this Evaluation Type.</p>`}
     </div>
-    <div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">SEE counted here is ${seeTotalMax} marks: ${seeComponentList}, folded straight into the Total below (CIE ${CIE_MAX} + SEE ${seeTotalMax} = ${grandMax}). SEE Theory is entered and evaluated separately by the Examination Branch and no longer appears on this screen.</p>
-      <div class="table-scroll">
-        <table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>Total</th></tr></thead><tbody>${seeRows}</tbody></table>
-      </div>
-    </div>`;
+    ${showLabExtTab ? `<div id="tab-labext" class="tab-panel ${activeMarksTab==='labext'?'':'hidden'}">
+      ${approvalGroupPanel(course, template, 'labext', labExtComps, editable)}
+    </div>` : ''}
+    <div id="tab-othercie" class="tab-panel ${activeMarksTab==='othercie'?'':'hidden'}">
+      <p class="section-meta" style="margin-bottom:8px;">No HOD approval needed here — scaled straight per the Evaluation Type as usual: ${otherCie.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ') || '— none for this Evaluation Type —'}.</p>
+      ${otherCie.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>Group Total</th></tr></thead><tbody>${cieRows}</tbody></table></div>` : ''}
+    </div>
+    ${showSeeTab ? `<div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
+      <p class="section-meta" style="margin-bottom:8px;">No HOD approval needed here: ${otherSee.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ')}. SEE Theory is entered and evaluated separately by the Examination Branch and no longer appears on this screen.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>Group Total</th></tr></thead><tbody>${seeRows}</tbody></table></div>
+    </div>` : ''}`;
 }
 function switchMarksTab(tab){
   activeMarksTab = tab;
@@ -2499,6 +2784,31 @@ function hodStatusPill(course){
   const label = course.status === 'draft' ? 'Pending' : STATUS_LABEL[course.status];
   return `<span class="status-pill ${STATUS_CLASS[course.status]}">${label}</span>`;
 }
+function pendingApprovalGroupsHtml(){
+  const courses = App.state.courses.filter(c=>c.branch && (c.ttLabApproval==='pending' || c.labExternalApproval==='pending'));
+  if(!courses.length) return '';
+  const rows = [];
+  courses.forEach(c=>{
+    if(c.ttLabApproval==='pending') rows.push({c, group:'ttlab', label:'Term Test 1/2 & Lab Internal'});
+    if(c.labExternalApproval==='pending') rows.push({c, group:'labext', label:'Lab External'});
+  });
+  return `
+    <div class="card" style="border-left:3px solid var(--brass);margin-bottom:16px;">
+      <div class="section-title" style="font-size:15px;">Term Test &amp; Lab Approvals Pending</div>
+      <p class="section-meta" style="margin-top:4px;">These need your sign-off separately from the final record approval — SIA, Assignments, Seminars and the rest of CIE/SEE don't require this step.</p>
+      ${rows.map(({c,group,label})=>`
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+          <div>
+            <div class="section-title" style="font-size:14px;">${escapeHtml(c.name)} — ${label}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="const r=prompt('Remark for sending this back (optional):'); if(r!==null) App.hodRejectGroup('${c.id}','${group}', r);">Send Back</button>
+            <button class="btn btn-sm" onclick="App.hodApproveGroup('${c.id}','${group}')">Approve</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
 function renderHODList(){
   const all = App.state.courses.filter(c=>c.branch);
   const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
@@ -2512,6 +2822,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
+    ${pendingApprovalGroupsHtml()}
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
       ${filterBtn('all','All')}
       ${filterBtn('pending','Pending')}
@@ -2670,11 +2981,15 @@ function renderHODCoordinators(){
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Create Section &amp; Assign Coordinator</div>
-      <p class="section-meta" style="margin-top:4px;">Pick a real Subject from Courses Applicable — this fixes its Abbr, Course Type, code &amp; name automatically — then pick the Coordinator from the existing faculty directory (all branches) or type a new email/name to assign them in the same step. Leave the Coordinator fields blank to just create the coordination shell and assign a Coordinator later. Branch and Section are no longer set here — the Coordinator adds those (and can allocate several Instructors across different sections) from their own dashboard.</p>
+      <p class="section-meta" style="margin-top:4px;">Give this coordination a working Course Code &amp; Name, then pick the Coordinator from the existing faculty directory (all branches) or type a new email/name to assign them in the same step. Leave the Coordinator fields blank to just create the coordination shell and assign a Coordinator later. Branch and Section are no longer set here — the Coordinator adds those. The real Subject (Courses Applicable) — and with it the Abbr, Course Type &amp; Evaluation Type — is no longer picked here; the Coordinator now selects it when assigning each section's Course Instructor.</p>
       <div class="config-grid">
         <div class="config-field">
-          <label>Subject <span style="text-transform:none;">(Courses Applicable — code &amp; name)</span></label>
-          <select id="hod-newcourse-subject">${subjectDropdownOptionsHtml('')}</select>
+          <label>Course Code <span style="text-transform:none;">(working label only)</span></label>
+          <input id="hod-newcourse-code" type="text" placeholder="e.g. CS301">
+        </div>
+        <div class="config-field">
+          <label>Course Name <span style="text-transform:none;">(working label only)</span></label>
+          <input id="hod-newcourse-name" type="text" placeholder="e.g. Data Structures">
         </div>
         <div class="config-field">
           <label>Existing faculty <span style="text-transform:none;">(pick from directory, all branches)</span></label>
@@ -2689,7 +3004,7 @@ function renderHODCoordinators(){
           <input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe">
         </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-subject').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Assign Coordinator</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-code').value, document.getElementById('hod-newcourse-name').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Assign Coordinator</button>
     </div>
     ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
@@ -3326,6 +3641,139 @@ function renderCISections(){
   `;
   return wrap;
 }
+/* Separate "Term Test" sidebar landing page — lists the Instructor's
+   sections and the currently active TT cycle, linking into the structured
+   entry screen for each. Kept apart from "My Sections" / ci-entry (CIE/SEE)
+   per the fixed Term Test paper pattern. */
+function renderCITermTestSections(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const cycle = App.state.currentTermTest;
+  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Term Test</h2>
+      <p>The Administrator fixes the active Term Test cycle (TT1 / TT2 / TT3); once fixed here, the structured 11-question answer sheet opens automatically for each of your sections. Short answers (Q1–Q5, 2 marks each = 10) and long answers (Q6–Q11, 16 marks each, one question per unit-pair attempted, scaled to 40) combine into a raw ${TT_TOTAL_MAX}-mark score that's fed straight into that section's fixed Evaluation Type template.</p>
+    </div>
+    ${!cycleLabel ? emptyStateHtml('No Term Test cycle active', 'The Administrator hasn\'t fixed a Term Test cycle yet — this page opens automatically as soon as they do.') : `
+      <div class="card" style="border-left:3px solid var(--brass);margin-bottom:16px;">
+        <div class="page-eyebrow">Active cycle</div>
+        <div class="section-title" style="margin-top:4px;">${escapeHtml(cycleLabel)}</div>
+      </div>
+      ${ciCourses.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : ciCourses.map(c=>{
+        const template = c.evalType ? getCourseTemplate(c) : null;
+        const key = template ? termTestComponentKey(template, cycle) : null;
+        return `
+        <div class="card">
+          <div class="card-row">
+            <div>
+              <div class="section-title">${escapeHtml(c.name)}</div>
+              ${courseMetaBlock(c)}
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              ${statusPill(c)}
+              ${etPill(c)}
+              ${!c.evalType ? `<span class="status-pill status-draft">Evaluation Type not fixed</span>` :
+                !key ? `<span class="status-pill status-draft">${escapeHtml(cycleLabel)} not applicable to this Evaluation Type</span>` : ''}
+              <button class="btn ${key?'':'btn-outline'} btn-sm" ${key?'':'disabled'} onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}'})">Open Answer Sheet</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    `}
+  `;
+  return wrap;
+}
+function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
+/* Structured Term Test entry — Q1-Q5 short answers (2 marks each) then
+   Q6-Q11 long answers in 3 unit-paired choice questions, each split into
+   parts (a)/(b). Only one side of each pair may carry marks; the other
+   input is disabled the moment its partner has a value, and a validation
+   note appears if both somehow carry marks (e.g. imported data). */
+function renderCITermTestEntry(params){
+  const course = App.getCourse(params.courseId);
+  if(!course) return el('<div></div>');
+  const cycle = App.state.currentTermTest;
+  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-termtest')">← Back to Term Test</button>`;
+  if(!cycleLabel){
+    wrap.innerHTML = `<div class="page-head">${backBtn}<h2>Term Test</h2></div>${emptyStateHtml('No Term Test cycle active','The Administrator hasn\'t fixed a Term Test cycle yet.')}`;
+    return wrap;
+  }
+  const template = course.evalType ? getCourseTemplate(course) : null;
+  const compKey = template ? termTestComponentKey(template, cycle) : null;
+  if(!compKey){
+    wrap.innerHTML = `<div class="page-head">${backBtn}<h2>Term Test</h2></div>${emptyStateHtml('Not applicable', !course.evalType ? 'The Course Coordinator hasn\'t fixed an Evaluation Type for this section yet.' : `${cycleLabel} has no matching component on this section's Evaluation Type template.`)}`;
+    return wrap;
+  }
+  const correctionMode = course.status==='approved' && course.editUnlocked;
+  const editable = course.status==='draft' || correctionMode;
+  const comp = template.cie.find(c=>c.key===compKey);
+
+  const rows = (course.students||[]).map(s=>{
+    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
+    const calc = computeTermTestRaw(detail);
+    const shortCells = TT_SHORT_KEYS.map(k=>{
+      const v = detail[k];
+      return `<td><input type="number" min="0" max="${TT_SHORT_EACH_MAX}" step="0.5" style="width:56px;"
+        value="${ttNum(v)}" ${editable?'':'disabled'}
+        onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${k}',null,this.value)"></td>`;
+    }).join('');
+    const longCells = TT_LONG_PAIRS.map(({a,b})=>{
+      const da = detail[a]||{}, db = detail[b]||{};
+      const aFilled = (typeof da.a==='number'&&da.a>0)||(typeof da.b==='number'&&da.b>0);
+      const bFilled = (typeof db.a==='number'&&db.a>0)||(typeof db.b==='number'&&db.b>0);
+      const cellFor = (qKey, other, otherFilled) => `
+        <td class="mono" style="white-space:nowrap;">
+          <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
+          <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:48px;" placeholder="a"
+            value="${ttNum((detail[qKey]||{}).a)}" ${editable && !otherFilled ? '' : 'disabled'}
+            onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
+          <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:48px;" placeholder="b"
+            value="${ttNum((detail[qKey]||{}).b)}" ${editable && !otherFilled ? '' : 'disabled'}
+            onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
+        </td>`;
+      return cellFor(a, b, bFilled) + cellFor(b, a, aFilled);
+    }).join('');
+    const errBadge = calc.errors.length ? `<div style="color:var(--seal-red);font-size:11px;margin-top:4px;">${calc.errors.map(escapeHtml).join('<br>')}</div>` : '';
+    return `<tr>
+      <td>${escapeHtml(s.name)}${errBadge}</td>
+      ${shortCells}
+      <td class="total-cell">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
+      ${longCells}
+      <td class="total-cell">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
+      <td class="total-cell">${calc.longScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_SCALED_MAX}</span></td>
+      <td class="total-cell">${calc.valid ? calc.total : '—'}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
+    </tr>`;
+  }).join('');
+
+  const shortHead = TT_SHORT_KEYS.map(k=>`<th>${k.toUpperCase()}<br><span style="text-transform:none;">/${TT_SHORT_EACH_MAX}</span></th>`).join('');
+  const longHead = TT_LONG_PAIRS.map(({unit,a,b})=>`<th colspan="2">${escapeHtml(unit)}<br><span style="text-transform:none;">${a.toUpperCase()} or ${b.toUpperCase()} — /${TT_LONG_QUESTION_MAX}</span></th>`).join('');
+
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">${cycleLabel} · feeds into "${escapeHtml(comp.label)}"</div>
+      <h2>${escapeHtml(course.name)}</h2>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, 16 marks each, split into parts (a) and (b) — attempt only ONE question per unit-pair (choice question); the other side locks once you enter a mark. The 3 attempted long answers (max 48 raw) scale down to 40. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
+      <div class="table-scroll">
+        <table class="data-table" style="min-width:1400px;">
+          <thead>
+            <tr><th rowspan="2">Student</th>${shortHead.replace(/<\/th>/g,'</th>')}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Long<br>Scaled</th><th rowspan="2">Term Test<br>Total</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  return wrap;
+}
 function renderCIEntry(params){
   const course = App.getCourse(params.courseId);
   const correctionMode = course.status==='approved' && course.editUnlocked;
@@ -3382,16 +3830,21 @@ function renderCCList(){
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Add a Branch/Section and assign its Course Instructor, choosing from the Executive Assistant's faculty directory for that branch. You can repeat this for as many sections as you have instructors for — the Subject, Abbr, Course Type &amp; Evaluation Type are already fixed by the HOD, so you don't re-pick them here. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
+      <p>Add a Branch/Section, pick the real Subject for it, and assign its Course Instructor, choosing from the Executive Assistant's faculty directory for that branch. Picking the Subject here is what fixes the Abbr, Course Type &amp; Evaluation Type for the section — the HOD only gave this coordination a working code/name, it no longer sets the Subject. You can repeat this for as many sections/subjects as you have instructors for. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
     </div>
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick which subject coordination this is for (if you coordinate more than one), then the Branch, Section, and Instructor for that section.</p>
+        <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one), the real Subject (fixes Evaluation Type), then the Branch, Section, and Instructor for that section.</p>
         <div class="config-grid">
           <div class="config-field">
-            <label>Coordination <span style="text-transform:none;">(Subject)</span></label>
+            <label>Coordination</label>
             <select id="cc-assign-base">${ccCoordinationOptionsHtml(ccCourses)}</select>
+          </div>
+          <div class="config-field">
+            <label>Subject <span style="text-transform:none;">(Courses Applicable — fixes Abbr, Course Type &amp; Evaluation Type)</span></label>
+            <select id="cc-assign-subject" onchange="document.getElementById('cc-assign-subject-note').innerHTML = subjectNoteHtml(this.value)">${subjectDropdownOptionsHtml('')}</select>
+            <div id="cc-assign-subject-note">${subjectNoteHtml('')}</div>
           </div>
           <div class="config-field">
             <label>Branch</label>
@@ -3408,7 +3861,7 @@ function renderCCList(){
             <select id="cc-assign-instructor">${buildInstructorOptionsHtml(firstBranch)}</select>
           </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value)">Add Section &amp; Assign Instructor</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-subject').value)">Add Section &amp; Assign Instructor</button>
       </div>
 
       <div class="card">
