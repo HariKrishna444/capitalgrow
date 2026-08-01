@@ -1109,7 +1109,19 @@ async function fetchStateFromSupabase(){
 
   let currentTermTest = null;
   const ctRow = (settingsR.data||[]).find(r=>r.key==='current_term_test');
-  if(ctRow && ctRow.value!==null && ctRow.value!==undefined) currentTermTest = ctRow.value;
+  if(ctRow && ctRow.value!==null && ctRow.value!==undefined){
+    let v = ctRow.value;
+    // syncAppSetting() writes JSON.stringify(value) into this column, so a
+    // plain 'TT1' is actually stored as the JSON string '"TT1"'. Unwrap that
+    // one layer of JSON-encoding back to a plain string here — without this,
+    // ctRow.value never matches a TERM_TEST_LABELS key for anyone loading
+    // the app fresh (i.e. everyone except the Admin who just set it, whose
+    // own browser already had the unwrapped value in local state).
+    if(typeof v === 'string'){
+      try{ const parsed = JSON.parse(v); if(typeof parsed === 'string' || parsed === null) v = parsed; }catch(e){ /* already a plain string like 'TT1' — leave as-is */ }
+    }
+    currentTermTest = v;
+  }
 
   const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
   const studentDirectory = (studentDirR.data||[]).map(s=>({ id:s.id, rollNo:s.roll_no, name:s.name, email:s.email||'', branch:s.branch, batch:s.batch, semester:s.semester||'' }));
