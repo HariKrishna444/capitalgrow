@@ -261,6 +261,7 @@ input,select,textarea{font-family:inherit;}
 .status-verified{background:#F1E6C9;color:var(--brass);border-color:#E1CE93;}
 .status-approved{background:#DCEADD;color:var(--seal-green);border-color:#B9D3BA;}
 .status-sentback{background:#F3DEDE;color:var(--seal-red);border-color:#E4B9B9;}
+.status-rejected{background:#F3DEDE;color:var(--seal-red);border-color:#E4B9B9;}
 
 .btn{
   border:1px solid var(--ink);background:var(--ink);color:#FBF7EC;
@@ -1073,6 +1074,7 @@ async function fetchStateFromSupabase(){
       evalType:c.eval_type || null,
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
+      etRequests: c.et_requests || [],
       // Roster/marks are NOT fetched here — only a lightweight count +
       // completion flags from the view. Call App.ensureCourseStudentsLoaded
       // (courseId) before any page needs the real per-student data; that
@@ -1127,7 +1129,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[] }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1456,7 +1458,7 @@ const App = {
     const course = {
       id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '',
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
-      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null,
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[],
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
       students: [], history: []
@@ -1488,39 +1490,42 @@ const App = {
   },
 
   /* ---------- CC: split a subject coordination into a real branch/section
-     and assign its Course Instructor, all in one step. THIS is where the
-     Coordinator selects the real Subject from "Courses Applicable" — that
-     selection is what fixes the Abbr, Course Type & Evaluation Type for the
-     new section (the HOD's working code/name on the base coordination shell
-     is just a label and no longer carries an Evaluation Type). Can be called
-     repeatedly to allocate several instructors/subjects across different
-     sections under the same coordination. */
-  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, subjectCode){
+     and assign its Course Instructor, all in one step. The Coordinator can
+     no longer pick a raw Subject here — they must first request a Subject +
+     Evaluation Type (ETP) pairing on the "Evaluation Type" tab and have the
+     HOD approve it (see App.requestEvalType / App.hodApproveEvalType); only
+     an APPROVED pairing appears in the dropdown here. This is what fixes the
+     section's Course Code/Name and its Evaluation Type — the HOD's working
+     code/name on the base coordination shell is just a label and never
+     carried an Evaluation Type. Can be called repeatedly to allocate several
+     instructors/pairings across different sections under the same
+     coordination. */
+  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, etRequestId){
     const actor = this.currentUser();
     const base = this.getCourse(baseCourseId);
     if(!base){ toast('Choose a coordination to add a section to.', 'err'); return; }
     const ccUser = getCourseCCUser(baseCourseId);
     const isOwner = ccUser?.id === actor.id;
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this subject\'s Course Coordinator can add a section.', 'err'); return; }
-    const subj = masterSubject(subjectCode);
-    if(!subj){ toast('Choose a Subject from Courses Applicable — this fixes the Abbr, Course Type & Evaluation Type.', 'err'); return; }
+    const req = (base.etRequests||[]).find(r=>r.id===etRequestId && r.status==='approved');
+    if(!req){ toast('Choose an HOD-approved Evaluation Type — request one on the Evaluation Type tab first.', 'err'); return; }
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
     const sec = (section||'').trim().toUpperCase();
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
     const email = (instructorEmail||'').trim().toLowerCase();
     if(!email){ toast('Choose an Instructor.', 'err'); return; }
-    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(subj.code) && c.section===sec && c.branch===branch);
-    if(dupe){ toast(`${subj.code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
+    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(req.subjectCode) && c.section===sec && c.branch===branch);
+    if(dupe){ toast(`${req.subjectCode} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     const course = {
-      id: bizId('CRS', [subj.code, branch, sec], this.state.courses.map(c=>c.id)), code: subj.code, name: subj.name, section: sec, branch,
+      id: bizId('CRS', [req.subjectCode, branch, sec], this.state.courses.map(c=>c.id)), code: req.subjectCode, name: req.subjectName, section: sec, branch,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
-      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null,
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[],
       students: [], history: []
     };
     this.state.courses.push(course);
     const { error: courseErr } = await syncCourse(course);
     if(courseErr){ this.state.courses = this.state.courses.filter(x=>x.id!==course.id); renderContent(); return; }
-    this.logHistory(course, `Section created under ${subj.code} coordination: Section ${sec} · ${branchLabel(branch)} (by ${actor.name})`);
+    this.logHistory(course, `Section created under ${req.subjectCode} coordination: Section ${sec} · ${branchLabel(branch)} — Evaluation Type ${req.abbr} (HOD-approved) (by ${actor.name})`);
     // Coordinator on the new section is whoever coordinates the base subject
     // (usually the acting user; kept explicit so an Admin can do this on
     // their behalf without silently reassigning coordination).
@@ -1529,9 +1534,80 @@ const App = {
       this.state.assignments.push(rec);
       syncAssignment(rec);
     }
-    await this.assignRole('CI', course.id, email, '', subj.code);
+    await this.assignRole('CI', course.id, email, '', req.subjectCode);
+    // assignRole('CI', ...) fixes the Evaluation Type from the Subject's
+    // default Abbr on Courses Applicable — override it here with the
+    // HOD-approved ETP pairing, which may deliberately differ from that
+    // default (that's the whole point of the approval step).
+    course.evalType = req.abbr;
+    await syncCourse(course);
     renderSidebar();
     this.navigate('cc-list');
+  },
+
+  /* ---------- CC: request an Evaluation Type (Subject + ETP pairing) for
+     this coordination. Every pairing needs explicit HOD sign-off before it
+     can be used to create a section/assign an instructor — see
+     App.hodApproveEvalType / App.hodRejectEvalType. */
+  requestEvalType(baseCourseId, subjectCode, abbr){
+    const actor = this.currentUser();
+    const base = this.getCourse(baseCourseId);
+    if(!base){ toast('Choose a coordination first.', 'err'); return; }
+    const ccUser = getCourseCCUser(baseCourseId);
+    if(ccUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this coordination\'s Course Coordinator can request an Evaluation Type.', 'err'); return; }
+    const subj = masterSubject(subjectCode);
+    if(!subj){ toast('Choose a Subject from Courses Applicable.', 'err'); return; }
+    const template = getTemplate(abbr);
+    if(!template){ toast('Choose an ETP Type.', 'err'); return; }
+    base.etRequests = base.etRequests || [];
+    const dupe = base.etRequests.find(r=>normalizeCode(r.subjectCode)===normalizeCode(subj.code) && r.abbr===abbr && r.status!=='rejected');
+    if(dupe){ toast(`${subj.code} + ${abbr} has already been ${dupe.status==='approved'?'approved':'requested'} — see the list below.`, 'err'); return; }
+    const req = {
+      id: uid('etq'), subjectCode: subj.code, subjectName: subj.name, abbr, courseType: template.courseType,
+      status:'pending', remark:'', requestedBy: actor.name, requestedByEmail: actor.email, requestedAt: Date.now()
+    };
+    base.etRequests.push(req);
+    syncCourse(base);
+    this.logHistory(base, `Requested Evaluation Type ${abbr} for ${subj.code} — ${subj.name} (by ${actor.name})`);
+    this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>
+      this.notifyUser(u.id, base, `Evaluation Type approval needed — ${subj.code}`, `${actor.name} requested "${template.label}" for ${subj.code} — ${subj.name} under the ${base.code} coordination, and is awaiting your approval before they can assign a Course Instructor to it.`, true)
+    );
+    toast(`Requested ${abbr} for ${subj.code} — sent to the HOD for approval.`, 'ok');
+    renderContent();
+  },
+  /* ---------- HOD: approve a pending Subject + ETP request. Once approved,
+     it becomes selectable in "Add Section & Assign Instructor". */
+  hodApproveEvalType(baseCourseId, requestId){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can approve this.', 'err'); return; }
+    const base = this.getCourse(baseCourseId);
+    if(!base) return;
+    const req = (base.etRequests||[]).find(r=>r.id===requestId);
+    if(!req){ toast('Request not found.', 'err'); return; }
+    req.status = 'approved'; req.remark = '';
+    syncCourse(base);
+    this.logHistory(base, `Evaluation Type ${req.abbr} for ${req.subjectCode} approved by the HOD`);
+    const ccUser = getCourseCCUser(baseCourseId);
+    if(ccUser) this.notifyUser(ccUser.id, base, `Evaluation Type approved — ${req.subjectCode}`, `${actor.name} (HOD) approved "${evalTypeLabel(req.abbr)}" for ${req.subjectCode} — ${req.subjectName}. You can now add a section and assign an instructor using it.`, true);
+    toast(`${req.abbr} approved for ${req.subjectCode}.`, 'ok');
+    renderContent();
+  },
+  /* ---------- HOD: reject a pending Subject + ETP request, with a remark. */
+  hodRejectEvalType(baseCourseId, requestId, remark){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can do this.', 'err'); return; }
+    const base = this.getCourse(baseCourseId);
+    if(!base) return;
+    const req = (base.etRequests||[]).find(r=>r.id===requestId);
+    if(!req){ toast('Request not found.', 'err'); return; }
+    const rmk = (remark||'').trim();
+    req.status = 'rejected'; req.remark = rmk;
+    syncCourse(base);
+    this.logHistory(base, `Evaluation Type ${req.abbr} for ${req.subjectCode} rejected by the HOD`, rmk);
+    const ccUser = getCourseCCUser(baseCourseId);
+    if(ccUser) this.notifyUser(ccUser.id, base, `Evaluation Type rejected — ${req.subjectCode}`, `${actor.name} (HOD) did not approve "${evalTypeLabel(req.abbr)}" for ${req.subjectCode} — ${req.subjectName}.${rmk?` Remark: "${rmk}"`:''}`, true);
+    toast(`${req.abbr} rejected for ${req.subjectCode}.`, 'err');
+    renderContent();
   },
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ----------
@@ -2809,6 +2885,29 @@ function pendingApprovalGroupsHtml(){
         </div>`).join('')}
     </div>`;
 }
+function pendingEtRequestsHtml(){
+  const rows = [];
+  App.state.courses.filter(c=>!c.branch).forEach(base=>{
+    (base.etRequests||[]).forEach(r=>{ if(r.status==='pending') rows.push({ base, r }); });
+  });
+  if(!rows.length) return '';
+  return `
+    <div class="card" style="border-left:3px solid var(--brass);margin-bottom:16px;">
+      <div class="section-title" style="font-size:15px;">Evaluation Type Approvals Pending</div>
+      <p class="section-meta" style="margin-top:4px;">A Course Coordinator can't assign an Instructor to a Subject+ETP pairing until you approve it here.</p>
+      ${rows.map(({base,r})=>`
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+          <div>
+            <div class="section-title" style="font-size:14px;">${escapeHtml(r.subjectCode)} — ${escapeHtml(r.subjectName)} <span style="color:var(--text-soft);font-weight:400;">(${escapeHtml(r.abbr)})</span></div>
+            <div class="section-meta">Coordination: ${escapeHtml(base.code)} — ${escapeHtml(base.name)} · Requested by ${escapeHtml(r.requestedBy||'—')}</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="const rmk=prompt('Remark for rejecting this (optional):'); if(rmk!==null) App.hodRejectEvalType('${base.id}','${r.id}', rmk);">Reject</button>
+            <button class="btn btn-sm" onclick="App.hodApproveEvalType('${base.id}','${r.id}')">Approve</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
 function renderHODList(){
   const all = App.state.courses.filter(c=>c.branch);
   const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
@@ -2822,6 +2921,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
+    ${pendingEtRequestsHtml()}
     ${pendingApprovalGroupsHtml()}
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
       ${filterBtn('all','All')}
@@ -3821,55 +3921,149 @@ function ccCoordinationOptionsHtml(ccCourses){
   ccCourses.forEach(c=>{ if(!seen[c.code]) seen[c.code] = c; });
   return Object.values(seen).map(c=>`<option value="${c.id}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
 }
+/* Flat ETP Type dropdown built straight from EVAL_TEMPLATES — independent of
+   whatever Abbr a Subject defaults to on Courses Applicable, since the CC
+   now picks Subject and ETP Type as two separate decisions. */
+function etpTypeDropdownOptionsHtml(){
+  return `<option value="">— Select ETP Type —</option>` +
+    EVAL_TEMPLATES.map(t=>`<option value="${escapeHtml(t.abbr)}">${escapeHtml(t.label)}</option>`).join('');
+}
+/* Options for the "Add Section & Assign Instructor" subject/ETP dropdown —
+   restricted to THIS coordination's HOD-approved Subject+ETP pairings only.
+   Re-rendered whenever the Coordination dropdown changes. */
+function approvedEtOptionsHtml(baseCourseId){
+  const base = App.getCourse(baseCourseId);
+  const approved = ((base && base.etRequests) || []).filter(r=>r.status==='approved');
+  if(!approved.length) return `<option value="">— No HOD-approved Evaluation Type yet — request one on the Evaluation Type tab —</option>`;
+  return `<option value="">— Select an approved Subject + ETP —</option>` +
+    approved.map(r=>`<option value="${r.id}">${escapeHtml(r.subjectCode)} — ${escapeHtml(r.subjectName)} (${escapeHtml(r.abbr)})</option>`).join('');
+}
+function refreshCCAssignSubjectOptions(baseCourseId){
+  const el = document.getElementById('cc-assign-etreq');
+  if(el) el.innerHTML = approvedEtOptionsHtml(baseCourseId);
+}
+let activeCCTab = 'sections';
+function switchCCTab(tab){ activeCCTab = tab; renderContent(); }
+window.switchCCTab = switchCCTab;
+window.refreshCCAssignSubjectOptions = refreshCCAssignSubjectOptions;
+function etReqStatusPill(status){
+  if(status==='approved') return `<span class="status-pill status-approved">Approved</span>`;
+  if(status==='rejected') return `<span class="status-pill status-rejected">Rejected</span>`;
+  return `<span class="status-pill status-submitted">Pending HOD approval</span>`;
+}
+/* "Evaluation Type" tab — CC picks a Subject (with Course Code) in one
+   dropdown and an ETP Type in a separate dropdown, then sends the pairing to
+   the HOD for approval. Only once approved does it become selectable on the
+   "Add Section & Assign Instructor" tab. */
+function ccEvalTypeTabHtml(ccCourses){
+  const bases = [];
+  const seen = {};
+  ccCourses.forEach(c=>{ if(!seen[c.code]){ seen[c.code]=true; bases.push(c); } });
+  return `
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Request Evaluation Type (Subject + ETP)</div>
+      <p class="section-meta" style="margin-top:4px;">Pick the Subject (Course Code) in one dropdown and the ETP Type in a separate dropdown, then send the pairing to the HOD. Once approved, it appears on the "Add Section &amp; Assign Instructor" tab and you can assign a Course Instructor to it. Every Subject+ETP pairing needs its own HOD approval, per section.</p>
+      <div class="config-grid">
+        <div class="config-field">
+          <label>Coordination</label>
+          <select id="cc-etreq-base">${ccCoordinationOptionsHtml(ccCourses)}</select>
+        </div>
+        <div class="config-field">
+          <label>Subject <span style="text-transform:none;">(Courses Applicable — Course Code &amp; Name)</span></label>
+          <select id="cc-etreq-subject">${subjectDropdownOptionsHtml('')}</select>
+        </div>
+        <div class="config-field">
+          <label>ETP Type <span style="text-transform:none;">(Evaluation Type)</span></label>
+          <select id="cc-etreq-abbr">${etpTypeDropdownOptionsHtml()}</select>
+        </div>
+      </div>
+      <button class="btn" style="margin-top:14px;" onclick="App.requestEvalType(document.getElementById('cc-etreq-base').value, document.getElementById('cc-etreq-subject').value, document.getElementById('cc-etreq-abbr').value)">Send for HOD Approval</button>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Requested Evaluation Types</div>
+      ${bases.every(b=>!(b.etRequests||[]).length) ? `<p class="section-meta" style="margin-top:8px;">No Evaluation Types requested yet.</p>` : bases.map(b=>{
+        const reqs = b.etRequests||[];
+        if(!reqs.length) return '';
+        return `
+          <div style="margin-top:12px;">
+            <div class="section-meta" style="text-transform:uppercase;letter-spacing:0.05em;font-size:11px;color:var(--brass);">${escapeHtml(b.code)} — ${escapeHtml(b.name)}</div>
+            ${reqs.map(r=>`
+              <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:8px;">
+                <div>
+                  <div class="section-title" style="font-size:14px;">${escapeHtml(r.subjectCode)} — ${escapeHtml(r.subjectName)} <span style="color:var(--text-soft);font-weight:400;">(${escapeHtml(r.abbr)})</span></div>
+                  ${r.status==='rejected' && r.remark ? `<p class="section-meta" style="margin-top:4px;color:var(--seal-red);">Remark: ${escapeHtml(r.remark)}</p>` : ''}
+                </div>
+                <div>${etReqStatusPill(r.status)}</div>
+              </div>`).join('')}
+          </div>`;
+      }).join('')}
+    </div>`;
+}
 function renderCCList(){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
   const wrap = el('<div></div>');
   const firstBranch = Object.keys(BRANCH_LABELS)[0];
+  const seenCodes = {};
+  const baseList = [];
+  ccCourses.forEach(c=>{ if(!seenCodes[c.code]){ seenCodes[c.code]=true; baseList.push(c); } });
+  const initialBaseId = baseList[0]?.id || null;
+  const tabs = [
+    { key:'sections', label:'Add Section & Assign Instructor' },
+    { key:'evaltype', label:'Evaluation Type' },
+  ];
+  if(!tabs.some(t=>t.key===activeCCTab)) activeCCTab = 'sections';
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Add a Branch/Section, pick the real Subject for it, and assign its Course Instructor, choosing from the Executive Assistant's faculty directory for that branch. Picking the Subject here is what fixes the Abbr, Course Type &amp; Evaluation Type for the section — the HOD only gave this coordination a working code/name, it no longer sets the Subject. You can repeat this for as many sections/subjects as you have instructors for. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
+      <p>Request a Subject + ETP (Evaluation Type) pairing on the Evaluation Type tab and get it HOD-approved, then add a Branch/Section and assign its Course Instructor using that approved pairing — choosing the Instructor from the Executive Assistant's faculty directory for that branch. Every Subject+ETP pairing needs its own HOD approval before it can be used. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
     </div>
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a subject, it will appear here.') : `
-      <div class="card">
-        <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one), the real Subject (fixes Evaluation Type), then the Branch, Section, and Instructor for that section.</p>
-        <div class="config-grid">
-          <div class="config-field">
-            <label>Coordination</label>
-            <select id="cc-assign-base">${ccCoordinationOptionsHtml(ccCourses)}</select>
+      <div class="tab-bar">
+        ${tabs.map(t=>`<button type="button" class="tab-btn ${activeCCTab===t.key?'active':''}" onclick="switchCCTab('${t.key}')">${t.label}</button>`).join('')}
+      </div>
+      <div id="tab-cc-sections" class="tab-panel ${activeCCTab==='sections'?'':'hidden'}">
+        <div class="card">
+          <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
+          <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one), an HOD-approved Subject+ETP pairing, then the Branch, Section, and Instructor for that section.</p>
+          <div class="config-grid">
+            <div class="config-field">
+              <label>Coordination</label>
+              <select id="cc-assign-base" onchange="refreshCCAssignSubjectOptions(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select>
+            </div>
+            <div class="config-field">
+              <label>Subject + ETP Type <span style="text-transform:none;">(HOD-approved pairings only)</span></label>
+              <select id="cc-assign-etreq">${approvedEtOptionsHtml(initialBaseId)}</select>
+            </div>
+            <div class="config-field">
+              <label>Branch</label>
+              <select id="cc-assign-branch" onchange="document.getElementById('cc-assign-instructor').innerHTML = buildInstructorOptionsHtml(this.value)">
+                ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
+              </select>
+            </div>
+            <div class="config-field">
+              <label>Section</label>
+              <input id="cc-assign-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
+            </div>
+            <div class="config-field">
+              <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
+              <select id="cc-assign-instructor">${buildInstructorOptionsHtml(firstBranch)}</select>
+            </div>
           </div>
-          <div class="config-field">
-            <label>Subject <span style="text-transform:none;">(Courses Applicable — fixes Abbr, Course Type &amp; Evaluation Type)</span></label>
-            <select id="cc-assign-subject" onchange="document.getElementById('cc-assign-subject-note').innerHTML = subjectNoteHtml(this.value)">${subjectDropdownOptionsHtml('')}</select>
-            <div id="cc-assign-subject-note">${subjectNoteHtml('')}</div>
-          </div>
-          <div class="config-field">
-            <label>Branch</label>
-            <select id="cc-assign-branch" onchange="document.getElementById('cc-assign-instructor').innerHTML = buildInstructorOptionsHtml(this.value)">
-              ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
-            </select>
-          </div>
-          <div class="config-field">
-            <label>Section</label>
-            <input id="cc-assign-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
-          </div>
-          <div class="config-field">
-            <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
-            <select id="cc-assign-instructor">${buildInstructorOptionsHtml(firstBranch)}</select>
-          </div>
+          <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-etreq').value)">Add Section &amp; Assign Instructor</button>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-subject').value)">Add Section &amp; Assign Instructor</button>
-      </div>
 
-      <div class="card">
-        <div class="section-title" style="font-size:15px;">Search my sections</div>
-        <input id="cc-search-input" class="search-input" type="text" placeholder="Search by course code, name, branch, or instructor..." style="margin-top:10px;" oninput="updateCCBranchGroups(this.value)">
-      </div>
+        <div class="card">
+          <div class="section-title" style="font-size:15px;">Search my sections</div>
+          <input id="cc-search-input" class="search-input" type="text" placeholder="Search by course code, name, branch, or instructor..." style="margin-top:10px;" oninput="updateCCBranchGroups(this.value)">
+        </div>
 
-      <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch),'')}</div>
+        <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch),'')}</div>
+      </div>
+      <div id="tab-cc-evaltype" class="tab-panel ${activeCCTab==='evaltype'?'':'hidden'}">
+        ${ccEvalTypeTabHtml(ccCourses)}
+      </div>
     `}
   `;
   return wrap;
