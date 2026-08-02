@@ -3129,6 +3129,11 @@ function updateCourseRegFilter(patch){
 }
 window.updateCourseRegFilter = updateCourseRegFilter;
 
+// Group keys are looked up by index rather than inlined into onclick="..."
+// as JSON.stringify'd strings — subject/instructor text routinely contains
+// characters (quotes, parens, commas) that broke out of the HTML attribute
+// and produced "Uncaught SyntaxError: expected expression, got '}'".
+let courseRegGroupIndex = [];
 function courseRegGroupsHtml(){
   let entries = App.state.courseRegistrations || [];
   const { batch, branch, semester, q } = courseRegFilter;
@@ -3153,6 +3158,7 @@ function courseRegGroupsHtml(){
     (tree[k1][k2][k3][k4][k5]=tree[k1][k2][k3][k4][k5]||[]).push(r);
   });
 
+  courseRegGroupIndex = []; // rebuilt fresh each render — indices below match this array
   let html = '';
   Object.keys(tree).sort().forEach(batchKey=>{
     html += `<div class="section-title" style="font-size:15px;margin-top:18px;">${escapeHtml(BATCH_LABELS[batchKey]||batchKey)}</div>`;
@@ -3167,12 +3173,14 @@ function courseRegGroupsHtml(){
             ${Object.keys(sections).sort().map(secKey=>{
               const list = sections[secKey];
               const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+              const idx = courseRegGroupIndex.length;
+              courseRegGroupIndex.push({ batch:batchKey, branch:branchKey, semester:semKey, subject:subjectKey, section:secKey });
               return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;">
                 <div>
                   <div class="section-title" style="font-size:13.5px;">${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
                   <div class="section-meta">${instructors.length ? escapeHtml(instructors.join(', ')) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}</div>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${JSON.stringify(batchKey)},${JSON.stringify(branchKey)},${JSON.stringify(semKey)},${JSON.stringify(subjectKey)},${JSON.stringify(secKey)})">View Roster</button>
+                <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${idx})">View Roster</button>
               </div>`;
             }).join('')}
           </div>`;
@@ -3183,7 +3191,10 @@ function courseRegGroupsHtml(){
   return html;
 }
 
-function openCourseRegRosterModal(batch, branch, semester, subject, section){
+function openCourseRegRosterModal(idx){
+  const key = courseRegGroupIndex[idx];
+  if(!key) return;
+  const { batch, branch, semester, subject, section } = key;
   const list = (App.state.courseRegistrations||[]).filter(r=>
     r.batch===batch && r.branch===branch && (r.semester||'—')===semester && r.subjectName===subject && (r.sectionCode||'—')===section
   ).sort((a,b)=>a.rollNo.localeCompare(b.rollNo));
@@ -3201,6 +3212,7 @@ function openCourseRegRosterModal(batch, branch, semester, subject, section){
   `);
 }
 window.openCourseRegRosterModal = openCourseRegRosterModal;
+
 
 function renderAdminCourseRegistrations(){
   const wrap = el('<div></div>');
