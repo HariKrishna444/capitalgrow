@@ -493,8 +493,8 @@ function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
 // Which branches exist for each admitted batch — the Student Directory upload
 // validates each row's Department against the list for the Batch selected.
 // R24 predates the CSD/CSC programs, so only CSE/AIML are valid for it.
-const BATCH_BRANCHES = { R24:['CSE','AIML'], R25:['CSE','AIML','SAP','CSD','CSC'] };
-const BATCH_LABELS = { R24:'R24 (2024 admits)', R25:'R25 (2025 admits)' };
+const BATCH_BRANCHES = { R24:['CSE','AIML'], R25:['CSE','AIML','SAP','CSD','CSC'], R26:['CSE','AIML','SAP','CSD','CSC'] };
+const BATCH_LABELS = { R24:'R24 (2024 admits)', R25:'R25 (2025 admits)', R26:'R26 (2026 admits)' };
 
 // ============================================================================
 // EVALUATION TYPE (ET) TEMPLATES — sourced directly from the institution's
@@ -1059,7 +1059,7 @@ function seedState(){
     { id:'note_seed2', forUserId:'cc1', courseId:'c1', title:"You're now Course Coordinator", body:"Dr. Suresh Menon assigned you as Course Coordinator for CS301 — Data Structures. This role is active immediately.", ts:t0, read:true },
   ];
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:null, termTestHistory:[] };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
 }
 
 /* ---------------- Supabase-backed persistence ----------------
@@ -1071,7 +1071,7 @@ function seedState(){
    row(s) that actually changed, instead of re-writing everything. */
 
 async function fetchStateFromSupabase(){
-  const [profilesR, coursesR, completionR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR, subjectsR, studentDirR] = await Promise.all([
+  const [profilesR, coursesR, completionR, assignmentsR, notificationsR, historyR, ttHistoryR, settingsR, subjectsR, studentDirR, courseRegR] = await Promise.all([
     sb.from('profiles').select('*').order('created_at', { ascending:true }),
     sb.from('courses').select('*').order('created_at', { ascending:true }),
     // Lightweight completion status instead of the full students table —
@@ -1091,12 +1091,13 @@ async function fetchStateFromSupabase(){
     sb.from('app_settings').select('*'),
     sb.from('subjects').select('*').order('code', { ascending:true }),
     sb.from('student_directory').select('*').order('roll_no', { ascending:true }),
+    sb.from('course_registrations').select('*').order('roll_no', { ascending:true }),
   ]);
 
   const named = [
     ['profiles',profilesR],['courses',coursesR],['course_completion_status',completionR],['assignments',assignmentsR],
     ['notifications',notificationsR],['course_history',historyR],['term_test_history',ttHistoryR],['app_settings',settingsR],
-    ['subjects',subjectsR],['student_directory',studentDirR],
+    ['subjects',subjectsR],['student_directory',studentDirR],['course_registrations',courseRegR],
   ];
   const firstErr = named.find(([,r])=>r.error);
   if(firstErr){
@@ -1175,8 +1176,9 @@ async function fetchStateFromSupabase(){
 
   const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
   const studentDirectory = (studentDirR.data||[]).map(s=>({ id:s.id, rollNo:s.roll_no, name:s.name, email:s.email||'', branch:s.branch, batch:s.batch, semester:s.semester||'' }));
+  const courseRegistrations = (courseRegR.data||[]).map(r=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||'', semester:r.semester||'', rollNo:r.roll_no, studentName:r.student_name, subjectName:r.subject_name, sectionCode:r.section_code||'', instructorName:r.instructor_name||'' }));
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory, subjects, studentDirectory };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory, subjects, studentDirectory, courseRegistrations };
 }
 
 // Lightweight, pre-login fetch — just the public directory, used to
@@ -1203,6 +1205,7 @@ const rowOf = {
   history:(courseId,h)=>({ id:h.id, course_id:courseId, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' }),
   termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value, academic_year:t.academicYear||null, semester:t.semester||null }),
   studentDirectoryEntry:(s)=>({ id:s.id, roll_no:s.rollNo, name:s.name, email:s.email||null, branch:s.branch, batch:s.batch, semester:s.semester||null }),
+  courseRegistration:(r)=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||null, semester:r.semester||null, roll_no:r.rollNo, student_name:r.studentName, subject_name:r.subjectName, section_code:r.sectionCode||null, instructor_name:r.instructorName||null }),
 };
 
 async function warnOnError(promise, label, opts={}){
@@ -1232,6 +1235,14 @@ function syncTermTest(t){ return warnOnError(sb.from('term_test_history').insert
 function syncStudentDirectoryEntry(s){ return warnOnError(sb.from('student_directory').upsert(rowOf.studentDirectoryEntry(s)), 'student_directory:'+s.id, {toastOnFail:true}); }
 function syncStudentDirectoryEntries(rows){ return rows.length ? warnOnError(sb.from('student_directory').upsert(rows.map(rowOf.studentDirectoryEntry)), 'student_directory:bulk', {toastOnFail:true}) : Promise.resolve(); }
 function deleteStudentDirectoryEntry(id){ return warnOnError(sb.from('student_directory').delete().eq('id', id), 'student_directory-delete:'+id, {toastOnFail:true}); }
+function syncCourseRegistrations(rows){ return rows.length ? warnOnError(sb.from('course_registrations').upsert(rows.map(rowOf.courseRegistration)), 'course_registrations:bulk', {toastOnFail:true}) : Promise.resolve(); }
+// Wholesale-replaces a batch+branch's registrations for the given semesters —
+// used before re-inserting a corrected re-upload of the same file so stale/
+// duplicate rows don't linger under the old (possibly wrong) subject/section text.
+function deleteCourseRegistrationsFor(batch, branch, semesters){
+  if(!semesters || !semesters.length) return Promise.resolve();
+  return warnOnError(sb.from('course_registrations').delete().eq('batch', batch).eq('branch', branch).in('semester', semesters), 'course_registrations-delete:'+batch+'-'+branch, {toastOnFail:true});
+}
 
 /* ---------------- real auth: email + password sign-in ----------------
    Accounts and passwords are provisioned entirely by the System Admin
@@ -1344,9 +1355,27 @@ function createFacultyIfNeeded(email, name){
 }
 function isValidEmail(email){ return /^\S+@\S+\.\S+$/.test(email); }
 
+/* Parses one subject cell from a wide-format course-registration sheet.
+   Expected shapes:
+     "C8 : Dr. MD RIYAZUDDIN"                        -> one entry
+     "CVO-C8-B1 : Dr. MD RIYAZUDDIN"                  -> one entry
+     "SS3(V)-C6 : Priya Singh, SS3(Q)-C6 : GIS Skill Trainer" -> two entries
+       (multi-component subjects, e.g. Verbal/Quantitative Soft Skills)
+     "-" or blank                                     -> not registered, skip
+   Returns an array of { sectionCode, instructor }. */
+function parseRegistrationCell(raw){
+  const val = String(raw==null ? '' : raw).trim();
+  if(!val || val==='-') return [];
+  return val.split(',').map(part=>part.trim()).filter(Boolean).map(part=>{
+    const idx = part.indexOf(':');
+    if(idx===-1) return { sectionCode:'', instructor: part.trim() };
+    return { sectionCode: part.slice(0,idx).trim(), instructor: part.slice(idx+1).trim() };
+  }).filter(p=>p.instructor || p.sectionCode);
+}
+
 /* ---------------- app state ---------------- */
 const App = {
-  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[] },
+  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
   ui: { view:'', params:{} },
   ready:false,
 
@@ -2430,6 +2459,92 @@ const App = {
     }
     this.navigate('ea-students');
   },
+
+  /* ---------- ADMIN: course registration import ----------
+     Wide-format sheet: Regulation, Semester, StudentRollNumber, StudentName,
+     then one column per subject (the subject set differs per branch/batch/
+     semester file, which is fine — every column after the first four is
+     treated as a subject). Each cell is "SECTION : Instructor" (possibly
+     several, comma-separated, for multi-component subjects) or "-" for "not
+     registered". `batch` and `branch` are picked by the Admin before import
+     (the sheet's own Regulation text doesn't map cleanly onto the app's
+     batch/branch keys), Semester is read per-row from the sheet itself.
+     Re-importing the same batch+branch+semester replaces its prior rows
+     wholesale, so a corrected re-upload never leaves stale duplicates. */
+  bulkImportCourseRegistrations(rows, batch, branch){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can import course registrations.', 'err'); return; }
+    if(!BATCH_BRANCHES[batch]){ toast('Choose a Batch before importing.', 'err'); return; }
+    if(!BATCH_BRANCHES[batch].includes(branch)){ toast(`${branch || 'That branch'} isn't offered for ${batch} — valid branches are ${BATCH_BRANCHES[batch].join(', ')}.`, 'err'); return; }
+    if(!Array.isArray(rows) || rows.length===0){ toast('That file has no rows to import.', 'err'); return; }
+
+    const headerKeys = Object.keys(rows[0]||{});
+    const findKey = (names) => headerKeys.find(h=>names.includes(String(h).trim().toLowerCase()));
+    const kReg = findKey(['regulation']);
+    const kSem = findKey(['semester']);
+    const kRoll = findKey(['studentrollnumber','roll no','rollno','roll number']);
+    const kName = findKey(['studentname','name']);
+    if(!kRoll || !kName){ toast('Could not find StudentRollNumber / StudentName columns in this file.', 'err'); return; }
+    const subjectKeys = headerKeys.filter(h=>![kReg,kSem,kRoll,kName].includes(h) && String(h).trim() && !/^__EMPTY/.test(String(h)));
+    if(!subjectKeys.length){ toast('No subject columns found after Regulation/Semester/StudentRollNumber/StudentName.', 'err'); return; }
+
+    const newRegs = [];
+    const dirTouched = [];
+    let studentsSeen = 0, cellsSkipped = 0;
+    rows.forEach(row=>{
+      const rollNo = String(row[kRoll]||'').trim().toUpperCase();
+      const name = String(row[kName]||'').trim();
+      if(!rollNo || !name) return;
+      studentsSeen++;
+      const regulation = kReg ? String(row[kReg]||'').trim() : '';
+      const semester = kSem ? String(row[kSem]||'').trim() : '';
+
+      // Keep the Student Directory in sync too, so this roll number is
+      // recognized everywhere else in the app (roster imports, etc.).
+      const existingDir = this.state.studentDirectory.find(s=>s.rollNo===rollNo && s.batch===batch);
+      if(existingDir){ existingDir.name=name; existingDir.branch=branch; if(semester) existingDir.semester=semester; dirTouched.push(existingDir); }
+      else {
+        const d = { id:bizId('STU',[rollNo,batch], this.state.studentDirectory.map(s=>s.id)), rollNo, name, email:'', branch, batch, semester };
+        this.state.studentDirectory.push(d); dirTouched.push(d);
+      }
+
+      subjectKeys.forEach(subjectKey=>{
+        const subjectName = String(subjectKey).trim();
+        const entries = parseRegistrationCell(row[subjectKey]);
+        entries.forEach(en=>{
+          if(!en.instructor && !en.sectionCode){ cellsSkipped++; return; }
+          const idPool = this.state.courseRegistrations.map(r=>r.id).concat(newRegs.map(r=>r.id));
+          newRegs.push({
+            id: bizId('REG', [batch, branch, semester, rollNo, subjectName, en.sectionCode], idPool),
+            batch, branch, regulation, semester, rollNo, studentName:name,
+            subjectName, sectionCode:en.sectionCode, instructorName:en.instructor
+          });
+        });
+      });
+    });
+
+    if(!newRegs.length){ toast('No registrations found to import — check the file headings match the expected format (Regulation, Semester, StudentRollNumber, StudentName, then one column per subject).', 'err'); return; }
+
+    const semestersTouched = [...new Set(newRegs.map(r=>r.semester))];
+    this.state.courseRegistrations = this.state.courseRegistrations.filter(r=>!(r.batch===batch && r.branch===branch && semestersTouched.includes(r.semester)));
+    this.state.courseRegistrations.push(...newRegs);
+
+    deleteCourseRegistrationsFor(batch, branch, semestersTouched).then(()=>syncCourseRegistrations(newRegs));
+    syncStudentDirectoryEntries(dirTouched);
+
+    const subjectCount = new Set(newRegs.map(r=>r.subjectName)).size;
+    toast(`Imported ${newRegs.length} registrations for ${studentsSeen} students across ${subjectCount} subjects (${BATCH_LABELS[batch]} · ${branchLabel(branch)}).${cellsSkipped?` ${cellsSkipped} cells skipped.`:''}`, 'ok');
+    this.navigate('admin-course-reg');
+  },
+  removeCourseRegistration(id){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can edit course registrations.', 'err'); return; }
+    const idx = this.state.courseRegistrations.findIndex(r=>r.id===id);
+    if(idx===-1) return;
+    this.state.courseRegistrations.splice(idx,1);
+    warnOnError(sb.from('course_registrations').delete().eq('id', id), 'course_registrations-delete:'+id, {toastOnFail:true});
+    this.navigate('admin-course-reg');
+  },
 };
 window.App = App;
 
@@ -2535,6 +2650,7 @@ function closeNotifPanel(){ document.getElementById('notif-panel').classList.add
 function getNavForUser(user){
   if(user.systemRole==='ADMIN') return [
     {v:'admin-users', label:'Manage System Accounts'},
+    {v:'admin-course-reg', label:'Course Registrations'},
     {v:'hod-coordinators', label:'Manage Coordinators'},
     {v:'hod-termtest', label:'Term Test Cycle'},
   ];
@@ -2577,6 +2693,7 @@ function renderContent(){
 
   const routes = {
     'admin-users': renderAdminUsers,
+    'admin-course-reg': renderAdminCourseRegistrations,
     'hod-list': renderHODList,
     'hod-review': renderHODReview,
     'hod-coordinators': renderHODCoordinators,
@@ -2956,6 +3073,183 @@ function renderAdminUsers(){
         </div>`).join('')}
     </div>
   `;
+  return wrap;
+}
+
+/* ---------- ADMIN: Course Registration import & browse ----------
+   Separate from the "courses" table (which drives the marks/evaluation
+   workflow) — this is read/reference data: which student is registered for
+   which subject, in which section, under which instructor, imported straight
+   from the registrar's wide-format Excel sheets. */
+let courseRegFilter = { batch:'', branch:'', semester:'', q:'' };
+function refreshCourseRegBranchOptions(){
+  const batchEl = document.getElementById('cr-import-batch');
+  const branchEl = document.getElementById('cr-import-branch');
+  if(!batchEl || !branchEl) return;
+  const batch = batchEl.value;
+  branchEl.innerHTML = (BATCH_BRANCHES[batch]||[]).map(b=>`<option value="${b}">${escapeHtml(branchLabel(b))}</option>`).join('');
+}
+window.refreshCourseRegBranchOptions = refreshCourseRegBranchOptions;
+
+function handleCourseRegImport(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const batchEl = document.getElementById('cr-import-batch');
+  const branchEl = document.getElementById('cr-import-branch');
+  const batch = batchEl ? batchEl.value : '';
+  const branch = branchEl ? branchEl.value : '';
+  ensureXLSXLoaded().then(()=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type:'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+        App.bulkImportCourseRegistrations(rows, batch, branch);
+      }catch(err){
+        console.warn(err);
+        toast('Could not read that file. Please upload a valid .xlsx, .xls, or .csv file.', 'err');
+      }
+      input.value = '';
+    };
+    reader.onerror = ()=>{ toast('Could not read that file.', 'err'); input.value=''; };
+    reader.readAsArrayBuffer(file);
+  }).catch(err=>{
+    toast(err.message || 'Could not load the spreadsheet reader. Check your internet connection and try again.', 'err');
+    input.value = '';
+  });
+}
+window.handleCourseRegImport = handleCourseRegImport;
+
+function updateCourseRegFilter(patch){
+  Object.assign(courseRegFilter, patch);
+  const target = document.getElementById('course-reg-groups');
+  if(target) target.innerHTML = courseRegGroupsHtml();
+}
+window.updateCourseRegFilter = updateCourseRegFilter;
+
+function courseRegGroupsHtml(){
+  let entries = App.state.courseRegistrations || [];
+  const { batch, branch, semester, q } = courseRegFilter;
+  if(batch) entries = entries.filter(r=>r.batch===batch);
+  if(branch) entries = entries.filter(r=>r.branch===branch);
+  if(semester) entries = entries.filter(r=>r.semester===semester);
+  if(q && q.trim()){
+    const needle = q.trim().toLowerCase();
+    entries = entries.filter(r=>
+      r.rollNo.toLowerCase().includes(needle) || r.studentName.toLowerCase().includes(needle) ||
+      r.subjectName.toLowerCase().includes(needle) || (r.instructorName||'').toLowerCase().includes(needle) ||
+      (r.sectionCode||'').toLowerCase().includes(needle));
+  }
+  if(!entries.length) return emptyStateHtml('No registrations found', 'Import a spreadsheet above, or adjust the filters/search.');
+
+  // Group: Batch -> Branch -> Semester -> Subject -> Section
+  const tree = {};
+  entries.forEach(r=>{
+    const k1=r.batch, k2=r.branch, k3=r.semester||'—', k4=r.subjectName, k5=r.sectionCode||'—';
+    tree[k1]=tree[k1]||{}; tree[k1][k2]=tree[k1][k2]||{}; tree[k1][k2][k3]=tree[k1][k2][k3]||{};
+    tree[k1][k2][k3][k4]=tree[k1][k2][k3][k4]||{};
+    (tree[k1][k2][k3][k4][k5]=tree[k1][k2][k3][k4][k5]||[]).push(r);
+  });
+
+  let html = '';
+  Object.keys(tree).sort().forEach(batchKey=>{
+    html += `<div class="section-title" style="font-size:15px;margin-top:18px;">${escapeHtml(BATCH_LABELS[batchKey]||batchKey)}</div>`;
+    Object.keys(tree[batchKey]).sort().forEach(branchKey=>{
+      html += `<div class="branch-heading">${branchLabel(branchKey)}</div>`;
+      Object.keys(tree[batchKey][branchKey]).sort().forEach(semKey=>{
+        html += `<div class="section-meta" style="margin-top:6px;font-weight:600;">Semester ${escapeHtml(semKey)}</div>`;
+        Object.keys(tree[batchKey][branchKey][semKey]).sort().forEach(subjectKey=>{
+          const sections = tree[batchKey][branchKey][semKey][subjectKey];
+          html += `<div class="card" style="margin-top:8px;">
+            <div class="section-title" style="font-size:14px;">${escapeHtml(subjectKey)}</div>
+            ${Object.keys(sections).sort().map(secKey=>{
+              const list = sections[secKey];
+              const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+              return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;">
+                <div>
+                  <div class="section-title" style="font-size:13.5px;">${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
+                  <div class="section-meta">${instructors.length ? escapeHtml(instructors.join(', ')) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}</div>
+                </div>
+                <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${JSON.stringify(batchKey)},${JSON.stringify(branchKey)},${JSON.stringify(semKey)},${JSON.stringify(subjectKey)},${JSON.stringify(secKey)})">View Roster</button>
+              </div>`;
+            }).join('')}
+          </div>`;
+        });
+      });
+    });
+  });
+  return html;
+}
+
+function openCourseRegRosterModal(batch, branch, semester, subject, section){
+  const list = (App.state.courseRegistrations||[]).filter(r=>
+    r.batch===batch && r.branch===branch && (r.semester||'—')===semester && r.subjectName===subject && (r.sectionCode||'—')===section
+  ).sort((a,b)=>a.rollNo.localeCompare(b.rollNo));
+  const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>${escapeHtml(subject)}</h3>
+    <p class="section-meta" style="margin-top:2px;">${section==='—'?'No section code':'Section '+escapeHtml(section)} · ${branchLabel(branch)} · ${escapeHtml(BATCH_LABELS[batch]||batch)}${semester!=='—'?' · Semester '+escapeHtml(semester):''}</p>
+    <p class="section-meta" style="margin-top:2px;">Instructor: ${instructors.length ? escapeHtml(instructors.join(', ')) : '—'}</p>
+    <div class="table-scroll" style="margin-top:12px;">
+      <table class="data-table"><thead><tr><th>Roll No</th><th>Name</th><th></th></tr></thead><tbody>
+        ${list.map(r=>`<tr><td>${escapeHtml(r.rollNo)}</td><td>${escapeHtml(r.studentName)}</td><td><button class="btn btn-red btn-sm" onclick="App.removeCourseRegistration('${r.id}'); closeModal();">Remove</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+  `);
+}
+window.openCourseRegRosterModal = openCourseRegRosterModal;
+
+function renderAdminCourseRegistrations(){
+  const wrap = el('<div></div>');
+  const regs = App.state.courseRegistrations || [];
+  const semesters = [...new Set(regs.map(r=>r.semester).filter(Boolean))].sort();
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Administrator</div>
+      <h2>Course Registrations</h2>
+      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. This is reference data for browsing/lookup and doesn't touch the marks/evaluation workflow.</p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Import from Excel</div>
+      <p class="section-meta" style="margin-top:4px;">File needs <strong>Regulation, Semester, StudentRollNumber, StudentName</strong>, then one column per subject. Each subject cell reads <strong>"Section : Instructor"</strong> (e.g. <span class="mono">C8 : Dr. MD RIYAZUDDIN</span>) — use <span class="mono">-</span> where a student isn't registered for that subject. Pick the Batch and Branch for this file below; Semester is read straight from the sheet. Re-importing the same Batch + Branch + Semester replaces its previous rows.</p>
+      <div class="config-grid" style="max-width:420px;">
+        <div class="config-field">
+          <label>Batch for this file</label>
+          <select id="cr-import-batch" onchange="refreshCourseRegBranchOptions()">${Object.keys(BATCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BATCH_LABELS[b])}</option>`).join('')}</select>
+        </div>
+        <div class="config-field">
+          <label>Branch for this file</label>
+          <select id="cr-import-branch"></select>
+        </div>
+      </div>
+      <div class="import-row" style="margin-top:10px;">
+        <label class="file-input-label">
+          📄 Choose file (.xlsx, .xls, .csv)
+          <input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleCourseRegImport(this)">
+        </label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Browse &amp; search</div>
+      <div class="config-grid" style="margin-top:8px;">
+        <div class="config-field"><label>Batch</label>
+          <select onchange="updateCourseRegFilter({batch:this.value})"><option value="">All</option>${Object.keys(BATCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BATCH_LABELS[b])}</option>`).join('')}</select>
+        </div>
+        <div class="config-field"><label>Branch</label>
+          <select onchange="updateCourseRegFilter({branch:this.value})"><option value="">All</option>${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(branchLabel(b))}</option>`).join('')}</select>
+        </div>
+        <div class="config-field"><label>Semester</label>
+          <select onchange="updateCourseRegFilter({semester:this.value})"><option value="">All</option>${semesters.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}</select>
+        </div>
+      </div>
+      <input class="search-input" type="text" placeholder="Search by roll no, name, subject, section, or instructor..." style="margin-top:10px;" oninput="updateCourseRegFilter({q:this.value})">
+    </div>
+    <div id="course-reg-groups">${courseRegGroupsHtml()}</div>
+  `;
+  refreshCourseRegBranchOptions();
   return wrap;
 }
 
