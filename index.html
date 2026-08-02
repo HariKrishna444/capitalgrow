@@ -2545,6 +2545,106 @@ const App = {
     warnOnError(sb.from('course_registrations').delete().eq('id', id), 'course_registrations-delete:'+id, {toastOnFail:true});
     this.navigate('admin-course-reg');
   },
+
+  /* ---------- ADMIN: turn one imported (subject, section) group into a real
+     course section — creates/reuses the course row, assigns the matched
+     faculty account as Course Instructor (active immediately, same as every
+     other Admin override in this app), and loads the roster from the
+     Student Directory so the CI sees these students under "My Sections"
+     right away. Deliberately does NOT invent a faculty login from a bare
+     name — the instructor must already exist as a FACULTY account (added
+     via Manage System Accounts or the Faculty Directory) with a name that
+     matches the sheet exactly, otherwise this can't safely resolve who to
+     assign. If the subject isn't found by name in "Courses Applicable", the
+     section is still created and the CI assigned, but the Evaluation Type
+     is left unfixed — marks entry stays blocked until a Coordinator (or
+     Admin) fixes one, same as any freshly created section. */
+  async activateCourseRegistrationGroup(idx){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can activate a course section from registration data.', 'err'); return; }
+    const key = courseRegGroupIndex[idx];
+    if(!key){ toast('Could not find that group — refresh the page and try again.', 'err'); return; }
+    const { batch, branch, semester, subject, section } = key;
+    const list = this.state.courseRegistrations.filter(r=>
+      r.batch===batch && r.branch===branch && (r.semester||'—')===semester && r.subjectName===subject && (r.sectionCode||'—')===section);
+    if(!list.length){ toast('No registrations found for this group.', 'err'); return; }
+
+    const norm = s => String(s||'').trim().toLowerCase();
+    const instructorNames = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+    if(instructorNames.length===0){ toast('No instructor is listed for this section in the imported sheet.', 'err'); return; }
+    if(instructorNames.length>1){ toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return; }
+    const instructorName = instructorNames[0];
+
+    const matches = this.state.users.filter(u=>u.systemRole==='FACULTY' && norm(u.name)===norm(instructorName));
+    if(matches.length===0){ toast(`No faculty account named "${instructorName}" was found. Add them first — Manage System Accounts or the Faculty Directory — with the name spelled exactly as in the sheet, then activate again.`, 'err'); return; }
+    if(matches.length>1){ toast(`More than one faculty account is named "${instructorName}" (${matches.map(m=>m.email).join(', ')}) — rename one to disambiguate, or assign the Course Instructor manually from Manage Coordinators.`, 'err'); return; }
+    const ciUser = matches[0];
+
+    const subj = (this.state.subjects||[]).find(s=>norm(s.name)===norm(subject));
+    const code = subj ? subj.code : bizId('SUBJ', [subject], []).replace(/^SUBJ-/,'');
+    const name = subj ? subj.name : subject;
+    const evalType = subj ? subj.abbr : null;
+    const sec = section==='—' ? '' : section;
+
+    let course = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && c.section===sec && c.branch===branch);
+    const isNewCourse = !course;
+    if(!course){
+      course = {
+        id: bizId('CRS', [code, branch, sec||'nosec'], this.state.courses.map(c=>c.id)), code, name, section:sec, branch,
+        status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType,
+        editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
+        students:[], studentsLoaded:true, history:[]
+      };
+      this.state.courses.push(course);
+    } else if(!course.evalType && evalType){
+      course.evalType = evalType;
+    }
+    const { error: courseErr } = await syncCourse(course);
+    if(courseErr){ if(isNewCourse) this.state.courses = this.state.courses.filter(c=>c.id!==course.id); return; }
+
+    // Build/refresh the roster from the Student Directory so names/emails
+    // stay linked; rows that already exist (matched by dirId) keep their
+    // marks — only additions show up as new.
+    const dirByRoll = {};
+    (this.state.studentDirectory||[]).forEach(d=>{ if(d.batch===batch) dirByRoll[d.rollNo] = d; });
+    const existingByDirId = {};
+    (course.students||[]).forEach(s=>{ if(s.dirId) existingByDirId[s.dirId] = s; });
+    const nextStudents = [];
+    list.forEach(r=>{
+      const dir = dirByRoll[r.rollNo];
+      const already = dir ? existingByDirId[dir.id] : (course.students||[]).find(s=>!s.dirId && s.rollNo===r.rollNo);
+      if(already){ already.name=r.studentName; already.rollNo=r.rollNo; nextStudents.push(already); }
+      else {
+        const idPool = (course.students||[]).map(s=>s.id).concat(nextStudents.map(s=>s.id));
+        nextStudents.push({ id: bizId('CST', [course.code, course.section||'nosec', r.rollNo], idPool), name:r.studentName, rollNo:r.rollNo, email: dir?dir.email:'', dirId: dir?dir.id:null, marks:{} });
+      }
+    });
+    nextStudents.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+    course.students = nextStudents;
+    nextStudents.forEach(s=>syncNewStudent(course.id, s));
+
+    // Assign the Course Instructor — active immediately, mirroring every
+    // other Admin-initiated assignment in this app.
+    const existingCI = getCourseCIUser(course.id);
+    if(!existingCI || existingCI.id !== ciUser.id){
+      (this.state.assignments||[]).filter(a=>a.courseId===course.id && a.type==='CI' && a.status==='active').forEach(a=>{
+        a.status='revoked'; a.revokedAt=Date.now(); a.revokedBy=actor.id; syncAssignment(a);
+      });
+      const ciRec = { id:bizId('ASG', ['CI', course.code, course.section||'nosec', String(Date.now())], this.state.assignments.map(a=>a.id)), type:'CI', courseId:course.id, userId:ciUser.id, email:ciUser.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
+      this.state.assignments.push(ciRec);
+      syncAssignment(ciRec);
+      this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section||'—'} · ${branchLabel(course.branch)}), imported from the course registration sheet.`, true, actor.email);
+    }
+    this.logHistory(course, `Course section activated from Course Registration import: ${code} — ${name} (Section ${sec||'—'} · ${branchLabel(branch)}) · Instructor ${ciUser.name} (${ciUser.email}) (by ${actor.name})`);
+
+    if(!evalType){
+      toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded. No matching subject was found in "Courses Applicable", so the Evaluation Type isn't fixed yet — a Coordinator (or you, as Admin) will need to set one before marks can be entered.`, 'ok');
+    } else {
+      toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} auto-matched.`, 'ok');
+    }
+    renderSidebar();
+    this.navigate('admin-course-reg');
+  },
 };
 window.App = App;
 
@@ -3175,12 +3275,15 @@ function courseRegGroupsHtml(){
               const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
               const idx = courseRegGroupIndex.length;
               courseRegGroupIndex.push({ batch:batchKey, branch:branchKey, semester:semKey, subject:subjectKey, section:secKey });
-              return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;">
+              return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;flex-wrap:wrap;gap:8px;">
                 <div>
                   <div class="section-title" style="font-size:13.5px;">${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
                   <div class="section-meta">${instructors.length ? escapeHtml(instructors.join(', ')) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}</div>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${idx})">View Roster</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${idx})">View Roster</button>
+                  <button class="btn btn-sm" onclick="if(confirm('Create/update the live course section for ${escapeHtml(subjectKey).replace(/'/g,"\\'")} · Section ${secKey==='—'?'—':escapeHtml(secKey).replace(/'/g,"\\'")}, assign ${instructors.length?escapeHtml(instructors.join(', ')).replace(/'/g,"\\'"):'the instructor'} as Course Instructor, and load its roster?')) App.activateCourseRegistrationGroup(${idx})">Activate as Course Section</button>
+                </div>
               </div>`;
             }).join('')}
           </div>`;
@@ -3222,7 +3325,7 @@ function renderAdminCourseRegistrations(){
     <div class="page-head">
       <div class="page-eyebrow">Administrator</div>
       <h2>Course Registrations</h2>
-      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. This is reference data for browsing/lookup and doesn't touch the marks/evaluation workflow.</p>
+      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. Use "Activate as Course Section" on any subject/section to turn it into a real, live section — it assigns the matching Course Instructor (they must already have a faculty account with a matching name) and loads its roster, so it appears under their "My Sections" right away.</p>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Import from Excel</div>
