@@ -856,14 +856,37 @@ const TT_SHORT_KEYS = ['q1','q2','q3','q4','q5'];
 const TT_SHORT_EACH_MAX = 2;
 const TT_SHORT_TOTAL_MAX = 10;
 const TT_LONG_PAIRS = [
-  { unit:'Unit 1', a:'q6',  b:'q7'  },
-  { unit:'Unit 2', a:'q8',  b:'q9'  },
-  { unit:'Unit 3', a:'q10', b:'q11' },
+  { a:'q6',  b:'q7'  },
+  { a:'q8',  b:'q9'  },
+  { a:'q10', b:'q11' },
 ];
 const TT_LONG_QUESTION_MAX = 16;
 const TT_LONG_RAW_MAX = 48;   // 3 attempted questions x 16
 const TT_LONG_SCALED_MAX = 40;
 const TT_TOTAL_MAX = 50;      // 10 short + 40 scaled-long
+
+/* Academic Year (rolling window, "year by year") + Semester — the Admin
+   picks both alongside the Term Test cycle, so what's fixed is always
+   labelled e.g. "2025-2026 · Semester 1 · Term Test 1". */
+function generateAcademicYears(){
+  const startY = new Date().getFullYear() - 2;
+  const years = [];
+  for(let y=startY; y<=startY+6; y++) years.push(`${y}-${y+1}`);
+  return years;
+}
+const ACADEMIC_YEARS = generateAcademicYears();
+const SEMESTER_LABELS = ['Semester 1','Semester 2'];
+
+/* Per-pair Unit + marks-split, set by the Course Instructor before entering
+   marks (units are chosen by the CI when setting the question paper, not
+   fixed by the app) — one Unit + one split ("8+8" parts a/b, or a single
+   "16" answer) per long-answer choice pair (Q6/Q7, Q8/Q9, Q10/Q11). */
+const TT_UNIT_OPTIONS = ['Unit 1','Unit 2','Unit 3','Unit 4','Unit 5'];
+function ttPairKey(a,b){ return a+b; }
+function getPairConfig(course, cycle, pairKey){
+  const cfg = (((course.ttPaperConfig||{})[cycle]||{})[pairKey]) || {};
+  return { unit: cfg.unit || '', split: cfg.split || '8+8' };
+}
 
 /* Which raw CIE component key (as defined on the Evaluation Type template)
    a given Term Test cycle feeds into. Templates with two separate slots
@@ -892,13 +915,13 @@ function computeTermTestRaw(detail){
   shortTotal = Math.min(round1(shortTotal), TT_SHORT_TOTAL_MAX);
   let longRaw = 0, attempted = 0;
   const errors = [];
-  TT_LONG_PAIRS.forEach(({unit,a,b})=>{
+  TT_LONG_PAIRS.forEach(({a,b})=>{
     const da = detail[a] || {}, db = detail[b] || {};
     const totalA = (typeof da.a==='number'?da.a:0) + (typeof da.b==='number'?da.b:0);
     const totalB = (typeof db.a==='number'?db.a:0) + (typeof db.b==='number'?db.b:0);
     const hasA = totalA > 0, hasB = totalB > 0;
     if(hasA && hasB){
-      errors.push(`${unit}: only ${a.toUpperCase()} OR ${b.toUpperCase()} may carry marks (choice question) — clear one before entering the other.`);
+      errors.push(`Only ${a.toUpperCase()} OR ${b.toUpperCase()} may carry marks (choice question) — clear one before entering the other.`);
     } else if(hasA || hasB){
       attempted++;
       longRaw += Math.min(Math.max(hasA?totalA:totalB, 0), TT_LONG_QUESTION_MAX);
@@ -1074,7 +1097,7 @@ async function fetchStateFromSupabase(){
       evalType:c.eval_type || null,
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
-      etRequests: c.et_requests || [],
+      etRequests: c.et_requests || [], ttPaperConfig: c.tt_paper_config || {},
       // Roster/marks are NOT fetched here — only a lightweight count +
       // completion flags from the view. Call App.ensureCourseStudentsLoaded
       // (courseId) before any page needs the real per-student data; that
@@ -1105,22 +1128,27 @@ async function fetchStateFromSupabase(){
     ts:new Date(n.ts).getTime(), read:!!n.read, notifyEmail:!!n.notify_email, fromEmail:n.from_email||null
   }));
 
-  const termTestHistory = (ttHistoryR.data||[]).map(t=>({ id:t.id, ts:new Date(t.ts).getTime(), by:t.by_name, value:t.value }));
+  const termTestHistory = (ttHistoryR.data||[]).map(t=>({ id:t.id, ts:new Date(t.ts).getTime(), by:t.by_name, value:t.value, academicYear:t.academic_year||null, semester:t.semester||null, cycle:t.value }));
 
   let currentTermTest = null;
   const ctRow = (settingsR.data||[]).find(r=>r.key==='current_term_test');
   if(ctRow && ctRow.value!==null && ctRow.value!==undefined){
     let v = ctRow.value;
     // syncAppSetting() writes JSON.stringify(value) into this column, so a
-    // plain 'TT1' is actually stored as the JSON string '"TT1"'. Unwrap that
-    // one layer of JSON-encoding back to a plain string here — without this,
-    // ctRow.value never matches a TERM_TEST_LABELS key for anyone loading
-    // the app fresh (i.e. everyone except the Admin who just set it, whose
-    // own browser already had the unwrapped value in local state).
+    // plain value is actually stored one JSON-encoding layer deeper than it
+    // looks (e.g. the object {cycle:'TT1',...} is stored as the JSON STRING
+    // '{"cycle":"TT1",...}'). Unwrap that one layer here — without this,
+    // ctRow.value never matches what the rest of the app expects for anyone
+    // loading the app fresh (i.e. everyone except the Admin who just set it,
+    // whose own browser already had the unwrapped value in local state).
     if(typeof v === 'string'){
-      try{ const parsed = JSON.parse(v); if(typeof parsed === 'string' || parsed === null) v = parsed; }catch(e){ /* already a plain string like 'TT1' — leave as-is */ }
+      try{ v = JSON.parse(v); }catch(e){ /* already a plain string like 'TT1' — leave as-is */ }
     }
-    currentTermTest = v;
+    // Normalize: older data (or a fresh Admin.setTermTest call) may still be
+    // a plain cycle string ('TT1'/'TT2'/'TT3') rather than the newer
+    // {academicYear, semester, cycle} object — wrap it so every consumer can
+    // always assume the object shape.
+    currentTermTest = (v && typeof v === 'object') ? v : (v ? { academicYear:null, semester:null, cycle:v } : null);
   }
 
   const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
@@ -1141,7 +1169,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[] }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{} }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1151,7 +1179,7 @@ const rowOf = {
   }),
   notification:(n)=>({ id:n.id, for_user_id:n.forUserId, course_id:n.courseId||null, title:n.title, body:n.body, ts:new Date(n.ts).toISOString(), read:!!n.read, notify_email:!!n.notifyEmail, from_email:n.fromEmail||null }),
   history:(courseId,h)=>({ id:h.id, course_id:courseId, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' }),
-  termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value }),
+  termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value, academic_year:t.academicYear||null, semester:t.semester||null }),
   studentDirectoryEntry:(s)=>({ id:s.id, roll_no:s.rollNo, name:s.name, email:s.email||null, branch:s.branch, batch:s.batch, semester:s.semester||null }),
 };
 
@@ -1470,7 +1498,7 @@ const App = {
     const course = {
       id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '',
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
-      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[],
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
       students: [], history: []
@@ -1531,7 +1559,7 @@ const App = {
     const course = {
       id: bizId('CRS', [req.subjectCode, branch, sec], this.state.courses.map(c=>c.id)), code: req.subjectCode, name: req.subjectName, section: sec, branch,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
-      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[],
+      editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       students: [], history: []
     };
     this.state.courses.push(course);
@@ -2142,28 +2170,33 @@ const App = {
     this.navigate('hod-list');
   },
 
-  /* ---------- Admin: fix the active Term Test cycle, visible to every role ---------- */
-  setTermTest(value){
-    if(!TERM_TEST_LABELS[value]){ toast('Choose a valid term test.', 'err'); return; }
+  /* ---------- Admin: fix the active Academic Year + Semester + Term Test
+     cycle, visible to every role. ---------- */
+  setTermTest(academicYear, semester, cycle){
+    if(!ACADEMIC_YEARS.includes(academicYear)){ toast('Choose an Academic Year.', 'err'); return; }
+    if(!SEMESTER_LABELS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
+    if(!TERM_TEST_LABELS[cycle]){ toast('Choose a valid term test.', 'err'); return; }
     const actor = this.currentUser();
+    const value = { academicYear, semester, cycle };
     this.state.currentTermTest = value;
     syncAppSetting('current_term_test', value);
     this.state.termTestHistory = this.state.termTestHistory || [];
-    const ttEntry = { id:bizId('TT', [value, this.state.termTestHistory.length+1], this.state.termTestHistory.map(t=>t.id)), ts:Date.now(), by:actor.name, value };
+    const ttEntry = { id:bizId('TT', [cycle, this.state.termTestHistory.length+1], this.state.termTestHistory.map(t=>t.id)), ts:Date.now(), by:actor.name, value:cycle, academicYear, semester, cycle };
     this.state.termTestHistory.unshift(ttEntry);
     syncTermTest(ttEntry);
+    const fullLabel = `${academicYear} · ${semester} · ${TERM_TEST_LABELS[cycle]}`;
     const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
     ccUserIds.forEach(uidTarget=>{
       const n = {
         id:bizId('NOTE', ['GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:uidTarget, courseId:null,
-        title:`${TERM_TEST_LABELS[value]} is now the active cycle`,
-        body:`${actor.name} (Admin) fixed ${TERM_TEST_LABELS[value]} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
+        title:`${fullLabel} is now the active cycle`,
+        body:`${actor.name} (Admin) fixed ${fullLabel} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
         ts:Date.now(), read:false
       };
       this.state.notifications.unshift(n);
       syncNotification(n);
     });
-    toast(`${TERM_TEST_LABELS[value]} set as the active cycle and sent to all Course Coordinators.`, 'ok');
+    toast(`${fullLabel} set as the active cycle and sent to all Course Coordinators.`, 'ok');
     renderContent();
     renderBell();
   },
@@ -2173,6 +2206,26 @@ const App = {
      score, which is written straight into the course's fixed tt1/tt2/
      termTest CIE component — the existing CIE scaling pipeline (scaledMax
      per template) takes it from there, exactly like any other CIE mark. */
+  /* ---------- CI: set the Unit + marks-split ("8+8" or single "16") for a
+     long-answer choice pair (Q6/Q7, Q8/Q9, Q10/Q11) before entering marks.
+     Applies to the whole class for that cycle — the CI picks the Unit
+     because units are decided when the question paper is made, not fixed
+     by the app. ---------- */
+  setTTPaperConfig(courseId, cycle, pairKey, field, value){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can set up the question paper.', 'err'); return; }
+    if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked.', 'err'); return; }
+    course.ttPaperConfig = course.ttPaperConfig || {};
+    course.ttPaperConfig[cycle] = course.ttPaperConfig[cycle] || {};
+    course.ttPaperConfig[cycle][pairKey] = course.ttPaperConfig[cycle][pairKey] || {};
+    course.ttPaperConfig[cycle][pairKey][field] = value;
+    syncCourse(course);
+    renderContent();
+  },
+
   setTermTestMark(courseId, studentId, cycle, qKey, subpart, rawValue){
     const actor = this.currentUser();
     const course = this.getCourse(courseId);
@@ -2185,7 +2238,12 @@ const App = {
     s.marks = s.marks || {};
     s.marks.ttDetail = s.marks.ttDetail || {};
     s.marks.ttDetail[cycle] = s.marks.ttDetail[cycle] || {};
-    const cap = TT_LONG_PAIRS.some(p=>p.a===qKey||p.b===qKey) ? TT_LONG_QUESTION_MAX : TT_SHORT_EACH_MAX;
+    const pair = TT_LONG_PAIRS.find(p=>p.a===qKey||p.b===qKey);
+    let cap = TT_SHORT_EACH_MAX;
+    if(pair){
+      const cfg = getPairConfig(course, cycle, ttPairKey(pair.a, pair.b));
+      cap = cfg.split === '16' ? TT_LONG_QUESTION_MAX : 8;
+    }
     const val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : Math.min(Math.max(parseFloat(rawValue)||0, 0), cap);
     if(subpart){
       s.marks.ttDetail[cycle][qKey] = s.marks.ttDetail[cycle][qKey] || {};
@@ -2545,8 +2603,10 @@ function renderContent(){
   build();
 }
 function termTestBanner(){
-  const label = TERM_TEST_LABELS[App.state.currentTermTest];
-  if(!label) return ''; // covers null/empty AND any value that doesn't match a known term test key
+  const tt = App.state.currentTermTest;
+  const cycleLabel = tt && TERM_TEST_LABELS[tt.cycle];
+  if(!cycleLabel) return ''; // covers null/empty AND any value that doesn't match a known term test key
+  const label = tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${cycleLabel}` : cycleLabel;
   return `<div class="card" style="border-left:3px solid var(--brass);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
     <div>
       <div class="page-eyebrow">Active Examination Cycle</div>
@@ -3205,30 +3265,45 @@ function renderHODTermTest(){
   const current = App.state.currentTermTest;
   const history = App.state.termTestHistory || [];
   const wrap = el('<div></div>');
+  const curAY = current?.academicYear || ACADEMIC_YEARS[2] || ACADEMIC_YEARS[0];
+  const curSem = current?.semester || SEMESTER_LABELS[0];
+  const curCycle = current?.cycle || null;
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Administrator</div>
       <h2>Term Test Cycle</h2>
-      <p>Fix which examination cycle is currently active. Once set, it's sent to every Course Coordinator and shown as a banner to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.</p>
+      <p>Fix the Academic Year, Semester, and which examination cycle is currently active. Once set, it's sent to every Course Coordinator and shown as a banner to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.</p>
     </div>
     <div class="card">
-      <div class="section-title" style="font-size:15px;">Current cycle: ${current ? TERM_TEST_LABELS[current] : 'Not set yet'}</div>
-      <div class="config-grid" style="max-width:320px;">
+      <div class="section-title" style="font-size:15px;">Current cycle: ${current && curCycle ? `${escapeHtml(current.academicYear||'')} · ${escapeHtml(current.semester||'')} · ${TERM_TEST_LABELS[curCycle]}` : 'Not set yet'}</div>
+      <div class="config-grid" style="max-width:640px;">
+        <div class="config-field">
+          <label>Academic Year</label>
+          <select id="tt-ay-select">
+            ${ACADEMIC_YEARS.map(y=>`<option value="${y}" ${curAY===y?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+        <div class="config-field">
+          <label>Semester</label>
+          <select id="tt-sem-select">
+            ${SEMESTER_LABELS.map(s=>`<option value="${s}" ${curSem===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
         <div class="config-field">
           <label>Term test</label>
           <select id="tt-select">
-            ${Object.entries(TERM_TEST_LABELS).map(([k,v])=>`<option value="${k}" ${current===k?'selected':''}>${v}</option>`).join('')}
+            ${Object.entries(TERM_TEST_LABELS).map(([k,v])=>`<option value="${k}" ${curCycle===k?'selected':''}>${v}</option>`).join('')}
           </select>
         </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.setTermTest(document.getElementById('tt-select').value)">Fix &amp; Send to CC</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.setTermTest(document.getElementById('tt-ay-select').value, document.getElementById('tt-sem-select').value, document.getElementById('tt-select').value)">Fix &amp; Send to CC</button>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Cycle history</div>
       ${history.length===0 ? `<p style="margin-top:10px;color:var(--text-soft);font-size:13.5px;">No cycle has been fixed yet.</p>` : `
         <div style="margin-top:12px;">${history.map(h=>`
           <div class="audit-item">
-            <div class="a-head">${escapeHtml(TERM_TEST_LABELS[h.value])} fixed</div>
+            <div class="a-head">${escapeHtml(TERM_TEST_LABELS[h.cycle||h.value])} fixed${h.academicYear?` — ${escapeHtml(h.academicYear)} · ${escapeHtml(h.semester||'')}`:''}</div>
             <div class="a-body">${escapeHtml(h.by)}</div>
             <div class="a-time">${fmtDate(h.ts)}</div>
           </div>`).join('')}</div>`}
@@ -3774,19 +3849,21 @@ function renderCISections(){
 function renderCITermTestSections(){
   const user = App.currentUser();
   const { ciCourses } = getFacultyCourses(user.id);
-  const cycle = App.state.currentTermTest;
-  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const tt = App.state.currentTermTest;
+  const cycle = tt?.cycle || null;
+  const cycleLabel = cycle && TERM_TEST_LABELS[cycle];
+  const fullLabel = cycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${cycleLabel}` : cycleLabel;
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Instructor</div>
       <h2>Term Test</h2>
-      <p>The Administrator fixes the active Term Test cycle (TT1 / TT2 / TT3); once fixed here, the structured 11-question answer sheet opens automatically for each of your sections. Short answers (Q1–Q5, 2 marks each = 10) and long answers (Q6–Q11, 16 marks each, one question per unit-pair attempted, scaled to 40) combine into a raw ${TT_TOTAL_MAX}-mark score that's fed straight into that section's fixed Evaluation Type template.</p>
+      <p>The Administrator fixes the active Academic Year, Semester, and Term Test cycle (TT1 / TT2 / TT3); once fixed here, the structured 11-question answer sheet opens automatically for each of your sections. Short answers (Q1–Q5, 2 marks each = 10) and long answers (Q6–Q11, set up by you as Unit + marks-split before entering marks, scaled to 40) combine into a raw ${TT_TOTAL_MAX}-mark score that's fed straight into that section's fixed Evaluation Type template.</p>
     </div>
     ${!cycleLabel ? emptyStateHtml('No Term Test cycle active', 'The Administrator hasn\'t fixed a Term Test cycle yet — this page opens automatically as soon as they do.') : `
       <div class="card" style="border-left:3px solid var(--brass);margin-bottom:16px;">
         <div class="page-eyebrow">Active cycle</div>
-        <div class="section-title" style="margin-top:4px;">${escapeHtml(cycleLabel)}</div>
+        <div class="section-title" style="margin-top:4px;">${escapeHtml(fullLabel)}</div>
       </div>
       ${ciCourses.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : ciCourses.map(c=>{
         const template = c.evalType ? getCourseTemplate(c) : null;
@@ -3821,8 +3898,10 @@ function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
 function renderCITermTestEntry(params){
   const course = App.getCourse(params.courseId);
   if(!course) return el('<div></div>');
-  const cycle = App.state.currentTermTest;
-  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const tt = App.state.currentTermTest;
+  const cycle = tt?.cycle || null;
+  const cycleLabel = cycle && TERM_TEST_LABELS[cycle];
+  const fullLabel = cycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${cycleLabel}` : cycleLabel;
   const wrap = el('<div></div>');
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-termtest')">← Back to Term Test</button>`;
   if(!cycleLabel){
@@ -3839,6 +3918,28 @@ function renderCITermTestEntry(params){
   const editable = course.status==='draft' || correctionMode;
   const comp = template.cie.find(c=>c.key===compKey);
 
+  const pairSetupHtml = TT_LONG_PAIRS.map(({a,b})=>{
+    const pairKey = ttPairKey(a,b);
+    const cfg = getPairConfig(course, cycle, pairKey);
+    return `
+      <div class="config-grid" style="margin-top:10px;">
+        <div class="config-field">
+          <label>${a.toUpperCase()} or ${b.toUpperCase()} — Unit</label>
+          <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${pairKey}','unit', this.value)">
+            <option value="">— Select Unit —</option>
+            ${TT_UNIT_OPTIONS.map(u=>`<option value="${escapeHtml(u)}" ${cfg.unit===u?'selected':''}>${escapeHtml(u)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="config-field">
+          <label>${a.toUpperCase()} or ${b.toUpperCase()} — Marks split</label>
+          <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${pairKey}','split', this.value)">
+            <option value="8+8" ${cfg.split==='8+8'?'selected':''}>8 + 8 (parts a &amp; b)</option>
+            <option value="16" ${cfg.split==='16'?'selected':''}>16 (single answer)</option>
+          </select>
+        </div>
+      </div>`;
+  }).join('');
+
   const rows = (course.students||[]).map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
@@ -3849,20 +3950,30 @@ function renderCITermTestEntry(params){
         onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${k}',null,this.value)"></td>`;
     }).join('');
     const longCells = TT_LONG_PAIRS.map(({a,b})=>{
+      const pairKey = ttPairKey(a,b);
+      const cfg = getPairConfig(course, cycle, pairKey);
+      const is16 = cfg.split==='16';
       const da = detail[a]||{}, db = detail[b]||{};
-      const aFilled = (typeof da.a==='number'&&da.a>0)||(typeof da.b==='number'&&da.b>0);
-      const bFilled = (typeof db.a==='number'&&db.a>0)||(typeof db.b==='number'&&db.b>0);
-      const cellFor = (qKey, other, otherFilled) => `
-        <td class="mono" style="white-space:nowrap;">
-          <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
-          <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:48px;" placeholder="a"
-            value="${ttNum((detail[qKey]||{}).a)}" ${editable && !otherFilled ? '' : 'disabled'}
-            onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
-          <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:48px;" placeholder="b"
-            value="${ttNum((detail[qKey]||{}).b)}" ${editable && !otherFilled ? '' : 'disabled'}
-            onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
-        </td>`;
-      return cellFor(a, b, bFilled) + cellFor(b, a, aFilled);
+      const totalA = (typeof da.a==='number'?da.a:0)+(typeof da.b==='number'?da.b:0);
+      const totalB = (typeof db.a==='number'?db.a:0)+(typeof db.b==='number'?db.b:0);
+      const aFilled = totalA>0, bFilled = totalB>0;
+      const cellFor = (qKey, otherFilled) => is16
+        ? `<td class="mono" style="white-space:nowrap;">
+            <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
+            <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:56px;" placeholder="/16"
+              value="${ttNum((detail[qKey]||{}).a)}" ${editable && !otherFilled ? '' : 'disabled'}
+              onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
+          </td>`
+        : `<td class="mono" style="white-space:nowrap;">
+            <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
+            <input type="number" min="0" max="8" step="0.5" style="width:44px;" placeholder="a/8"
+              value="${ttNum((detail[qKey]||{}).a)}" ${editable && !otherFilled ? '' : 'disabled'}
+              onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
+            <input type="number" min="0" max="8" step="0.5" style="width:44px;" placeholder="b/8"
+              value="${ttNum((detail[qKey]||{}).b)}" ${editable && !otherFilled ? '' : 'disabled'}
+              onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
+          </td>`;
+      return cellFor(a, bFilled) + cellFor(b, aFilled);
     }).join('');
     const errBadge = calc.errors.length ? `<div style="color:var(--seal-red);font-size:11px;margin-top:4px;">${calc.errors.map(escapeHtml).join('<br>')}</div>` : '';
     return `<tr>
@@ -3877,21 +3988,30 @@ function renderCITermTestEntry(params){
   }).join('');
 
   const shortHead = TT_SHORT_KEYS.map(k=>`<th>${k.toUpperCase()}<br><span style="text-transform:none;">/${TT_SHORT_EACH_MAX}</span></th>`).join('');
-  const longHead = TT_LONG_PAIRS.map(({unit,a,b})=>`<th colspan="2">${escapeHtml(unit)}<br><span style="text-transform:none;">${a.toUpperCase()} or ${b.toUpperCase()} — /${TT_LONG_QUESTION_MAX}</span></th>`).join('');
+  const longHead = TT_LONG_PAIRS.map(({a,b})=>{
+    const cfg = getPairConfig(course, cycle, ttPairKey(a,b));
+    const unitLabel = cfg.unit || 'Unit not set';
+    return `<th colspan="2">${escapeHtml(unitLabel)}<br><span style="text-transform:none;">${a.toUpperCase()} or ${b.toUpperCase()} — /${TT_LONG_QUESTION_MAX} (${cfg.split==='16'?'single':'8+8'})</span></th>`;
+  }).join('');
 
   wrap.innerHTML = `
     <div class="page-head">
       ${backBtn}
-      <div class="page-eyebrow">${cycleLabel} · feeds into "${escapeHtml(comp.label)}"</div>
+      <div class="page-eyebrow">${escapeHtml(fullLabel)} · feeds into "${escapeHtml(comp.label)}"</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     <div class="card">
-      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, 16 marks each, split into parts (a) and (b) — attempt only ONE question per unit-pair (choice question); the other side locks once you enter a mark. The 3 attempted long answers (max 48 raw) scale down to 40. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
+      <div class="section-title" style="font-size:15px;">Question Paper Setup</div>
+      <p class="section-meta" style="margin-top:4px;">Set the Unit and marks-split for each long-answer choice pair before entering marks — units are decided when you make the question paper, so nothing is pre-filled. This applies to the whole class for ${escapeHtml(cycleLabel)}.</p>
+      ${pairSetupHtml}
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, 16 marks each — attempt only ONE question per unit-pair (choice question); the other side locks once you enter a mark. The 3 attempted long answers (max 48 raw) scale down to 40. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
       <div class="table-scroll">
         <table class="data-table" style="min-width:1400px;">
           <thead>
-            <tr><th rowspan="2">Student</th>${shortHead.replace(/<\/th>/g,'</th>')}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Long<br>Scaled</th><th rowspan="2">Term Test<br>Total</th></tr>
+            <tr><th rowspan="2">Student</th>${shortHead}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Long<br>Scaled</th><th rowspan="2">Term Test<br>Total</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
