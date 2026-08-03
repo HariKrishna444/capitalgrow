@@ -1677,7 +1677,7 @@ const App = {
     this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>
       this.notifyUser(u.id, base, `Evaluation Type approval needed — ${base.code}`, `${actor.name} requested "${template.label}" for the ${base.code} — ${base.name} coordination, and is awaiting your approval before they can assign a Course Instructor to it.`, true)
     );
-    toast(`Requested ${abbr} for ${subj.code} — sent to the HOD for approval.`, 'ok');
+    toast(`Requested ${abbr} for ${base.code} — sent to the HOD for approval.`, 'ok');
     renderContent();
   },
   /* ---------- HOD: approve a pending Subject + ETP request. Once approved,
