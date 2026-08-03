@@ -2645,6 +2645,27 @@ const App = {
     renderSidebar();
     this.navigate('admin-course-reg');
   },
+  /* ---------- ADMIN: set a course's Evaluation Type directly, bypassing
+     the CC-request / HOD-approval chain — for sections that have a Course
+     Instructor but no Course Coordinator to request one (e.g. sections
+     activated straight from a Course Registration import), or any other
+     case where you don't want to wait on that workflow. */
+  async adminSetEvalType(courseId, abbr){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can set an Evaluation Type directly.', 'err'); return; }
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Could not find that course.', 'err'); return; }
+    const t = getTemplate(abbr);
+    if(!t){ toast('Choose a valid Evaluation Type.', 'err'); return; }
+    course.evalType = abbr;
+    const { error } = await syncCourse(course);
+    if(error) return;
+    this.logHistory(course, `Evaluation Type set directly to ${abbr} — ${t.label} (by ${actor.name}, Admin override)`);
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `Evaluation Type fixed`, `${actor.name} set the Evaluation Type for ${course.code} — ${course.name} (Section ${course.section||'—'} · ${branchLabel(course.branch)}) to "${t.label}". You can now enter marks.`, true, actor.email);
+    toast(`Evaluation Type set to ${t.label} for ${course.code} · Section ${course.section||'—'}.`, 'ok');
+    this.navigate('hod-review', { courseId });
+  },
 };
 window.App = App;
 
@@ -3275,13 +3296,19 @@ function courseRegGroupsHtml(){
               const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
               const idx = courseRegGroupIndex.length;
               courseRegGroupIndex.push({ batch:batchKey, branch:branchKey, semester:semKey, subject:subjectKey, section:secKey });
+              const norm = s => String(s||'').trim().toLowerCase();
+              const matchedSubj = (App.state.subjects||[]).find(s=>norm(s.name)===norm(subjectKey));
+              const matchedCode = matchedSubj ? matchedSubj.code : bizId('SUBJ',[subjectKey],[]).replace(/^SUBJ-/,'');
+              const matchedSec = secKey==='—' ? '' : secKey;
+              const matchedCourse = (App.state.courses||[]).find(c=>normalizeCode(c.code)===normalizeCode(matchedCode) && c.section===matchedSec && c.branch===branchKey);
               return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;flex-wrap:wrap;gap:8px;">
                 <div>
                   <div class="section-title" style="font-size:13.5px;">${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
-                  <div class="section-meta">${instructors.length ? escapeHtml(instructors.join(', ')) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}</div>
+                  <div class="section-meta">${instructors.length ? escapeHtml(instructors.join(', ')) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}${matchedCourse ? ` · Activated${matchedCourse.evalType?'':' — ET not fixed'}` : ''}</div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                   <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${idx})">View Roster</button>
+                  ${matchedCourse ? `<button class="btn btn-outline btn-sm" onclick="App.navigate('hod-review',{courseId:'${matchedCourse.id}'})">Manage Course</button>` : ''}
                   <button class="btn btn-sm" onclick="if(confirm('Create/update the live course section for ${escapeHtml(subjectKey).replace(/'/g,"\\'")} · Section ${secKey==='—'?'—':escapeHtml(secKey).replace(/'/g,"\\'")}, assign ${instructors.length?escapeHtml(instructors.join(', ')).replace(/'/g,"\\'"):'the instructor'} as Course Instructor, and load its roster?')) App.activateCourseRegistrationGroup(${idx})">Activate as Course Section</button>
                 </div>
               </div>`;
@@ -3482,6 +3509,18 @@ function renderHODReview(params){
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
     </div>
     ${course.eaRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">EA verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : ''}
+    ${(!course.evalType && App.currentUser().systemRole==='ADMIN') ? `
+      <div class="card" style="border-left:3px solid var(--brass);">
+        <div class="section-title" style="font-size:14px;">Evaluation Type not fixed</div>
+        <p style="margin:8px 0 12px;color:var(--text-soft);">No Course Coordinator has requested one for this section, or none is needed — set it directly to unblock marks entry.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="config-field" style="max-width:340px;">
+            <label>Evaluation Type</label>
+            <select id="admin-et-pick-${course.id}">${EVAL_TEMPLATES.map(t=>`<option value="${t.abbr}">${escapeHtml(t.label)}</option>`).join('')}</select>
+          </div>
+          <button class="btn btn-sm" onclick="App.adminSetEvalType('${course.id}', document.getElementById('admin-et-pick-${course.id}').value)">Set Evaluation Type</button>
+        </div>
+      </div>` : ''}
     ${course.status==='approved' && course.editRequestStatus==='pending' ? `
       <div class="card" style="border-left:3px solid var(--brass);">
         <div class="section-title" style="font-size:14px;">Instructor requested a marks correction</div>
