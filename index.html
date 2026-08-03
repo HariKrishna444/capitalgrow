@@ -3405,7 +3405,11 @@ function pendingApprovalGroupsHtml(){
 }
 function pendingEtRequestsHtml(){
   const rows = [];
-  App.state.courses.filter(c=>!c.branch).forEach(base=>{
+  // Scan every course's et_requests, not just branch-less "shell" coordinations —
+  // a course that already has a branch/section (e.g. from before the ETP-request
+  // workflow existed) can still have its Course Coordinator submit a request, and
+  // that request must still surface for HOD approval here.
+  App.state.courses.forEach(base=>{
     (base.etRequests||[]).forEach(r=>{ if(r.status==='pending') rows.push({ base, r }); });
   });
   if(!rows.length) return '';
@@ -3417,7 +3421,7 @@ function pendingEtRequestsHtml(){
         <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
           <div>
             <div class="section-title" style="font-size:14px;">${escapeHtml(r.subjectCode)} — ${escapeHtml(r.subjectName)} <span style="color:var(--text-soft);font-weight:400;">(${escapeHtml(r.abbr)})</span></div>
-            <div class="section-meta">Coordination: ${escapeHtml(base.code)} — ${escapeHtml(base.name)} · Requested by ${escapeHtml(r.requestedBy||'—')}</div>
+            <div class="section-meta">Coordination: ${escapeHtml(base.code)} — ${escapeHtml(base.name)}${base.branch ? ` · Section ${escapeHtml(base.section||'—')} · ${branchLabel(base.branch)}` : ''} · Requested by ${escapeHtml(r.requestedBy||'—')}</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline" onclick="const rmk=prompt('Remark for rejecting this (optional):'); if(rmk!==null) App.hodRejectEvalType('${base.id}','${r.id}', rmk);">Reject</button>
