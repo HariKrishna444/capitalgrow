@@ -900,10 +900,9 @@ function isTTSetupExpanded(course, cycle){
   if(course.id in ttSetupExpandedMap) return ttSetupExpandedMap[course.id];
   return !ttSetupComplete(course, cycle);
 }
-function toggleTTSetup(courseId){
+function toggleTTSetup(courseId, cycle){
   const course = App.getCourse(courseId);
-  const tt = App.state.currentTermTest;
-  const cycle = tt?.cycle;
+  if(!cycle){ const tt = App.state.currentTermTest; cycle = tt?.cycle; }
   const cur = isTTSetupExpanded(course, cycle);
   ttSetupExpandedMap[courseId] = !cur;
   renderContent();
@@ -2792,6 +2791,8 @@ function getNavForUser(user){
   const nav = [];
   if(ciCourses.length) nav.push({v:'ci-sections', label:'My Sections'});
   if(ciCourses.length) nav.push({v:'ci-termtest', label:'Term Test'});
+  if(ciCourses.length) nav.push({v:'ci-labint', label:'Lab Internals'});
+  if(ciCourses.length) nav.push({v:'ci-labext', label:'Lab Externals'});
   if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
@@ -2831,6 +2832,8 @@ function renderContent(){
     'ci-entry': renderCIEntry,
     'ci-termtest': renderCITermTestSections,
     'ci-termtest-entry': renderCITermTestEntry,
+    'ci-labint': renderCILabInternalSections,
+    'ci-labext': renderCILabExternalSections,
     'cc-list': renderCCList,
     'cc-roster': renderCCRoster,
     'cc-review': renderCCReview,
@@ -4321,24 +4324,40 @@ function renderCISections(){
    sections and the currently active TT cycle, linking into the structured
    entry screen for each. Kept apart from "My Sections" / ci-entry (CIE/SEE)
    per the fixed Term Test paper pattern. */
-function renderCITermTestSections(){
+function renderCITermTestSections(params={}){
   const user = App.currentUser();
   const { ciCourses } = getFacultyCourses(user.id);
   const tt = App.state.currentTermTest;
-  const cycle = tt?.cycle || null;
-  const cycleLabel = cycle && TERM_TEST_LABELS[cycle];
-  const fullLabel = cycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${cycleLabel}` : cycleLabel;
+  const activeCycle = tt?.cycle || null;
+  // The Admin fixes one cycle "active" institution-wide (for the exam-cycle
+  // banner below), but the CI can freely pick any cycle here to view/enter —
+  // marks for every cycle are stored independently per student, so there's
+  // no reason to lock the instructor to only whichever one is "current".
+  const cycle = params.cycle || activeCycle || 'TT1';
+  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const activeCycleLabel = activeCycle && TERM_TEST_LABELS[activeCycle];
+  const fullLabel = activeCycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${activeCycleLabel}` : activeCycleLabel;
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Instructor</div>
       <h2>Term Test</h2>
-      <p>The Administrator fixes the active Academic Year, Semester, and Term Test cycle (TT1 / TT2 / TT3); once fixed here, the structured 11-question answer sheet opens automatically for each of your sections. Short answers (Q1–Q5, 2 marks each = 10) and long answers (Q6–Q11, set up by you as Unit + marks-split before entering marks, scaled to 40) combine into a raw ${TT_TOTAL_MAX}-mark score that's fed straight into that section's fixed Evaluation Type template.</p>
+      <p>Pick which Term Test cycle to view or enter below. Short answers (Q1–Q5, 2 marks each = 10) and long answers (Q6–Q11, set up by you as Unit + marks-split before entering marks, scaled to 40) combine into a raw ${TT_TOTAL_MAX}-mark score that's fed straight into that section's fixed Evaluation Type template.</p>
     </div>
-    ${!cycleLabel ? emptyStateHtml('No Term Test cycle active', 'The Administrator hasn\'t fixed a Term Test cycle yet — this page opens automatically as soon as they do.') : `
+    ${!tt ? emptyStateHtml('No Term Test cycle active', 'The Administrator hasn\'t fixed a Term Test cycle yet — this page opens automatically as soon as they do.') : `
       <div class="card" style="border-left:3px solid var(--brass);margin-bottom:16px;">
-        <div class="page-eyebrow">Active cycle</div>
-        <div class="section-title" style="margin-top:4px;">${escapeHtml(fullLabel)}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
+          <div>
+            <div class="page-eyebrow">Active cycle (fixed by Administrator)</div>
+            <div class="section-title" style="margin-top:4px;">${escapeHtml(fullLabel)}</div>
+          </div>
+          <div class="config-field" style="max-width:220px;">
+            <label>Viewing / entering</label>
+            <select onchange="App.navigate('ci-termtest',{cycle:this.value})">
+              ${Object.keys(TERM_TEST_LABELS).map(c=>`<option value="${c}" ${c===cycle?'selected':''}>${escapeHtml(TERM_TEST_LABELS[c])}</option>`).join('')}
+            </select>
+          </div>
+        </div>
       </div>
       ${ciCourses.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : ciCourses.map(c=>{
         const template = c.evalType ? getCourseTemplate(c) : null;
@@ -4355,7 +4374,7 @@ function renderCITermTestSections(){
               ${etPill(c)}
               ${!c.evalType ? `<span class="status-pill status-draft">Evaluation Type not fixed</span>` :
                 !key ? `<span class="status-pill status-draft">${escapeHtml(cycleLabel)} not applicable to this Evaluation Type</span>` : ''}
-              <button class="btn ${key?'':'btn-outline'} btn-sm" ${key?'':'disabled'} onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}'})">Open Answer Sheet</button>
+              <button class="btn ${key?'':'btn-outline'} btn-sm" ${key?'':'disabled'} onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'${cycle}'})">Open Answer Sheet</button>
             </div>
           </div>
         </div>`;
@@ -4374,12 +4393,13 @@ function renderCITermTestEntry(params){
   const course = App.getCourse(params.courseId);
   if(!course) return el('<div></div>');
   const tt = App.state.currentTermTest;
-  const cycle = tt?.cycle || null;
-  const cycleLabel = cycle && TERM_TEST_LABELS[cycle];
-  const fullLabel = cycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${cycleLabel}` : cycleLabel;
+  const cycle = params.cycle || tt?.cycle || 'TT1';
+  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const activeCycleLabel = tt?.cycle && TERM_TEST_LABELS[tt.cycle];
+  const fullLabel = activeCycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${activeCycleLabel}` : activeCycleLabel;
   const wrap = el('<div></div>');
-  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-termtest')">← Back to Term Test</button>`;
-  if(!cycleLabel){
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-termtest',{cycle:'${cycle}'})">← Back to Term Test</button>`;
+  if(!tt){
     wrap.innerHTML = `<div class="page-head">${backBtn}<h2>Term Test</h2></div>${emptyStateHtml('No Term Test cycle active','The Administrator hasn\'t fixed a Term Test cycle yet.')}`;
     return wrap;
   }
@@ -4482,14 +4502,14 @@ function renderCITermTestEntry(params){
   wrap.innerHTML = `
     <div class="page-head">
       ${backBtn}
-      <div class="page-eyebrow">${escapeHtml(fullLabel)} · feeds into "${escapeHtml(comp.label)}"</div>
+      <div class="page-eyebrow">${escapeHtml(cycleLabel)}${fullLabel && fullLabel!==cycleLabel ? ` (Active cycle: ${escapeHtml(fullLabel)})` : ''} · feeds into "${escapeHtml(comp.label)}"</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     <div class="card">
       <div class="card-row">
         <div class="section-title" style="font-size:15px;">Question Paper Setup</div>
-        <button class="btn btn-sm ${setupExpanded?'':'btn-outline'}" onclick="toggleTTSetup('${course.id}')">${setupExpanded ? 'Done — Hide Setup' : 'Edit Question Paper Setup'}</button>
+        <button class="btn btn-sm ${setupExpanded?'':'btn-outline'}" onclick="toggleTTSetup('${course.id}','${cycle}')">${setupExpanded ? 'Done — Hide Setup' : 'Edit Question Paper Setup'}</button>
       </div>
       ${setupExpanded ? `
         <p class="section-meta" style="margin-top:4px;">Set the Unit and marks-split for EACH long-answer question (Q6–Q11) before entering marks — every question can have its own Unit and split, e.g. Q6 as 8+8 from Unit 1 while Q7 is a single 16 from Unit 2. Nothing is pre-filled since units are decided when you make the question paper. This applies to the whole class for ${escapeHtml(cycleLabel)}. Click "Done" once you're finished to hide these dropdowns and give the student marks table more room.</p>
@@ -4513,6 +4533,93 @@ function renderCITermTestEntry(params){
   `;
   return wrap;
 }
+/* Sets which tab is active on the "My Sections" marks-entry screen (ci-entry)
+   before navigating there — lets the Lab Internals / Lab Externals sidebar
+   shortcuts below drop the CI straight into the right tab instead of always
+   landing on "Term Test & Lab Internal" by default. */
+function openMarksTab(courseId, tab){
+  activeMarksTab = tab;
+  App.navigate('ci-entry', { courseId });
+}
+window.openMarksTab = openMarksTab;
+
+/* "Lab Internals" sidebar shortcut — lists every section with a Lab Internal
+   component on its fixed Evaluation Type and links straight into the
+   "Term Test & Lab Internal" tab of My Sections (the two share one HOD
+   approval group, so they can't be split into a separate submission — this
+   is just a faster way in than going through My Sections first). */
+function renderCILabInternalSections(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const rows = ciCourses.map(c=>{
+    const template = c.evalType ? getCourseTemplate(c) : null;
+    const comp = template ? labInternalComponent(template) : null;
+    return { c, comp };
+  });
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Lab Internals</h2>
+      <p>Enter Lab Internal marks for your sections. This shares one HOD-approval group with Term Test 1/2, so it opens on the "Term Test &amp; Lab Internal" tab of that section's marks entry.</p>
+    </div>
+    ${rows.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : rows.map(({c,comp})=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            ${statusPill(c)}
+            ${etPill(c)}
+            ${!c.evalType ? `<span class="status-pill status-draft">Evaluation Type not fixed</span>` :
+              !comp ? `<span class="status-pill status-draft">No Lab Internal component on this Evaluation Type</span>` : ''}
+            <button class="btn ${comp?'':'btn-outline'} btn-sm" ${comp?'':'disabled'} onclick="openMarksTab('${c.id}','ttlab')">Enter Lab Internal Marks</button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+
+/* "Lab Externals" sidebar shortcut — same idea, straight into the "Lab
+   External" tab (already its own separate HOD-approval group). */
+function renderCILabExternalSections(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const rows = ciCourses.map(c=>{
+    const template = c.evalType ? getCourseTemplate(c) : null;
+    const comp = template ? labExternalComponent(template) : null;
+    return { c, comp };
+  });
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Lab Externals</h2>
+      <p>Enter Lab External (SEE Practical) marks for your sections — its own HOD-approval group, separate from Term Test &amp; Lab Internal.</p>
+    </div>
+    ${rows.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : rows.map(({c,comp})=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${escapeHtml(c.name)}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            ${statusPill(c)}
+            ${etPill(c)}
+            ${!c.evalType ? `<span class="status-pill status-draft">Evaluation Type not fixed</span>` :
+              !comp ? `<span class="status-pill status-draft">No Lab External component on this Evaluation Type</span>` : ''}
+            <button class="btn ${comp?'':'btn-outline'} btn-sm" ${comp?'':'disabled'} onclick="openMarksTab('${c.id}','labext')">Enter Lab External Marks</button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+
 function renderCIEntry(params){
   const course = App.getCourse(params.courseId);
   const correctionMode = course.status==='approved' && course.editUnlocked;
