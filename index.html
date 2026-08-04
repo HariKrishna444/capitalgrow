@@ -827,7 +827,11 @@ function otherSeeComponents(template){
   return seeDisplayComponents(template).filter(c=>c.key!==labKey);
 }
 
-const STATUS_LABEL = { draft:'Draft', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
+const STATUS_LABEL = { draft:'InProgress', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
+// STATUS_LABEL is the pill wording (e.g. "InProgress"); this is the same
+// status spelled out for mid-sentence use ("This record is in progress...")
+// so those sentences don't read as one run-together word.
+function statusSentenceLabel(status){ return status==='draft' ? 'in progress' : (STATUS_LABEL[status]||'').toLowerCase(); }
 const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coordinated:'status-coordinated', verified:'status-verified', approved:'status-approved' };
 
 
@@ -2016,7 +2020,7 @@ const App = {
     }
     this.navigate('ci-sections');
   },
-  ciSaveDraft(courseId){ this.saveMarks(courseId); toast('Draft saved.', 'ok'); },
+  ciSaveDraft(courseId){ this.saveMarks(courseId); toast('InProgress saved.', 'ok'); },
 
   /* ---------- CC: verify the instructor's submission and forward to the
      Executive Assistant. Sits between the CI's submission and the EA's
@@ -2776,6 +2780,9 @@ function getNavForUser(user){
   ];
   if(user.systemRole==='HOD') return [
     {v:'hod-list', label:'Pending Approval'},
+    {v:'hod-termtest-overview', label:'Term Test'},
+    {v:'hod-labint-overview', label:'Lab Internals'},
+    {v:'hod-labext-overview', label:'Lab Externals'},
     {v:'hod-coordinators', label:'Manage Coordinators'},
     {v:'hod-faculty', label:'Faculty Directory'},
     {v:'hod-audit', label:'Audit Log'},
@@ -2818,6 +2825,9 @@ function renderContent(){
     'admin-course-reg': renderAdminCourseRegistrations,
     'hod-list': renderHODList,
     'hod-review': renderHODReview,
+    'hod-termtest-overview': renderHODTermTestOverview,
+    'hod-labint-overview': renderHODLabInternalOverview,
+    'hod-labext-overview': renderHODLabExternalOverview,
     'hod-coordinators': renderHODCoordinators,
     'hod-cc-detail': renderHODCCDetail,
     'hod-termtest': renderHODTermTest,
@@ -3404,7 +3414,7 @@ function setHodListFilter(f){ hodListFilter = f; renderContent(); }
 window.setHodListFilter = setHodListFilter;
 function hodStatusPill(course){
   // On the HOD's Pending Approval list, 'draft' is shown as 'Pending' —
-  // clearer for the HOD than the internal 'Draft' stage name used elsewhere.
+  // clearer for the HOD than the internal 'InProgress' stage name used elsewhere.
   const label = course.status === 'draft' ? 'Pending' : STATUS_LABEL[course.status];
   return `<span class="status-pill ${STATUS_CLASS[course.status]}">${label}</span>`;
 }
@@ -3496,6 +3506,104 @@ function renderHODList(){
           </div>
         </div>
       </div>`).join('')}
+  `;
+  return wrap;
+}
+/* Small status pill for an HOD-facing approval-group overview row — mirrors
+   the badge shown inside approvalGroupPanel (My Sections), just without the
+   marks table around it. */
+function approvalGroupStatusPill(status){
+  return status==='approved' ? `<span class="status-pill status-approved">Approved by HOD — locked</span>`
+    : status==='pending' ? `<span class="status-pill status-submitted">Pending HOD approval</span>`
+    : `<span class="status-pill status-draft">Not yet submitted</span>`;
+}
+/* How many students have at least one of the given components filled in,
+   out of the section's total roster — a quick "how far along is the CI"
+   signal for the HOD without opening the full marks table. */
+function enteredCount(course, comps){
+  if(!comps.length) return { entered:0, total:course.students.length };
+  const entered = course.students.filter(s=>comps.some(c=>typeof s.marks[c.key]==='number')).length;
+  return { entered, total:course.students.length };
+}
+/* Shared row renderer for the three HOD overview pages below — one row per
+   branch/section course, showing CC, CI, Evaluation Type, and how far the
+   CI has gotten on the specific component group being reviewed. */
+function hodOverviewRow(course, comps, statusField, noCompMsg){
+  const ccUser = getCourseCCUser(course.id);
+  const ciUser = getCourseCIUser(course.id);
+  const status = course[statusField];
+  const { entered, total } = enteredCount(course, comps);
+  return `
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="section-title">${escapeHtml(course.name)}</div>
+          ${courseMetaBlock(course)}
+          <div class="section-meta" style="margin-top:4px;">Coordinator: ${ccUser ? escapeHtml(ccUser.name) : '— Unassigned —'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : '— Unassigned —'}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          ${etPill(course)}
+          ${!course.evalType ? `<span class="status-pill status-draft">Evaluation Type not fixed</span>` :
+            !comps.length ? `<span class="status-pill status-draft">${noCompMsg}</span>` :
+            `<span class="section-meta">${entered}/${total} students entered</span> ${approvalGroupStatusPill(status)}`}
+          <button class="btn btn-outline btn-sm" onclick="App.navigate('hod-review',{courseId:'${course.id}'})">View</button>
+        </div>
+      </div>
+    </div>`;
+}
+/* "Term Test" HOD overview — every section's CC/CI/ET and how far along
+   Term Test 1/2 marks entry is. Read-only here; approval itself still
+   happens through "Pending Approval" (Term Test shares one HOD-approval
+   group with Lab Internal, so approving/sending back happens there, not
+   per-tab). */
+function renderHODTermTestOverview(){
+  const all = App.state.courses.filter(c=>c.branch);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Term Test</h2>
+      <p>Every section's Term Test 1/2 marks-entry progress, with its Course Coordinator, Course Instructor, and Evaluation Type. This shares one HOD-approval group with Lab Internal — approve or send it back from "Pending Approval".</p>
+    </div>
+    ${all.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet.') :
+      all.map(c=>hodOverviewRow(c, c.evalType ? termTestComponentsInTemplate(getCourseTemplate(c)) : [], 'ttLabApproval', 'No Term Test component on this Evaluation Type')).join('')}
+  `;
+  return wrap;
+}
+/* "Lab Internals" HOD overview — same idea, scoped to the Lab Internal
+   component (still part of the same ttLabApproval group as Term Test). */
+function renderHODLabInternalOverview(){
+  const all = App.state.courses.filter(c=>c.branch);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Lab Internals</h2>
+      <p>Every section's Lab Internal marks-entry progress, with its Course Coordinator, Course Instructor, and Evaluation Type. This shares one HOD-approval group with Term Test 1/2 — approve or send it back from "Pending Approval".</p>
+    </div>
+    ${all.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet.') :
+      all.map(c=>{
+        const comp = c.evalType ? labInternalComponent(getCourseTemplate(c)) : null;
+        return hodOverviewRow(c, comp?[comp]:[], 'ttLabApproval', 'No Lab Internal component on this Evaluation Type');
+      }).join('')}
+  `;
+  return wrap;
+}
+/* "Lab Externals" HOD overview — its own separate approval group. */
+function renderHODLabExternalOverview(){
+  const all = App.state.courses.filter(c=>c.branch);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Lab Externals</h2>
+      <p>Every section's Lab External (SEE Practical) marks-entry progress, with its Course Coordinator, Course Instructor, and Evaluation Type — its own HOD-approval group, separate from Term Test &amp; Lab Internal.</p>
+    </div>
+    ${all.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet.') :
+      all.map(c=>{
+        const comp = c.evalType ? labExternalComponent(getCourseTemplate(c)) : null;
+        return hodOverviewRow(c, comp?[comp]:[], 'labExternalApproval', 'No Lab External component on this Evaluation Type');
+      }).join('')}
   `;
   return wrap;
 }
@@ -3896,7 +4004,7 @@ function renderEAReview(params){
         <textarea id="ea-remark-input" class="remark-box" placeholder="Note anything relevant for the HOD's review...">${course.eaRemark||''}</textarea>
         <div style="display:flex;gap:10px;margin-top:14px;">
           <button class="btn" onclick="App.eaForward('${course.id}')">Forward to HOD</button>
-        </div>` : (course.eaRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is not currently actionable.</p>`)}
+        </div>` : (course.eaRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`)}
     </div>
   `;
   return wrap;
@@ -3910,7 +4018,7 @@ function renderExamList(){
     <div class="page-head">
       <div class="page-eyebrow">Examination Branch</div>
       <h2>Approved Records</h2>
-      <p>Read-only, finalized results only. Draft and in-progress submissions never appear here. Full marks are loaded on demand per record, not all at once, to keep this page fast as records accumulate.</p>
+      <p>Read-only, finalized results only. InProgress and other unapproved submissions never appear here. Full marks are loaded on demand per record, not all at once, to keep this page fast as records accumulate.</p>
     </div>
     ${approved.length===0 ? emptyStateHtml('No finalized records yet','Approved course-sections will appear here once the HOD locks them.') :
       approved.map(c=>`
@@ -4650,11 +4758,11 @@ function renderCIEntry(params){
             <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save</button>
             <button class="btn" onclick="if(confirm('Finish correcting and re-lock this record?')) App.ciFinishEdit('${course.id}')">Finish &amp; Re-lock</button>
           ` : `
-            <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save Draft</button>
+            <button class="btn btn-outline" onclick="App.ciSaveDraft('${course.id}')">Save InProgress</button>
             <button class="btn" ${complete?'':'disabled'} onclick="App.ciSubmit('${course.id}')">Submit for Review</button>
             ${complete ? '' : `<span class="section-meta">Complete every CIE component for all students to enable submission.</span>`}
           `}
-        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is currently read-only.</p>
+        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is currently read-only.</p>
         ${approvedNotEditing && course.editRequestStatus!=='pending' ? `<button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openRequestEditModal('${course.id}')">Request Marks Correction</button>` : ''}`}
     </div>
   `;
@@ -5032,7 +5140,7 @@ function renderCCReview(params){
         <textarea id="cc-remark-input" class="remark-box" placeholder="Note anything relevant for the Executive Assistant's review..."></textarea>
         <div style="display:flex;gap:10px;margin-top:14px;">
           <button class="btn" onclick="App.ccForward('${course.id}')">Verify &amp; Forward to Executive Assistant</button>
-        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${STATUS_LABEL[course.status].toLowerCase()} and is not currently actionable.</p>`}
+        </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`}
     </div>
   `;
   return wrap;
