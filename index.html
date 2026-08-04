@@ -844,15 +844,18 @@ const TERM_TEST_LABELS = { TT1:'Term Test 1', TT2:'Term Test 2', TT3:'Term Test 
 // regardless of Evaluation Type. Structure (per the official Term Test
 // paper pattern):
 //   Short answers: Q1–Q5, 2 marks each = 10 marks, all compulsory.
-//   Long answers:  Q6–Q11, 16 marks each, arranged as 3 "either/or" choice
-//                  pairs — (Q6 or Q7) from Unit 1, (Q8 or Q9) from Unit 2,
+//   Long answers:  Q6–Q11, arranged as 3 "either/or" choice pairs —
+//                  (Q6 or Q7) from Unit 1, (Q8 or Q9) from Unit 2,
 //                  (Q10 or Q11) from Unit 3. The student attempts exactly
 //                  ONE question per pair (3 attempted out of 6 offered), so
 //                  only one side of each pair may carry marks — the app
 //                  enforces this. Each long question is further split into
-//                  parts (a) and (b) that together make up its 16 marks.
-//   Raw long-answer total (3 attempted x 16 = 48) is scaled down to 40.
-//   Term Test total = 10 (short, unscaled) + 40 (long, scaled) = 50 marks,
+//                  parts (a) and (b) that together make up its total.
+//   Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks
+//   (half a unit) — the syllabus's 5 units split half for TT1, half for
+//   TT2 (TT3 is used only rarely, covering whichever half is needed then).
+//   Raw long-answer total (16 + 16 + 8 = 40) needs no further scaling.
+//   Term Test total = 10 (short, unscaled) + 40 (long) = 50 marks,
 //   matching the raw/50 the existing CIE templates already expect for
 //   tt1 / tt2 / termTest.
 // ============================================================================
@@ -860,12 +863,16 @@ const TT_SHORT_KEYS = ['q1','q2','q3','q4','q5'];
 const TT_SHORT_EACH_MAX = 2;
 const TT_SHORT_TOTAL_MAX = 10;
 const TT_LONG_PAIRS = [
-  { a:'q6',  b:'q7'  },
-  { a:'q8',  b:'q9'  },
-  { a:'q10', b:'q11' },
+  { a:'q6',  b:'q7',  max:16 },
+  { a:'q8',  b:'q9',  max:16 },
+  // Q10/Q11 only spans half a unit (5 units total, split across the two
+  // half-syllabus Term Tests), so its pair caps at 8 marks instead of 16.
+  { a:'q10', b:'q11', max:8  },
 ];
-const TT_LONG_QUESTION_MAX = 16;
-const TT_LONG_RAW_MAX = 48;   // 3 attempted questions x 16
+// Raw long-answer max = sum of each pair's max (16 + 16 + 8 = 40), which now
+// equals TT_LONG_SCALED_MAX exactly — so scaling is a straight passthrough
+// unless the per-pair maxes above are changed again later.
+const TT_LONG_RAW_MAX = TT_LONG_PAIRS.reduce((sum,p)=>sum+p.max, 0);
 const TT_LONG_SCALED_MAX = 40;
 const TT_TOTAL_MAX = 50;      // 10 short + 40 scaled-long
 
@@ -883,16 +890,29 @@ const SEMESTER_LABELS = ['Semester 1','Semester 2'];
 
 /* Per-pair Unit + marks-split, set by the Course Instructor before entering
    marks (units are chosen by the CI when setting the question paper, not
-   fixed by the app) — one Unit + one split ("8+8" parts a/b, or a single
-   "16" answer) per long-answer choice pair (Q6/Q7, Q8/Q9, Q10/Q11). */
+   fixed by the app) — one Unit + one split (two equal halves, or a single
+   full-mark answer) per long-answer choice pair (Q6/Q7, Q8/Q9, Q10/Q11).
+   Split values are derived from each pair's own max, so a 16-mark pair
+   splits into "8+8" or "16", while the 8-mark Q10/Q11 pair splits into
+   "4+4" or "8". */
 const TT_UNIT_OPTIONS = ['Unit 1','Unit 2','Unit 3','Unit 4','Unit 5'];
+function getLongPairForQKey(qKey){ return TT_LONG_PAIRS.find(p=>p.a===qKey||p.b===qKey); }
+function getLongPairMax(qKey){ const p = getLongPairForQKey(qKey); return p ? p.max : TT_SHORT_EACH_MAX; }
 function getQuestionConfig(course, cycle, qKey){
   const cfg = (((course.ttPaperConfig||{})[cycle]||{})[qKey]) || {};
-  return { unit: cfg.unit || '', split: cfg.split || '8+8' };
+  const pair = getLongPairForQKey(qKey);
+  const fullValue = pair ? String(pair.max) : '';
+  const halfValue = pair ? `${pair.max/2}+${pair.max/2}` : '';
+  return { unit: cfg.unit || '', split: cfg.split || halfValue, pairMax: pair ? pair.max : null, fullValue, halfValue };
 }
 const TT_ALL_LONG_QKEYS = TT_LONG_PAIRS.flatMap(p=>[p.a,p.b]);
+/* Short answers (Q1-Q5) also carry a Unit — set here, alongside the
+   long-answer Units, so the question paper setup covers every question on
+   the paper, not just the long-answer choice pairs. Short questions have no
+   marks-split (each is fixed at TT_SHORT_EACH_MAX), so only Unit applies. */
+const TT_ALL_QKEYS = TT_SHORT_KEYS.concat(TT_ALL_LONG_QKEYS);
 function ttSetupComplete(course, cycle){
-  return TT_ALL_LONG_QKEYS.every(qKey=>!!getQuestionConfig(course, cycle, qKey).unit);
+  return TT_ALL_QKEYS.every(qKey=>!!getQuestionConfig(course, cycle, qKey).unit);
 }
 /* Whether the Question Paper Setup panel is expanded (showing the Unit/split
    dropdowns) for a given course. Defaults to expanded until every question
@@ -941,13 +961,13 @@ function computeTermTestRaw(detail){
   });
   shortTotal = Math.min(round1(shortTotal), TT_SHORT_TOTAL_MAX);
   let longRaw = 0, attempted = 0;
-  TT_LONG_PAIRS.forEach(({a,b})=>{
+  TT_LONG_PAIRS.forEach(({a,b,max})=>{
     const da = detail[a] || {}, db = detail[b] || {};
     const totalA = (typeof da.a==='number'?da.a:0) + (typeof da.b==='number'?da.b:0);
     const totalB = (typeof db.a==='number'?db.a:0) + (typeof db.b==='number'?db.b:0);
     if(totalA>0 || totalB>0){
       attempted++;
-      longRaw += Math.min(Math.max(Math.max(totalA, totalB), 0), TT_LONG_QUESTION_MAX);
+      longRaw += Math.min(Math.max(Math.max(totalA, totalB), 0), max);
     }
   });
   const longScaled = round1((longRaw / TT_LONG_RAW_MAX) * TT_LONG_SCALED_MAX);
@@ -1644,10 +1664,46 @@ const App = {
     this.state.assignments.push(ciRec);
     syncAssignment(ciRec);
     course.evalType = req.abbr;
+
+    // Auto-populate this section's roster straight from the imported Course
+    // Registration sheet — mirrors what App.activateCourseRegistrationGroup
+    // does for the Admin's "Activate as Course Section" button, but fires
+    // automatically the moment the CC assigns a Course Instructor here, so
+    // an Admin no longer has to separately find and activate the matching
+    // registration group. Matches by Subject Name + Branch + Section only
+    // (this flow has no batch/semester picker), so it picks up every batch
+    // registered under this subject/section/branch at once. If nothing in
+    // course_registrations matches yet (e.g. the sheet hasn't been imported
+    // for this subject/section), the roster is simply left empty and the CC
+    // can still add students manually or via the roster import, same as
+    // before this change.
+    const normReg = s => String(s||'').trim().toLowerCase();
+    const regRows = (this.state.courseRegistrations||[]).filter(r=>
+      r.branch===branch && normReg(r.sectionCode)===normReg(sec) && normReg(r.subjectName)===normReg(req.subjectName));
+    let loadedCount = 0;
+    if(regRows.length){
+      const dirByBatchRoll = {};
+      (this.state.studentDirectory||[]).forEach(d=>{ dirByBatchRoll[d.batch+'|'+d.rollNo] = d; });
+      const nextStudents = [];
+      regRows.forEach(r=>{
+        const dir = dirByBatchRoll[r.batch+'|'+r.rollNo];
+        const idPool = (course.students||[]).map(s=>s.id).concat(nextStudents.map(s=>s.id));
+        nextStudents.push({ id: bizId('CST', [course.code, course.section||'nosec', r.rollNo], idPool), name:r.studentName, rollNo:r.rollNo, email: dir?dir.email:'', dirId: dir?dir.id:null, marks:{} });
+      });
+      nextStudents.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+      course.students = nextStudents;
+      course.studentsLoaded = true;
+      loadedCount = nextStudents.length;
+      nextStudents.forEach(s=>syncNewStudent(course.id, s));
+    }
+
     await syncCourse(course);
-    this.logHistory(course, `Course Instructor assigned: ${ciUser.name} (${ciUser.email}) · Evaluation Type ${req.abbr} (HOD-approved)`);
+    this.logHistory(course, `Course Instructor assigned: ${ciUser.name} (${ciUser.email}) · Evaluation Type ${req.abbr} (HOD-approved)`
+      + (loadedCount ? ` · ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registration import` : ''));
     this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}). The Evaluation Type for this section is fixed as "${evalTypeLabel(req.abbr)}" — enter marks only for the components shown. This role is active immediately — no separate approval step is needed.`, true, actor.email);
-    toast(`${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section}.`, 'ok');
+    toast(loadedCount
+      ? `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section} — ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registrations.`
+      : `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section}. No matching Course Registration rows were found, so the roster is empty — add students from the roster page, or import the registration sheet first.`, 'ok');
     renderSidebar();
     this.navigate('cc-list');
   },
@@ -2295,7 +2351,7 @@ const App = {
     let cap = TT_SHORT_EACH_MAX;
     if(pair){
       const cfg = getQuestionConfig(course, cycle, qKey);
-      cap = cfg.split === '16' ? TT_LONG_QUESTION_MAX : 8;
+      cap = cfg.split === cfg.fullValue ? pair.max : pair.max/2;
     }
     const val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : Math.min(Math.max(parseFloat(rawValue)||0, 0), cap);
     if(subpart){
@@ -4514,6 +4570,19 @@ function renderCITermTestEntry(params){
   const comp = template.cie.find(c=>c.key===compKey);
 
   const setupExpanded = isTTSetupExpanded(course, cycle);
+  const shortQuestionSetupHtml = TT_SHORT_KEYS.map(qKey=>{
+    const cfg = getQuestionConfig(course, cycle, qKey);
+    return `
+      <div class="config-grid" style="margin-top:10px;">
+        <div class="config-field">
+          <label>${qKey.toUpperCase()} — Unit</label>
+          <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','unit', this.value)">
+            <option value="">— Select Unit —</option>
+            ${TT_UNIT_OPTIONS.map(u=>`<option value="${escapeHtml(u)}" ${cfg.unit===u?'selected':''}>${escapeHtml(u)}</option>`).join('')}
+          </select>
+        </div>
+      </div>`;
+  }).join('');
   const questionSetupHtml = TT_ALL_LONG_QKEYS.map(qKey=>{
     const cfg = getQuestionConfig(course, cycle, qKey);
     return `
@@ -4528,16 +4597,22 @@ function renderCITermTestEntry(params){
         <div class="config-field">
           <label>${qKey.toUpperCase()} — Marks split</label>
           <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','split', this.value)">
-            <option value="8+8" ${cfg.split==='8+8'?'selected':''}>8 + 8 (parts a &amp; b)</option>
-            <option value="16" ${cfg.split==='16'?'selected':''}>16 (single answer)</option>
+            <option value="${cfg.halfValue}" ${cfg.split===cfg.halfValue?'selected':''}>${cfg.halfValue} (parts a &amp; b)</option>
+            <option value="${cfg.fullValue}" ${cfg.split===cfg.fullValue?'selected':''}>${cfg.fullValue} (single answer)</option>
           </select>
         </div>
       </div>`;
   }).join('');
+  const shortQuestionSetupSummaryHtml = `<div style="margin-top:10px;">${TT_SHORT_KEYS.map(qKey=>{
+    const cfg = getQuestionConfig(course, cycle, qKey);
+    return `<span style="display:inline-block;margin:4px 10px 4px 0;padding:4px 10px;background:#F3EEDD;border:1px solid var(--rule);border-radius:6px;font-size:12.5px;">
+      <strong>${qKey.toUpperCase()}</strong>: ${cfg.unit ? escapeHtml(cfg.unit) : `<span style="color:var(--seal-red);">Unit not set</span>`}
+    </span>`;
+  }).join('')}</div>`;
   const questionSetupSummaryHtml = `<div style="margin-top:10px;">${TT_ALL_LONG_QKEYS.map(qKey=>{
     const cfg = getQuestionConfig(course, cycle, qKey);
     return `<span style="display:inline-block;margin:4px 10px 4px 0;padding:4px 10px;background:#F3EEDD;border:1px solid var(--rule);border-radius:6px;font-size:12.5px;">
-      <strong>${qKey.toUpperCase()}</strong>: ${cfg.unit ? escapeHtml(cfg.unit) : `<span style="color:var(--seal-red);">Unit not set</span>`} · ${cfg.split==='16'?'16 (single)':'8+8'}
+      <strong>${qKey.toUpperCase()}</strong>: ${cfg.unit ? escapeHtml(cfg.unit) : `<span style="color:var(--seal-red);">Unit not set</span>`} · ${cfg.split===cfg.fullValue?`${cfg.fullValue} (single)`:cfg.halfValue}
     </span>`;
   }).join('')}</div>`;
 
@@ -4551,27 +4626,28 @@ function renderCITermTestEntry(params){
         value="${ttNum(v)}" ${editable?'':'disabled'}
         onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${k}',null,this.value)"></td>`;
     }).join('');
-    const longCells = TT_LONG_PAIRS.map(({a,b})=>{
+    const longCells = TT_LONG_PAIRS.map(({a,b,max})=>{
       const da = detail[a]||{}, db = detail[b]||{};
       const totalA = (typeof da.a==='number'?da.a:0)+(typeof da.b==='number'?da.b:0);
       const totalB = (typeof db.a==='number'?db.a:0)+(typeof db.b==='number'?db.b:0);
       const aWinning = totalA>0 && totalA>=totalB, bWinning = totalB>0 && totalB>totalA;
+      const half = max/2;
       const cellFor = (qKey, winning) => {
         const cfg = getQuestionConfig(course, cycle, qKey);
         const winMark = winning ? ` style="background:#EAF3EA;"` : '';
-        return cfg.split==='16'
+        return cfg.split===cfg.fullValue
           ? `<td class="mono"${winMark} style="white-space:nowrap;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
-              <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:56px;" placeholder="/16"
+              <input type="number" min="0" max="${max}" step="0.5" style="width:56px;" placeholder="/${max}"
                 value="${ttNum((detail[qKey]||{}).a)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
             </td>`
           : `<td class="mono"${winMark} style="white-space:nowrap;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
-              <input type="number" min="0" max="8" step="0.5" style="width:44px;" placeholder="a/8"
+              <input type="number" min="0" max="${half}" step="0.5" style="width:44px;" placeholder="a/${half}"
                 value="${ttNum((detail[qKey]||{}).a)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
-              <input type="number" min="0" max="8" step="0.5" style="width:44px;" placeholder="b/8"
+              <input type="number" min="0" max="${half}" step="0.5" style="width:44px;" placeholder="b/${half}"
                 value="${ttNum((detail[qKey]||{}).b)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
             </td>`;
@@ -4589,12 +4665,16 @@ function renderCITermTestEntry(params){
     </tr>`;
   }).join('');
 
-  const shortHead = TT_SHORT_KEYS.map(k=>`<th>${k.toUpperCase()}<br><span style="text-transform:none;">/${TT_SHORT_EACH_MAX}</span></th>`).join('');
-  const longHead = TT_LONG_PAIRS.map(({a,b})=>{
+  const shortHead = TT_SHORT_KEYS.map(k=>{
+    const cfg = getQuestionConfig(course, cycle, k);
+    const unitLabel = cfg.unit || 'Unit not set';
+    return `<th>${escapeHtml(unitLabel)}<br><span style="text-transform:none;">${k.toUpperCase()} — /${TT_SHORT_EACH_MAX}</span></th>`;
+  }).join('');
+  const longHead = TT_LONG_PAIRS.map(({a,b,max})=>{
     const headFor = qKey => {
       const cfg = getQuestionConfig(course, cycle, qKey);
       const unitLabel = cfg.unit || 'Unit not set';
-      return `<th>${escapeHtml(unitLabel)}<br><span style="text-transform:none;">${qKey.toUpperCase()} — /${TT_LONG_QUESTION_MAX} (${cfg.split==='16'?'single':'8+8'})</span></th>`;
+      return `<th>${escapeHtml(unitLabel)}<br><span style="text-transform:none;">${qKey.toUpperCase()} — /${max} (${cfg.split===cfg.fullValue?'single':cfg.halfValue})</span></th>`;
     };
     return headFor(a) + headFor(b);
   }).join('');
@@ -4612,15 +4692,21 @@ function renderCITermTestEntry(params){
         <button class="btn btn-sm ${setupExpanded?'':'btn-outline'}" onclick="toggleTTSetup('${course.id}','${cycle}')">${setupExpanded ? 'Done — Hide Setup' : 'Edit Question Paper Setup'}</button>
       </div>
       ${setupExpanded ? `
-        <p class="section-meta" style="margin-top:4px;">Set the Unit and marks-split for EACH long-answer question (Q6–Q11) before entering marks — every question can have its own Unit and split, e.g. Q6 as 8+8 from Unit 1 while Q7 is a single 16 from Unit 2. Nothing is pre-filled since units are decided when you make the question paper. This applies to the whole class for ${escapeHtml(cycleLabel)}. Click "Done" once you're finished to hide these dropdowns and give the student marks table more room.</p>
+        <p class="section-meta" style="margin-top:4px;">Set the Unit for EACH short-answer question (Q1–Q5) and the Unit + marks-split for EACH long-answer question (Q6–Q11) before entering marks — every question can have its own Unit, e.g. Q6 as 8+8 from Unit 1 while Q7 is a single 16 from Unit 2. Nothing is pre-filled since units are decided when you make the question paper. This applies to the whole class for ${escapeHtml(cycleLabel)}. Click "Done" once you're finished to hide these dropdowns and give the student marks table more room.</p>
+        <div class="section-meta" style="margin-top:12px;font-weight:600;">Short answers (Q1–Q5)</div>
+        ${shortQuestionSetupHtml}
+        <div class="section-meta" style="margin-top:16px;font-weight:600;">Long answers (Q6–Q11)</div>
         ${questionSetupHtml}
       ` : `
         <p class="section-meta" style="margin-top:4px;">Set for ${escapeHtml(cycleLabel)} — click "Edit Question Paper Setup" to change it.</p>
+        <div class="section-meta" style="margin-top:8px;font-weight:600;">Short answers</div>
+        ${shortQuestionSetupSummaryHtml}
+        <div class="section-meta" style="margin-top:8px;font-weight:600;">Long answers</div>
         ${questionSetupSummaryHtml}
       `}
     </div>
     <div class="card">
-      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, 16 marks each, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. The 3 pairs (max 48 raw) scale down to 40. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
+      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks (half a unit — the 5-unit syllabus splits half for TT1, half for TT2). The 3 pairs total 40 raw with no further scaling needed. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
       <div class="table-scroll">
         <table class="data-table" style="min-width:1400px;">
           <thead>
