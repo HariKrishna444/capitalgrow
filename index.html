@@ -3529,8 +3529,6 @@ function enteredCount(course, comps){
    branch/section course, showing CC, CI, Evaluation Type, and how far the
    CI has gotten on the specific component group being reviewed. */
 function hodOverviewRow(course, comps, statusField, noCompMsg){
-  const ccUser = getCourseCCUser(course.id);
-  const ciUser = getCourseCIUser(course.id);
   const status = course[statusField];
   const { entered, total } = enteredCount(course, comps);
   return `
@@ -3539,7 +3537,6 @@ function hodOverviewRow(course, comps, statusField, noCompMsg){
         <div>
           <div class="section-title">${escapeHtml(course.name)}</div>
           ${courseMetaBlock(course)}
-          <div class="section-meta" style="margin-top:4px;">Coordinator: ${ccUser ? escapeHtml(ccUser.name) : '— Unassigned —'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : '— Unassigned —'}</div>
         </div>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
           ${etPill(course)}
