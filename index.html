@@ -928,8 +928,10 @@ function termTestComponentKey(template, cycle){
   return null;
 }
 /* Reads one student's stored answer-sheet (s.marks.ttDetail[cycle]) and
-   computes the short total, long raw/scaled total, grand /50 total, and any
-   choice-pair validation errors (both sides of a pair carrying marks). */
+   computes the short total, long raw/scaled total, and grand /50 total.
+   Q6-Q11 are 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11); both sides of a pair
+   can carry marks, and the higher of the two counts toward that pair's
+   score — the CI isn't blocked from entering both while deciding. */
 function computeTermTestRaw(detail){
   detail = detail || {};
   let shortTotal = 0;
@@ -939,22 +941,18 @@ function computeTermTestRaw(detail){
   });
   shortTotal = Math.min(round1(shortTotal), TT_SHORT_TOTAL_MAX);
   let longRaw = 0, attempted = 0;
-  const errors = [];
   TT_LONG_PAIRS.forEach(({a,b})=>{
     const da = detail[a] || {}, db = detail[b] || {};
     const totalA = (typeof da.a==='number'?da.a:0) + (typeof da.b==='number'?da.b:0);
     const totalB = (typeof db.a==='number'?db.a:0) + (typeof db.b==='number'?db.b:0);
-    const hasA = totalA > 0, hasB = totalB > 0;
-    if(hasA && hasB){
-      errors.push(`Only ${a.toUpperCase()} OR ${b.toUpperCase()} may carry marks (choice question) — clear one before entering the other.`);
-    } else if(hasA || hasB){
+    if(totalA>0 || totalB>0){
       attempted++;
-      longRaw += Math.min(Math.max(hasA?totalA:totalB, 0), TT_LONG_QUESTION_MAX);
+      longRaw += Math.min(Math.max(Math.max(totalA, totalB), 0), TT_LONG_QUESTION_MAX);
     }
   });
   const longScaled = round1((longRaw / TT_LONG_RAW_MAX) * TT_LONG_SCALED_MAX);
   const total = round1(shortTotal + longScaled);
-  return { shortTotal, longRaw, longScaled, attempted, total, errors, valid: errors.length===0 };
+  return { shortTotal, longRaw, longScaled, attempted, total, errors:[], valid:true };
 }
 
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -2309,11 +2307,7 @@ const App = {
     const template = getCourseTemplate(course);
     const compKey = termTestComponentKey(template, cycle);
     const calc = computeTermTestRaw(s.marks.ttDetail[cycle]);
-    if(compKey){
-      if(calc.valid) s.marks[compKey] = calc.total;
-      // While a choice-pair violation exists, don't overwrite the live CIE
-      // score — the entry screen shows the error inline until it's fixed.
-    }
+    if(compKey) s.marks[compKey] = calc.total;
     syncStudent(courseId, s);
     renderContent();
   },
@@ -4491,9 +4485,10 @@ function renderCITermTestSections(params={}){
 function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
 /* Structured Term Test entry — Q1-Q5 short answers (2 marks each) then
    Q6-Q11 long answers in 3 unit-paired choice questions, each split into
-   parts (a)/(b). Only one side of each pair may carry marks; the other
-   input is disabled the moment its partner has a value, and a validation
-   note appears if both somehow carry marks (e.g. imported data). */
+   parts (a)/(b). Both sides of a pair stay editable — the CI can enter
+   marks for either or both while deciding — and whichever side totals
+   higher is the one that counts toward that pair's score; that cell is
+   highlighted so it's clear which one won. */
 function renderCITermTestEntry(params){
   const course = App.getCourse(params.courseId);
   if(!course) return el('<div></div>');
@@ -4560,37 +4555,37 @@ function renderCITermTestEntry(params){
       const da = detail[a]||{}, db = detail[b]||{};
       const totalA = (typeof da.a==='number'?da.a:0)+(typeof da.b==='number'?da.b:0);
       const totalB = (typeof db.a==='number'?db.a:0)+(typeof db.b==='number'?db.b:0);
-      const aFilled = totalA>0, bFilled = totalB>0;
-      const cellFor = (qKey, otherFilled) => {
+      const aWinning = totalA>0 && totalA>=totalB, bWinning = totalB>0 && totalB>totalA;
+      const cellFor = (qKey, winning) => {
         const cfg = getQuestionConfig(course, cycle, qKey);
+        const winMark = winning ? ` style="background:#EAF3EA;"` : '';
         return cfg.split==='16'
-          ? `<td class="mono" style="white-space:nowrap;">
+          ? `<td class="mono"${winMark} style="white-space:nowrap;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
               <input type="number" min="0" max="${TT_LONG_QUESTION_MAX}" step="0.5" style="width:56px;" placeholder="/16"
-                value="${ttNum((detail[qKey]||{}).a)}" ${editable && !otherFilled ? '' : 'disabled'}
+                value="${ttNum((detail[qKey]||{}).a)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
             </td>`
-          : `<td class="mono" style="white-space:nowrap;">
+          : `<td class="mono"${winMark} style="white-space:nowrap;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
               <input type="number" min="0" max="8" step="0.5" style="width:44px;" placeholder="a/8"
-                value="${ttNum((detail[qKey]||{}).a)}" ${editable && !otherFilled ? '' : 'disabled'}
+                value="${ttNum((detail[qKey]||{}).a)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
               <input type="number" min="0" max="8" step="0.5" style="width:44px;" placeholder="b/8"
-                value="${ttNum((detail[qKey]||{}).b)}" ${editable && !otherFilled ? '' : 'disabled'}
+                value="${ttNum((detail[qKey]||{}).b)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
             </td>`;
       };
-      return cellFor(a, bFilled) + cellFor(b, aFilled);
+      return cellFor(a, aWinning) + cellFor(b, bWinning);
     }).join('');
-    const errBadge = calc.errors.length ? `<div style="color:var(--seal-red);font-size:11px;margin-top:4px;">${calc.errors.map(escapeHtml).join('<br>')}</div>` : '';
     return `<tr>
-      <td>${escapeHtml(s.name)}${errBadge}</td>
+      <td>${escapeHtml(s.name)}</td>
       ${shortCells}
       <td class="total-cell">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
       ${longCells}
       <td class="total-cell">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
       <td class="total-cell">${calc.longScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_SCALED_MAX}</span></td>
-      <td class="total-cell">${calc.valid ? calc.total : '—'}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
+      <td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
     </tr>`;
   }).join('');
 
@@ -4625,7 +4620,7 @@ function renderCITermTestEntry(params){
       `}
     </div>
     <div class="card">
-      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, 16 marks each — attempt only ONE question per pair (choice question); the other side locks once you enter a mark. The 3 attempted long answers (max 48 raw) scale down to 40. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
+      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, 16 marks each, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. The 3 pairs (max 48 raw) scale down to 40. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
       <div class="table-scroll">
         <table class="data-table" style="min-width:1400px;">
           <thead>
