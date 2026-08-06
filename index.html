@@ -8,6 +8,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Firebase Storage (compat build — plain globals, matches this app's
+     non-module script style) used only for the Best/Average/Lowest
+     scanned answer-script uploads. Fill in FIREBASE_CONFIG further down
+     in this file with your own project's keys. -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
 <style>
 :root{
   --ink:#1B2A4A;
@@ -1036,7 +1042,7 @@ function seedState(){
     { id:'c5', code:'CS205', name:'Computer Networks',    section:'C', branch:'SAP'  },
     { id:'c6', code:'CS210', name:'Operating Systems',    section:'A', branch:'ECE'  }, // deliberately left unassigned — shows the empty state
     { id:'c7', code:'CS207', name:'Environmental Science',section:'D', branch:'SAP'  }, // pre-seeded, fully approved — Examination Branch demo record
-  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, students: makeStudents(), history: [] }));
+  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{}, students: makeStudents(), history: [] }));
   // c1 and c7 already have a Course Instructor assigned in the seed data below,
   // so their Coordinator has already fixed an Evaluation Type for them.
   courses.find(c=>c.id==='c1').evalType = 'ET1';
@@ -1150,6 +1156,9 @@ async function fetchStateFromSupabase(){
       studentCount: comp ? comp.student_count : 0,
       cieComplete: comp ? !!comp.cie_complete : false,
       seeComplete: comp ? !!comp.see_complete : false,
+      examDate: c.exam_date || '', scrutinyRemark: c.scrutiny_remark || '',
+      frozenAt: c.frozen_at ? new Date(c.frozen_at).getTime() : null, frozenBy: c.frozen_by || '',
+      scriptUploads: c.script_uploads || {}, ciAcknowledgedAt: c.ci_acknowledged_at ? new Date(c.ci_acknowledged_at).getTime() : null,
       history:[]
     };
   });
@@ -1214,8 +1223,8 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{} }),
-  student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
     assigned_at:new Date(a.assignedAt).toISOString(), status:a.status,
@@ -1243,10 +1252,10 @@ async function warnOnError(promise, label, opts={}){
 function syncProfile(u){ return warnOnError(sb.from('profiles').upsert(rowOf.profile(u)), 'profile:'+u.id, {toastOnFail:true}); }
 function syncProfiles(users){ return users.length ? warnOnError(sb.from('profiles').upsert(users.map(rowOf.profile)), 'profiles:bulk', {toastOnFail:true}) : Promise.resolve(); }
 function syncCourse(c){ return warnOnError(sb.from('courses').upsert(rowOf.course(c)), 'course:'+c.id, {toastOnFail:true}); }
-function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id), 'student:'+s.id, {toastOnFail:true}); }
+function syncStudent(courseId, s){ return warnOnError(sb.from('students').update({ marks:s.marks||{}, absent:!!s.absent }).eq('id', s.id), 'student:'+s.id, {toastOnFail:true}); }
 function syncNewStudent(courseId, s){ return warnOnError(sb.from('students').upsert(rowOf.student(courseId, s)), 'student:'+s.id, {toastOnFail:true}); }
 function deleteStudent(id){ return warnOnError(sb.from('students').delete().eq('id', id), 'student-delete:'+id, {toastOnFail:true}); }
-function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{} }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId, {toastOnFail:true}) : Promise.resolve(); }
+function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{}, absent:!!s.absent }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId, {toastOnFail:true}) : Promise.resolve(); }
 function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id, {toastOnFail:true}); }
 function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
 function syncNotificationRead(n){ return warnOnError(sb.from('notifications').update({ read:true }).eq('id', n.id), 'notification-read:'+n.id); }
@@ -1361,10 +1370,12 @@ function getActiveAssignment(courseId, type){
 }
 function getCourseCCUser(courseId){ const a=getActiveAssignment(courseId,'CC'); return a ? App.getUserById(a.userId) : null; }
 function getCourseCIUser(courseId){ const a=getActiveAssignment(courseId,'CI'); return a ? App.getUserById(a.userId) : null; }
+function getCourseScrutinizerUser(courseId){ const a=getActiveAssignment(courseId,'SCRUTINIZER'); return a ? App.getUserById(a.userId) : null; }
 function getFacultyCourses(userId){
   const ccCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'CC')?.userId===userId);
   const ciCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'CI')?.userId===userId);
-  return { ccCourses, ciCourses };
+  const scrutinyCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'SCRUTINIZER')?.userId===userId);
+  return { ccCourses, ciCourses, scrutinyCourses };
 }
 function createFacultyIfNeeded(email, name){
   const existing = App.state.users.find(u=>u.email.toLowerCase()===email.toLowerCase());
@@ -1416,7 +1427,7 @@ const App = {
     if(!course || course.studentsLoaded) return course;
     const { data, error } = await sb.from('students').select('*').eq('course_id', courseId);
     if(error){ toast('Could not load this section\'s roster: ' + (error.message||error), 'err'); return course; }
-    course.students = (data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null }));
+    course.students = (data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null, absent:!!s.absent }));
     course.studentsLoaded = true;
     return course;
   },
@@ -1569,7 +1580,7 @@ const App = {
     if(dupe){ toast(`${code} already has a coordination shell — open it from Manage Coordinators.`, 'err'); return; }
     const course = {
       id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '',
-      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
@@ -1630,7 +1641,7 @@ const App = {
     if(dupe){ toast(`${req.subjectCode} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     const course = {
       id: bizId('CRS', [req.subjectCode, branch, sec], this.state.courses.map(c=>c.id)), code: req.subjectCode, name: req.subjectName, section: sec, branch,
-      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null,
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       students: [], history: []
     };
@@ -2014,6 +2025,15 @@ const App = {
   validateCIEComplete(course){
     const components = getCourseComponents(course);
     for(const s of course.students){
+      if(s.absent){
+        // Checkpoint C: attendance/marks consistency — an absent student
+        // must carry no marks at all (App.toggleStudentAbsent already
+        // clears these when Absent is checked, but this catches any stale
+        // data from before that flag existed).
+        const hasAny = components.some(comp=>typeof s.marks[comp.key]==='number');
+        if(hasAny) return { ok:false, msg:`${s.name} is marked Absent but still has marks entered — clear them or unmark Absent.` };
+        continue;
+      }
       for(const comp of components){
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
@@ -2025,6 +2045,7 @@ const App = {
   validateSEEComplete(course){
     const components = getCourseSeeComponents(course);
     for(const s of course.students){
+      if(s.absent) continue;
       for(const comp of components){
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
@@ -2076,9 +2097,28 @@ const App = {
   },
   ciSaveDraft(courseId){ this.saveMarks(courseId); toast('InProgress saved.', 'ok'); },
 
+  /* ---------- exam date, used to compute the 4-working-day evaluation
+     deadline. Editable by whoever can currently edit this record. ---------- */
+  setExamDate(courseId, dateStr){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ciUser = getCourseCIUser(courseId);
+    const ccUser = getCourseCCUser(courseId);
+    const allowed = actor.systemRole==='ADMIN' || actor.systemRole==='HOD' || ciUser?.id===actor.id || ccUser?.id===actor.id;
+    if(!allowed){ toast('Only this section\'s Course Instructor, Coordinator, or the HOD can set the exam date.', 'err'); return; }
+    course.examDate = dateStr || '';
+    syncCourse(course);
+    this.logHistory(course, `Exam date set to ${dateStr || '(cleared)'}`);
+    toast('Exam date saved.', 'ok');
+    renderContent();
+  },
+
   /* ---------- CC: verify the instructor's submission and forward to the
-     Executive Assistant. Sits between the CI's submission and the EA's
-     verification in the approval chain. ---------- */
+     assigned Scrutinizer. Sits between the CI's submission and the
+     Scrutinizer's review in the approval chain. If the HOD hasn't assigned
+     a Scrutinizer to this section yet, the HOD is notified directly instead
+     so the record doesn't silently stall. ---------- */
   ccForward(courseId){
     const course = this.getCourse(courseId);
     if(!course) return;
@@ -2090,42 +2130,113 @@ const App = {
     const remark = remarkEl ? remarkEl.value.trim() : '';
     course.status = 'coordinated';
     syncCourse(course);
-    this.logHistory(course, 'Verified by the Course Coordinator and forwarded to the Executive Assistant', remark);
-    this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
-      this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been verified by the Course Coordinator and is awaiting your verification.`, true)
-    );
-    toast(`${course.code} forwarded to the Executive Assistant.`, 'ok');
+    this.logHistory(course, 'Verified by the Course Coordinator and forwarded for scrutiny', remark);
+    const scrutinizer = getCourseScrutinizerUser(courseId);
+    if(scrutinizer){
+      this.notifyUser(scrutinizer.id, course, `${course.code} ready for scrutiny`, `${course.code} — ${course.name} has been verified by the Course Coordinator and is awaiting your scrutiny.`, true);
+      toast(`${course.code} forwarded to the Scrutinizer.`, 'ok');
+    } else {
+      this.state.users.filter(u => u.systemRole === 'HOD').forEach(u =>
+        this.notifyUser(u.id, course, `${course.code} needs a Scrutinizer`, `${course.code} — ${course.name} has been verified by the Course Coordinator, but no Scrutinizer is assigned yet — please assign one.`, true)
+      );
+      toast(`${course.code} forwarded, but no Scrutinizer is assigned yet — the HOD has been notified to assign one.`, 'ok');
+    }
     this.navigate('cc-list');
   },
 
-  eaForward(courseId){
+  /* ---------- HOD: assign / revoke the Scrutinizer for a section, same
+     pattern as CC assigning a Course Instructor — creates a FACULTY profile
+     if one doesn't already exist for this email, then adds an active
+     SCRUTINIZER assignment. ---------- */
+  async assignScrutinizer(courseId, rawEmail, rawName){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can assign a Scrutinizer.', 'err'); return; }
     const course = this.getCourse(courseId);
-    if(course.status !== 'coordinated'){ toast('This record is not awaiting your verification yet.', 'err'); return; }
-    const remarkEl = document.getElementById('ea-remark-input');
-    course.eaRemark = remarkEl ? remarkEl.value.trim() : course.eaRemark;
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const email = (rawEmail||'').trim().toLowerCase();
+    if(!email || !isValidEmail(email)){ toast('Enter a valid Scrutinizer email address.', 'err'); return; }
+    const existing = getActiveAssignment(courseId, 'SCRUTINIZER');
+    if(existing){ existing.status = 'revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; await syncAssignment(existing); }
+    const { user, isNew } = createFacultyIfNeeded(email, (rawName||'').trim());
+    if(isNew){
+      const { error: profileErr } = await syncProfile(user);
+      if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==user.id); return; }
+    }
+    const rec = { id:bizId('ASG', ['SCR', course.code, course.section||'nosec'], this.state.assignments.map(a=>a.id)), type:'SCRUTINIZER', courseId:course.id, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
+    this.state.assignments.push(rec);
+    syncAssignment(rec);
+    this.logHistory(course, `Scrutinizer assigned: ${user.name} (${user.email})`);
+    this.notifyUser(user.id, course, `You're now Scrutinizer`, `${actor.name} assigned you as Scrutinizer for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).`, true, actor.email);
+    toast(`${user.name} is now the Scrutinizer for ${course.code} · Section ${course.section}.`, 'ok');
+    closeModal();
+    renderSidebar();
+    renderContent();
+  },
+  revokeScrutinizer(courseId){
+    const actor = this.currentUser();
+    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can revoke a Scrutinizer.', 'err'); return; }
+    const rec = getActiveAssignment(courseId, 'SCRUTINIZER');
+    if(!rec) return;
+    rec.status = 'revoked';
+    syncAssignment(rec);
+    const course = this.getCourse(courseId);
+    this.logHistory(course, 'Scrutinizer assignment revoked');
+    toast('Scrutinizer removed from this section.', 'ok');
+    renderSidebar();
+    renderContent();
+  },
+
+  scrutinizerForward(courseId){
+    const course = this.getCourse(courseId);
+    const actor = this.currentUser();
+    const scrutinizer = getCourseScrutinizerUser(courseId);
+    if(scrutinizer?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s assigned Scrutinizer can forward this record.', 'err'); return; }
+    if(course.status !== 'coordinated'){ toast('This record is not awaiting scrutiny yet.', 'err'); return; }
+    const remarkEl = document.getElementById('scrutiny-remark-input');
+    course.scrutinyRemark = remarkEl ? remarkEl.value.trim() : course.scrutinyRemark;
     course.status = 'verified';
     syncCourse(course);
-    this.logHistory(course, 'Verified for completeness and forwarded to HOD', course.eaRemark);
+    this.logHistory(course, 'Scrutinized and forwarded to HOD', course.scrutinyRemark);
     this.state.users.filter(u => u.systemRole === 'HOD').forEach(u =>
-      this.notifyUser(u.id, course, `${course.code} ready for approval`, `${course.code} — ${course.name} has been verified by the Executive Assistant and is awaiting your approval.`, true)
+      this.notifyUser(u.id, course, `${course.code} ready for approval`, `${course.code} — ${course.name} has been scrutinized and is awaiting your approval.`, true)
     );
     toast(`${course.code} forwarded to the HOD.`, 'ok');
-    this.navigate('ea-list');
+    this.navigate('scrutinizer-list');
   },
 
   hodApprove(courseId){
     const course = this.getCourse(courseId);
+    const actor = this.currentUser();
     course.status = 'approved';
+    course.frozenAt = Date.now();
+    course.frozenBy = actor.name;
     syncCourse(course);
-    this.logHistory(course, 'Approved — record locked for result processing');
+    this.logHistory(course, `Approved and frozen by the HOD — record locked for result processing`);
     const ciUser = getCourseCIUser(courseId);
     const ccUser = getCourseCCUser(courseId);
     [ciUser, ccUser].filter(Boolean).forEach(u =>
-      this.notifyUser(u.id, course, `${course.code} approved`, `${course.code} — ${course.name} has been approved and locked by the HOD.`, true)
+      this.notifyUser(u.id, course, `${course.code} approved`, `${course.code} — ${course.name} has been approved and frozen by the HOD.`, true)
     );
-    toast(`${course.code} approved and locked.`, 'ok');
+    toast(`${course.code} approved and frozen.`, 'ok');
     closeModal();
     this.navigate('hod-list');
+  },
+  /* ---------- CI: acknowledge a frozen (approved) record — completes the
+     audit trail's "faculty acknowledgement" checkpoint. Purely a log entry;
+     doesn't change status or unlock anything. ---------- */
+  ciAcknowledge(courseId){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can acknowledge this record.', 'err'); return; }
+    if(course.status !== 'approved'){ toast('This record isn\'t approved yet.', 'err'); return; }
+    if(course.ciAcknowledgedAt){ toast('Already acknowledged.', 'ok'); return; }
+    course.ciAcknowledgedAt = Date.now();
+    syncCourse(course);
+    this.logHistory(course, `Acknowledged by the Course Instructor (${actor.name})`);
+    toast('Acknowledged.', 'ok');
+    renderContent();
   },
   /* ---------- CI: request permission to correct marks on an already-approved
      record. Does not reopen the whole pipeline — just asks the HOD for a
@@ -2268,6 +2379,7 @@ const App = {
     course.sentBack = true;
     course.lastRemark = remark;
     course.eaRemark = '';
+    course.scrutinyRemark = '';
     syncCourse(course);
     this.logHistory(course, 'Sent back for correction', remark);
     const ciUser = getCourseCIUser(courseId);
@@ -2644,7 +2756,7 @@ const App = {
     if(!course){
       course = {
         id: bizId('CRS', [code, branch, sec||'nosec'], this.state.courses.map(c=>c.id)), code, name, section:sec, branch,
-        status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType,
+        status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
         editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
         students:[], studentsLoaded:true, history:[]
       };
@@ -2838,19 +2950,19 @@ function getNavForUser(user){
     {v:'hod-audit', label:'Audit Log'},
   ];
   if(user.systemRole==='EA') return [
-    {v:'ea-list', label:'Verification Queue'},
     {v:'ea-faculty', label:'Faculty Directory'},
     {v:'ea-students', label:'Student Directory'},
   ];
   if(user.systemRole==='EXAM') return [{v:'exam-list', label:'Approved Records'}];
   // FACULTY — dynamic, derived from assignments
-  const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+  const { ccCourses, ciCourses, scrutinyCourses } = getFacultyCourses(user.id);
   const nav = [];
   if(ciCourses.length) nav.push({v:'ci-sections', label:'My Sections'});
   if(ciCourses.length) nav.push({v:'ci-termtest', label:'Term Test'});
   if(ciCourses.length) nav.push({v:'ci-labint', label:'Lab Internals'});
   if(ciCourses.length) nav.push({v:'ci-labext', label:'Lab Externals'});
   if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
+  if(scrutinyCourses.length) nav.push({v:'scrutinizer-list', label:'Scrutiny Queue'});
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
 }
@@ -2864,7 +2976,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'cc-roster':true, 'cc-review':true, 'scrutinizer-review':true, 'hod-review':true };
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -2883,10 +2995,10 @@ function renderContent(){
     'hod-termtest': renderHODTermTest,
     'hod-faculty': renderHODFacultyDirectory,
     'hod-audit': renderHODAudit,
-    'ea-list': renderEAList,
     'ea-faculty': renderEAFacultyDirectory,
     'ea-students': renderEAStudents,
-    'ea-review': renderEAReview,
+    'scrutinizer-list': renderScrutinizerList,
+    'scrutinizer-review': renderScrutinizerReview,
     'exam-list': renderExamList,
     'ci-sections': renderCISections,
     'ci-entry': renderCIEntry,
@@ -2963,8 +3075,9 @@ function assignmentSummary(courseId){
   const course = App.getCourse(courseId);
   const ccUser = getCourseCCUser(courseId);
   const ciUser = getCourseCIUser(courseId);
+  const scrUser = getCourseScrutinizerUser(courseId);
   const etPart = course && course.evalType ? ` · Evaluation Type: ${escapeHtml(evalTypeLabel(course.evalType))}` : '';
-  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'}${etPart}`;
+  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'} · Scrutinizer: ${scrUser ? escapeHtml(scrUser.name) : 'Unassigned'}${etPart}`;
 }
 function courseMetaBlock(course){
   return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
@@ -2974,6 +3087,286 @@ function sentBackBanner(course){
   return `<div class="card" style="border-left:3px solid var(--seal-red);">
     <div class="section-title" style="color:var(--seal-red);">Sent back for correction</div>
     <p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.lastRemark)}</p>
+  </div>`;
+}
+
+/* ============================================================
+   EVALUATION DEADLINE — "complete evaluation within 4 working days
+   from the date of examination" (per portal requirements doc). The
+   Course Coordinator/HOD/Admin set course.examDate; the deadline is
+   that date + 4 working days (Sat/Sun skipped). Shown as a badge on
+   the CI/CC/HOD screens for that section — not enforced as a hard
+   block, just surfaced so everyone can see what's overdue.
+   ============================================================ */
+function addWorkingDays(dateStr, days){
+  if(!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  if(isNaN(d.getTime())) return null;
+  let added = 0;
+  while(added < days){
+    d.setDate(d.getDate()+1);
+    const dow = d.getDay();
+    if(dow!==0 && dow!==6) added++;
+  }
+  return d;
+}
+function deadlineBadge(course){
+  if(!course.examDate) return '';
+  const deadline = addWorkingDays(course.examDate, 4);
+  if(!deadline) return '';
+  const done = ['submitted','coordinated','verified','approved'].includes(course.status);
+  const now = new Date();
+  const overdue = !done && now > deadline;
+  const dateLabel = deadline.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+  const style = overdue ? 'color:var(--seal-red);font-weight:600;' : 'color:var(--text-soft);';
+  return `<p class="section-meta" style="margin-top:6px;${style}">Evaluation deadline (exam date + 4 working days): ${dateLabel}${overdue ? ' — OVERDUE, marks not yet submitted' : ''}</p>`;
+}
+
+/* ============================================================
+   CHECKPOINT C (part) — attendance/marks consistency: a student
+   marked Absent for this section should carry no marks. Toggling
+   Absent clears any marks already entered for that student so the
+   two can never disagree.
+   ============================================================ */
+function toggleStudentAbsent(courseId, studentId, checked){
+  const course = App.getCourse(courseId);
+  if(!course) return;
+  const s = (course.students||[]).find(x=>x.id===studentId);
+  if(!s) return;
+  s.absent = !!checked;
+  if(s.absent) s.marks = {}; // absent students carry no marks — checkpoint C consistency rule
+  syncStudent(courseId, s);
+  renderContent();
+}
+window.toggleStudentAbsent = toggleStudentAbsent;
+
+/* ============================================================
+   CHECKPOINT A — Evaluation Completion Status, computed per section.
+   ============================================================ */
+/* Lightweight checkpoint-A summary for LIST pages (hod-list, cc-list),
+   which only ever fetch the cheap per-course count + completion flags —
+   NOT full student rows (see ROUTES_NEEDING_STUDENTS above) — so this
+   uses only fields already present on that lightweight row. The fuller,
+   per-student breakdown (completionStatsChipsHtml) is reserved for the
+   review pages, where the full roster for THIS course is guaranteed
+   loaded already. */
+function completionStatsChipsLite(course){
+  const chip = (label, val, warn) => `<span style="display:inline-block;margin:3px 8px 3px 0;padding:3px 9px;background:${warn?'#FBEAEA':'#F3EEDD'};border:1px solid var(--rule);border-radius:6px;font-size:11.5px;${warn?'color:var(--seal-red);':''}">${label}: ${val}</span>`;
+  const marksUploaded = course.status !== 'draft';
+  const verified = ['verified','approved'].includes(course.status);
+  return `<div style="margin-top:6px;">
+    ${chip('Scripts', course.studentCount||0)}
+    ${chip('CIE', course.cieComplete?'Complete':'Incomplete', !course.cieComplete)}
+    ${chip('SEE', course.seeComplete?'Complete':'Incomplete', !course.seeComplete)}
+    ${chip('Marks uploaded', marksUploaded?'Yes':'No', !marksUploaded)}
+    ${chip('Verified', verified?'Yes':'No', !verified)}
+  </div>`;
+}
+/* Fuller, per-student checkpoint-A breakdown — only valid where
+   course.students is the REAL loaded roster (review pages). */
+function getCourseCompletionStats(course){
+  const students = course.students || [];
+  const total = students.length;
+  const absent = students.filter(s=>s.absent).length;
+  const evaluated = students.filter(s=>{
+    if(s.absent) return false;
+    const check = App.validateCIEComplete ? App.validateCIEComplete({ ...course, students:[s] }) : { ok:true };
+    return check.ok;
+  }).length;
+  const pending = total - absent - evaluated;
+  return {
+    total, absent, evaluated, pending,
+    marksUploaded: course.status !== 'draft',
+    verificationCompleted: ['verified','approved'].includes(course.status),
+  };
+}
+function completionStatsChipsHtml(course){
+  const st = getCourseCompletionStats(course);
+  const chip = (label, val, warn) => `<span style="display:inline-block;margin:3px 8px 3px 0;padding:3px 9px;background:${warn?'#FBEAEA':'#F3EEDD'};border:1px solid var(--rule);border-radius:6px;font-size:11.5px;${warn?'color:var(--seal-red);':''}">${label}: ${val}</span>`;
+  return `<div style="margin-top:6px;">
+    ${chip('Scripts', st.total)}
+    ${chip('Evaluated', st.evaluated)}
+    ${chip('Pending', st.pending, st.pending>0)}
+    ${st.absent ? chip('Absent', st.absent) : ''}
+    ${chip('Marks uploaded', st.marksUploaded?'Yes':'No', !st.marksUploaded)}
+    ${chip('Verified', st.verificationCompleted?'Yes':'No', !st.verificationCompleted)}
+  </div>`;
+}
+/* Cheaper variant for list rows that only have the lightweight course
+   record (studentCount, status, scriptUploads metadata) rather than the
+   full students array — avoids forcing a roster load just to paint a
+   summary chip on every row of a long list. */
+function lightweightCompletionChipsHtml(course){
+  const marksUploaded = course.status !== 'draft';
+  const verificationCompleted = ['verified','approved'].includes(course.status);
+  const uploads = course.scriptUploads || {};
+  const scriptsCount = Object.keys(SCRIPT_KINDS).filter(k=>uploads[k]).length;
+  const chip = (label, val, warn) => `<span style="display:inline-block;margin:3px 8px 3px 0;padding:3px 9px;background:${warn?'#FBEAEA':'#F3EEDD'};border:1px solid var(--rule);border-radius:6px;font-size:11.5px;${warn?'color:var(--seal-red);':''}">${label}: ${val}</span>`;
+  return `<div style="margin-top:8px;">
+    ${chip('Marks uploaded', marksUploaded?'Yes':'No', !marksUploaded)}
+    ${chip('Verification completed', verificationCompleted?'Yes':'No', !verificationCompleted)}
+    ${chip('Scripts uploaded', `${scriptsCount}/3`, scriptsCount<3)}
+  </div>`;
+}
+
+/* ============================================================
+   CHECKPOINT B — Evaluation Deviation Report: compares each
+   section's average marks-so-far against the mean across all
+   sections of the same subject, and flags sections that deviate
+   significantly (>=15% of the mean, or >=5 marks, whichever is
+   larger — a small floor so tiny means don't trigger on noise).
+   "Marks so far" is the sum of every numeric value directly on
+   s.marks (ttDetail is a nested breakdown already reflected in the
+   computed component keys like tt1/tt2, so it's excluded to avoid
+   double-counting) — comparable across sections of the same subject
+   since they share the same Evaluation Type template.
+   ============================================================ */
+function studentEnteredTotal(s){
+  let sum = 0;
+  Object.entries(s.marks||{}).forEach(([k,v])=>{
+    if(k==='ttDetail') return;
+    if(typeof v === 'number' && !isNaN(v)) sum += v;
+  });
+  return sum;
+}
+function courseSectionAverage(course){
+  const active = (course.students||[]).filter(s=>!s.absent);
+  if(!active.length) return null;
+  const total = active.reduce((sum,s)=>sum+studentEnteredTotal(s), 0);
+  return round1(total/active.length);
+}
+function getDeviationReportForSubject(code){
+  const sections = App.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(code) && c.branch);
+  const rows = sections.map(c=>({ course:c, avg: courseSectionAverage(c), ci: getCourseCIUser(c.id) })).filter(r=>r.avg!==null);
+  if(rows.length < 2) return { rows, mean:null, flagged:[] };
+  const mean = rows.reduce((s,r)=>s+r.avg,0) / rows.length;
+  const threshold = Math.max(5, mean*0.15);
+  const flagged = rows.filter(r=>Math.abs(r.avg-mean) >= threshold);
+  return { rows, mean: round1(mean), flagged };
+}
+/* Sections other than the one being reviewed may not have their real
+   roster loaded yet (list pages only ever fetch a lightweight count —
+   see ROUTES_NEEDING_STUDENTS above), so the deviation report renders a
+   placeholder first, then loads every sibling section's roster in the
+   background and patches the card in once real averages are available. */
+function deviationReportPlaceholderHtml(course){
+  if(!course.branch) return '';
+  return `<div class="card" id="deviation-card-${course.id}">
+    <div class="section-title" style="font-size:14px;">Evaluation Deviation Report — ${escapeHtml(course.code)}</div>
+    <p class="section-meta" style="margin-top:4px;">Loading section averages…</p>
+  </div>`;
+}
+async function loadDeviationReport(course){
+  if(!course.branch) return;
+  const siblings = App.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(course.code) && c.branch);
+  await Promise.all(siblings.filter(c=>!c.studentsLoaded).map(c=>App.ensureCourseStudentsLoaded(c.id)));
+  const target = document.getElementById(`deviation-card-${course.id}`);
+  if(!target) return; // navigated away before the load finished
+  const html = deviationReportHtml(course);
+  if(html) target.outerHTML = html; else target.remove();
+}
+function deviationReportHtml(course){
+  if(!course.branch) return '';
+  const { rows, mean, flagged } = getDeviationReportForSubject(course.code);
+  if(rows.length < 2) return '';
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">Evaluation Deviation Report — ${escapeHtml(course.code)}</div>
+    <p class="section-meta" style="margin-top:4px;">Average marks entered so far, by section (class mean: ${mean}).</p>
+    <div style="margin-top:8px;">
+      ${rows.map(r=>`<span style="display:inline-block;margin:3px 8px 3px 0;padding:3px 9px;background:${flagged.includes(r)?'#FBEAEA':'#F3EEDD'};border:1px solid var(--rule);border-radius:6px;font-size:12px;${flagged.includes(r)?'color:var(--seal-red);':''}">
+        Section ${escapeHtml(r.course.section)}${r.ci?` (${escapeHtml(r.ci.name)})`:''}: ${r.avg}${flagged.includes(r)?' ⚠':''}
+      </span>`).join('')}
+    </div>
+    ${flagged.length ? `<p style="margin-top:8px;color:var(--seal-red);font-size:12.5px;">⚠ ${flagged.length} section${flagged.length===1?'':'s'} significantly deviate${flagged.length===1?'s':''} from the class mean — review before approving.</p>` : ''}
+  </div>`;
+}
+
+/* ============================================================
+   CHECKPOINT — Best/Average/Lowest scanned answer-script uploads,
+   stored in Firebase Storage (this app's Postgres/Supabase backend
+   has no file storage of its own — only the download URL + a little
+   metadata is kept on course.scriptUploads, in Supabase, alongside
+   everything else).
+
+   >>> Fill in YOUR Firebase project's config below (Firebase console
+   >>> → Project settings → General → "Your apps" → SDK setup and
+   >>> configuration) and make sure Firebase Storage is enabled for
+   >>> that project, with rules that allow authenticated writes to
+   >>> the "answer-scripts/" path used here. <<<
+   ============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "PASTE_YOUR_FIREBASE_API_KEY",
+  authDomain: "PASTE_YOUR_PROJECT.firebaseapp.com",
+  projectId: "PASTE_YOUR_PROJECT_ID",
+  storageBucket: "PASTE_YOUR_PROJECT.appspot.com",
+  messagingSenderId: "PASTE_YOUR_SENDER_ID",
+  appId: "PASTE_YOUR_APP_ID",
+};
+let _fbApp = null;
+function fbStorage(){
+  if(!window.firebase){ toast('Firebase SDK failed to load — check your network settings.', 'err'); return null; }
+  if(!_fbApp) _fbApp = firebase.initializeApp(FIREBASE_CONFIG);
+  return firebase.storage();
+}
+const SCRIPT_KINDS = { best:'Best Performance Script', average:'Average Performance Script', lowest:'Lowest Performance Script' };
+async function uploadAnswerScript(courseId, kind, inputEl){
+  const file = inputEl && inputEl.files && inputEl.files[0];
+  if(!file) return;
+  const course = App.getCourse(courseId);
+  if(!course) return;
+  const statusEl = document.getElementById(`script-status-${courseId}-${kind}`);
+  if(statusEl) statusEl.textContent = 'Uploading…';
+  try{
+    const storage = fbStorage();
+    if(!storage) return;
+    const path = `answer-scripts/${course.id}/${kind}-${Date.now()}-${file.name}`;
+    const ref = storage.ref().child(path);
+    await ref.put(file);
+    const url = await ref.getDownloadURL();
+    course.scriptUploads = course.scriptUploads || {};
+    course.scriptUploads[kind] = { url, name:file.name, uploadedAt:Date.now(), uploadedBy:App.currentUser().name };
+    await syncCourse(course);
+    App.logHistory(course, `Uploaded ${SCRIPT_KINDS[kind]}: ${file.name}`);
+    if(statusEl) statusEl.textContent = 'Uploaded.';
+    toast(`${SCRIPT_KINDS[kind]} uploaded.`, 'ok');
+    renderContent();
+  }catch(err){
+    console.error(err);
+    if(statusEl) statusEl.textContent = 'Upload failed.';
+    toast('Upload failed — check your Firebase Storage config and rules.', 'err');
+  }
+}
+window.uploadAnswerScript = uploadAnswerScript;
+/* Editable widget — shown to the Course Instructor while the record is
+   still theirs to work on (draft, or unlocked for correction). */
+function scriptUploadsEditHtml(course){
+  const uploads = course.scriptUploads || {};
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">Evaluated Answer Scripts — Best / Average / Lowest</div>
+    <p class="section-meta" style="margin-top:4px;">Upload a scanned copy of each. You can re-upload to replace one until this record is forwarded to the Course Coordinator.</p>
+    ${Object.keys(SCRIPT_KINDS).map(kind=>`
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label style="min-width:210px;font-size:13px;">${SCRIPT_KINDS[kind]}</label>
+        <input type="file" accept="image/*,application/pdf" onchange="uploadAnswerScript('${course.id}','${kind}', this)">
+        <span id="script-status-${course.id}-${kind}" class="section-meta"></span>
+        ${uploads[kind] ? `<a href="${uploads[kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">View current: ${escapeHtml(uploads[kind].name)}</a>` : ''}
+      </div>`).join('')}
+  </div>`;
+}
+/* Read-only view — shown to CC / Scrutinizer / HOD / Examination Branch. */
+function scriptUploadsViewHtml(course){
+  const uploads = course.scriptUploads || {};
+  const any = Object.keys(SCRIPT_KINDS).some(k=>uploads[k]);
+  if(!any) return `<div class="card"><div class="section-title" style="font-size:14px;">Evaluated Answer Scripts</div><p style="margin:8px 0 0;color:var(--text-soft);">No Best/Average/Lowest scripts uploaded yet.</p></div>`;
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">Evaluated Answer Scripts — Best / Average / Lowest</div>
+    <div style="margin-top:8px;">
+      ${Object.keys(SCRIPT_KINDS).map(kind=>uploads[kind] ? `
+        <div style="margin-top:6px;">
+          <a href="${uploads[kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${SCRIPT_KINDS[kind]}: ${escapeHtml(uploads[kind].name)}</a>
+          <span class="section-meta">uploaded by ${escapeHtml(uploads[kind].uploadedBy||'')} · ${fmtDate(uploads[kind].uploadedAt)}</span>
+        </div>` : `<p style="margin:6px 0 0;color:var(--text-soft);font-size:12.5px;">${SCRIPT_KINDS[kind]}: not uploaded yet.</p>`).join('')}
+    </div>
   </div>`;
 }
 
@@ -3520,6 +3913,52 @@ function pendingEtRequestsHtml(){
         </div>`).join('')}
     </div>`;
 }
+/* ============================================================
+   CHECKPOINT D — HOD Dashboard: status counts across all sections,
+   plus faculty-wise (Course Instructor) completion status.
+   ============================================================ */
+function hodDashboardSummaryHtml(all){
+  const counts = {
+    pendingEvaluation: all.filter(c=>c.status==='draft').length,
+    pendingModeration: all.filter(c=>c.status==='submitted').length,
+    pendingScrutiny: all.filter(c=>c.status==='coordinated').length,
+    pendingApproval: all.filter(c=>c.status==='verified').length,
+    frozen: all.filter(c=>c.status==='approved').length,
+  };
+  const stat = (label, val) => `<div style="flex:1;min-width:120px;padding:10px 14px;background:#F3EEDD;border:1px solid var(--rule);border-radius:8px;">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;color:var(--ink);">${val}</div>
+    <div class="section-meta" style="margin-top:2px;">${label}</div>
+  </div>`;
+  const byCI = {};
+  all.forEach(c=>{
+    const ci = getCourseCIUser(c.id);
+    if(!ci) return;
+    byCI[ci.id] = byCI[ci.id] || { name:ci.name, total:0, submitted:0 };
+    byCI[ci.id].total++;
+    if(c.status!=='draft') byCI[ci.id].submitted++;
+  });
+  const facultyRows = Object.values(byCI).sort((a,b)=>a.name.localeCompare(b.name));
+  return `
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Evaluation Status Overview</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+        ${stat('Pending evaluation (CI)', counts.pendingEvaluation)}
+        ${stat('Pending moderation (CC)', counts.pendingModeration)}
+        ${stat('Pending scrutiny', counts.pendingScrutiny)}
+        ${stat('Pending approval', counts.pendingApproval)}
+        ${stat('Marks frozen', counts.frozen)}
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Faculty-wise Completion Status</div>
+      ${facultyRows.length===0 ? `<p class="section-meta" style="margin-top:8px;">No Course Instructors assigned yet.</p>` : `
+      <div class="table-scroll" style="margin-top:8px;">
+        <table class="data-table"><thead><tr><th>Course Instructor</th><th>Sections assigned</th><th>Sections submitted+</th></tr></thead><tbody>
+          ${facultyRows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${r.total}</td><td>${r.submitted}</td></tr>`).join('')}
+        </tbody></table>
+      </div>`}
+    </div>`;
+}
 function renderHODList(){
   const all = App.state.courses.filter(c=>c.branch);
   const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
@@ -3533,6 +3972,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
+    ${hodDashboardSummaryHtml(all)}
     ${pendingEtRequestsHtml()}
     ${pendingApprovalGroupsHtml()}
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
@@ -3546,6 +3986,7 @@ function renderHODList(){
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
+            ${completionStatsChipsLite(c)}
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
             ${hodStatusPill(c)}
@@ -3657,6 +4098,7 @@ function renderHODLabExternalOverview(){
 function renderHODReview(params){
   const course = App.getCourse(params.courseId);
   const actionable = course.status === 'verified';
+  const scrUser = getCourseScrutinizerUser(course.id);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -3665,8 +4107,23 @@ function renderHODReview(params){
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
+      ${deadlineBadge(course)}
+      ${completionStatsChipsHtml(course)}
     </div>
-    ${course.eaRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">EA verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : ''}
+    <div class="card">
+      <div class="section-title" style="font-size:14px;">Scrutinizer</div>
+      ${scrUser ? `<p style="margin:8px 0;color:var(--text-soft);">${escapeHtml(scrUser.name)} (${escapeHtml(scrUser.email)})</p>
+        ${course.status!=='approved' ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Remove the Scrutinizer from this section?')) App.revokeScrutinizer('${course.id}')">Remove Scrutinizer</button>` : ''}`
+       : (course.status!=='approved' ? `
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;">
+          <div class="config-field" style="max-width:260px;"><label>Email</label><input type="email" id="scr-email-${course.id}" placeholder="scrutinizer@suh.in"></div>
+          <div class="config-field" style="max-width:220px;"><label>Name (optional)</label><input type="text" id="scr-name-${course.id}"></div>
+          <button class="btn btn-sm" onclick="App.assignScrutinizer('${course.id}', document.getElementById('scr-email-${course.id}').value, document.getElementById('scr-name-${course.id}').value)">Assign Scrutinizer</button>
+        </div>` : `<p style="margin:8px 0 0;color:var(--text-soft);">No Scrutinizer was assigned to this section.</p>`)}
+    </div>
+    ${scriptUploadsViewHtml(course)}
+    ${deviationReportHtml(course)}
+    ${course.scrutinyRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">Scrutiny observations</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.scrutinyRemark)}</p></div>` : ''}
     ${(!course.evalType && App.currentUser().systemRole==='ADMIN') ? `
       <div class="card" style="border-left:3px solid var(--brass);">
         <div class="section-title" style="font-size:14px;">Evaluation Type not fixed</div>
@@ -3696,7 +4153,7 @@ function renderHODReview(params){
         ${actionable ? `
           <div style="display:flex;gap:10px;">
             <button class="btn btn-red" onclick="openSendBackModal('${course.id}')">Send Back</button>
-            <button class="btn btn-green" onclick="App.hodApprove('${course.id}')">Approve &amp; Lock</button>
+            <button class="btn btn-green" onclick="App.hodApprove('${course.id}')">Approve &amp; Freeze</button>
           </div>` : `<span style="color:var(--text-soft);font-size:13.5px;">Not currently pending HOD action.</span>`}
       </div>
     </div>
@@ -4004,16 +4461,17 @@ function updateHODAuditList(dateKey){
 window.updateHODAuditList = updateHODAuditList;
 
 /* ================= EA VIEWS ================= */
-function renderEAList(){
-  const list = App.state.courses.filter(c=>c.branch);
+function renderScrutinizerList(){
+  const actor = App.currentUser();
+  const list = App.state.courses.filter(c=>c.branch && getCourseScrutinizerUser(c.id)?.id===actor.id);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
-      <div class="page-eyebrow">Executive Assistant</div>
-      <h2>Verification Queue</h2>
-      <p>Submissions reach you after the Course Coordinator has verified them. Check each record for completeness before it reaches the HOD.</p>
+      <div class="page-eyebrow">Scrutinizer</div>
+      <h2>Scrutiny Queue</h2>
+      <p>Submissions reach you after the Course Coordinator has verified them, for the sections the HOD has assigned you to scrutinize. Check each record for completeness and any discrepancy before it reaches the HOD.</p>
     </div>
-    ${list.map(c=>`
+    ${list.length===0 ? emptyStateHtml('No sections assigned to you yet', 'The HOD assigns Scrutinizers per section — nothing has been assigned to you yet.') : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
@@ -4023,8 +4481,8 @@ function renderEAList(){
           <div style="display:flex;align-items:center;gap:14px;">
             ${statusPill(c)}
             ${etPill(c)}
-            <button class="btn ${c.status==='coordinated'?'':'btn-outline'} btn-sm" onclick="App.navigate('ea-review',{courseId:'${c.id}'})">
-              ${c.status==='coordinated' ? 'Verify' : 'View'}
+            <button class="btn ${c.status==='coordinated'?'':'btn-outline'} btn-sm" onclick="App.navigate('scrutinizer-review',{courseId:'${c.id}'})">
+              ${c.status==='coordinated' ? 'Scrutinize' : 'View'}
             </button>
           </div>
         </div>
@@ -4032,26 +4490,30 @@ function renderEAList(){
   `;
   return wrap;
 }
-function renderEAReview(params){
+function renderScrutinizerReview(params){
   const course = App.getCourse(params.courseId);
   const actionable = course.status === 'coordinated';
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
-      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ea-list')">← Back to queue</button>
-      <div class="page-eyebrow">Stage 3 · Verification</div>
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('scrutinizer-list')">← Back to queue</button>
+      <div class="page-eyebrow">Stage 3 · Scrutiny</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
+      ${deadlineBadge(course)}
+      ${completionStatsChipsHtml(course)}
     </div>
+    ${deviationReportHtml(course)}
     <div class="card">
+      ${scriptUploadsViewHtml(course)}
       ${marksViewTable(course)}
       ${actionable ? `
-        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional)</label>
-        <textarea id="ea-remark-input" class="remark-box" placeholder="Note anything relevant for the HOD's review...">${course.eaRemark||''}</textarea>
+        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Scrutiny observations (record any discrepancy or recommendation here)</label>
+        <textarea id="scrutiny-remark-input" class="remark-box" placeholder="Note any discrepancy, deviation, or recommendation for the HOD's review...">${course.scrutinyRemark||''}</textarea>
         <div style="display:flex;gap:10px;margin-top:14px;">
-          <button class="btn" onclick="App.eaForward('${course.id}')">Forward to HOD</button>
-        </div>` : (course.eaRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`)}
+          <button class="btn" onclick="App.scrutinizerForward('${course.id}')">Forward to HOD</button>
+        </div>` : (course.scrutinyRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Scrutiny observations</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.scrutinyRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`)}
     </div>
   `;
   return wrap;
@@ -4819,11 +5281,29 @@ function renderCIEntry(params){
       <div class="page-eyebrow">${correctionMode ? 'Correction unlocked' : 'Stage 1 · Submission'}</div>
       <h2>Subject: ${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
+      ${deadlineBadge(course)}
     </div>
     ${sentBackBanner(course)}
     ${correctionMode ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Temporarily unlocked for correction</div><p style="margin:8px 0 0;color:var(--text-soft);">The HOD approved your request to correct marks. Edit below, then use "Finish &amp; Re-lock" when done.</p></div>` : ''}
     ${course.status==='approved' && course.editRequestStatus==='pending' ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Correction requested</div><p style="margin:8px 0 0;color:var(--text-soft);">Waiting for the HOD to approve: "${escapeHtml(course.editRequestRemark||'')}"</p></div>` : ''}
     ${course.status==='approved' && course.editRequestStatus==='denied' ? `<div class="card" style="border-left:3px solid var(--seal-red);"><div class="section-title" style="font-size:14px;color:var(--seal-red);">Correction request denied</div></div>` : ''}
+    ${course.status==='approved' ? `<div class="card">
+        <div class="section-title" style="font-size:14px;">Approved &amp; frozen</div>
+        <p style="margin:8px 0 0;color:var(--text-soft);">Frozen by ${escapeHtml(course.frozenBy||'the HOD')}${course.frozenAt?` on ${fmtDate(course.frozenAt)}`:''}.</p>
+        ${course.ciAcknowledgedAt
+          ? `<p style="margin:6px 0 0;color:var(--text-soft);font-size:12.5px;">You acknowledged this on ${fmtDate(course.ciAcknowledgedAt)}.</p>`
+          : `<button class="btn btn-sm" style="margin-top:10px;" onclick="App.ciAcknowledge('${course.id}')">Acknowledge</button>`}
+      </div>` : ''}
+    ${editable ? `<div class="card">
+      <div class="section-title" style="font-size:14px;">Evaluation deadline</div>
+      <p class="section-meta" style="margin-top:4px;">Date of examination — the deadline (4 working days after) is shown above once set.</p>
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-top:8px;">
+        <div class="config-field" style="max-width:200px;"><label>Exam date</label><input type="date" id="examdate-${course.id}" value="${course.examDate||''}"></div>
+        <button class="btn btn-sm" onclick="App.setExamDate('${course.id}', document.getElementById('examdate-${course.id}').value)">Save</button>
+      </div>
+    </div>` : ''}
+    ${editable ? scriptUploadsEditHtml(course) : scriptUploadsViewHtml(course)}
+    ${editable ? absentManagementHtml(course) : ''}
     <div class="card">
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
         <button class="btn btn-outline btn-sm" onclick="exportCSV('${course.id}')">Export CSV</button>
@@ -4845,6 +5325,25 @@ function renderCIEntry(params){
     </div>
   `;
   return wrap;
+}
+/* Compact absent-students box — checkpoint C's "attendance/marks
+   consistency" rule (absent students carry no marks) is enforced in
+   App.toggleStudentAbsent, which clears any marks the moment a student
+   is marked absent. */
+function absentManagementHtml(course){
+  const students = course.students || [];
+  if(!students.length) return '';
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">Attendance</div>
+    <p class="section-meta" style="margin-top:4px;">Mark any student who was absent for this evaluation — their marks fields are cleared and skipped from completion checks.</p>
+    <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;">
+      ${students.map(s=>`
+        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;border:1px solid var(--rule);border-radius:6px;padding:4px 9px;">
+          <input type="checkbox" ${s.absent?'checked':''} onchange="toggleStudentAbsent('${course.id}','${s.id}', this.checked)">
+          ${escapeHtml(s.name)}
+        </label>`).join('')}
+    </div>
+  </div>`;
 }
 
 /* ================= FACULTY: CC VIEWS (dynamic role) ================= */
@@ -5049,6 +5548,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
               `}
             </div>
           </div>
+          ${lightweightCompletionChipsHtml(c)}
         </div>`;
       }).join('')}
     `;
@@ -5206,7 +5706,11 @@ function renderCCReview(params){
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
+      ${deadlineBadge(course)}
+      ${completionStatsChipsHtml(course)}
     </div>
+    ${scriptUploadsViewHtml(course)}
+    ${deviationReportHtml(course)}
     <div class="card">
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
         <button class="btn btn-outline btn-sm" onclick="exportCSV('${course.id}')">Export CSV</button>
@@ -5214,10 +5718,10 @@ function renderCCReview(params){
       </div>
       ${marksViewTable(course)}
       ${actionable ? `
-        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional)</label>
-        <textarea id="cc-remark-input" class="remark-box" placeholder="Note anything relevant for the Executive Assistant's review..."></textarea>
+        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional) — note any deviation across sections or scripts here</label>
+        <textarea id="cc-remark-input" class="remark-box" placeholder="Note anything relevant for the Scrutinizer's review..."></textarea>
         <div style="display:flex;gap:10px;margin-top:14px;">
-          <button class="btn" onclick="App.ccForward('${course.id}')">Verify &amp; Forward to Executive Assistant</button>
+          <button class="btn" onclick="App.ccForward('${course.id}')">Verify &amp; Forward for Scrutiny</button>
         </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`}
     </div>
   `;
