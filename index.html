@@ -492,7 +492,7 @@ const SUPABASE_URL = 'https://dhmidutrazdhhiqsstxv.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobWlkdXRyYXpkaGhpcXNzdHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTMwOTIsImV4cCI6MjA5OTk2OTA5Mn0.jXlLh7b737FzsKpavzr5lHzSn04mjcb1XhWZaPFn9ko';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
+const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
 
 const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.', CSD:'CSD — CS & Design', CSC:'CSC — CS & Cyber Security' };
 function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
@@ -531,7 +531,7 @@ const EVAL_TEMPLATES = [
       { key:'tt1',              label:'Term Test - 1',                          rawMax:50, scaledMax:15 },
       { key:'tt2',              label:'Term Test - 2',                          rawMax:50, scaledMax:15 },
       { key:'moocsAssignments', label:'MOOCS (Self Learning Module)/Assignments', rawMax:10, scaledMax:10 },
-      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:10 },
+      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:50, scaledMax:10 },
     ],
     see:[
       { key:'seeTheory', label:'Sem-End Theory', rawMax:50, scaledMax:50 },
@@ -546,7 +546,7 @@ const EVAL_TEMPLATES = [
       { key:'termTest',         label:'Term Test',                              rawMax:50, scaledMax:20 },
       { key:'tutorials',        label:'Tutorials',                              rawMax:10, scaledMax:10 },
       { key:'moocsAssignments', label:'MOOCS (Self Learning Module)/Assignments', rawMax:10, scaledMax:10 },
-      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:10 },
+      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:50, scaledMax:10 },
     ],
     see:[
       { key:'seeTheory', label:'Sem-End Theory', rawMax:50, scaledMax:50 },
@@ -560,7 +560,7 @@ const EVAL_TEMPLATES = [
     cie:[
       { key:'termTest',         label:'Term Test',                              rawMax:50, scaledMax:20 },
       { key:'moocsAssignments', label:'MOOCS (Self Learning Module)/Assignments', rawMax:20, scaledMax:20 },
-      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:10 },
+      { key:'sia',              label:'SIA Tests - 5 Objective',                rawMax:50, scaledMax:10 },
     ],
     see:[
       { key:'seeTheory', label:'Sem-End Theory', rawMax:50, scaledMax:50 },
@@ -576,7 +576,7 @@ const EVAL_TEMPLATES = [
       { key:'tt1',            label:'Term Test - 1',                     rawMax:50, scaledMax:12.5 },
       { key:'tt2',            label:'Term Test - 2',                     rawMax:50, scaledMax:12.5 },
       { key:'pracInternal',   label:'Practical Internal Test',           rawMax:50, scaledMax:10 },
-      { key:'sia',            label:'SIA Tests - 5 Objective',           rawMax:10, scaledMax:5 },
+      { key:'sia',            label:'SIA Tests - 5 Objective',           rawMax:50, scaledMax:5 },
       { key:'regularLabPerf', label:'Regular Lab Performance Assessment*', rawMax:10, scaledMax:10 },
     ],
     see:[
@@ -599,7 +599,7 @@ const EVAL_TEMPLATES = [
       { key:'tt1',                 label:'Term Test - 1',                       rawMax:50, scaledMax:10 },
       { key:'tt2',                 label:'Term Test - 2',                       rawMax:50, scaledMax:10 },
       { key:'pracInternal',        label:'Practical Internal Test',             rawMax:50, scaledMax:10 },
-      { key:'sia',                 label:'SIA Tests - 5 Objective',             rawMax:10, scaledMax:5 },
+      { key:'sia',                 label:'SIA Tests - 5 Objective',             rawMax:50, scaledMax:5 },
       { key:'regularLabPerf',      label:'Regular Lab Performance Assessment*', rawMax:10, scaledMax:10 },
       { key:'projectPerfAssess',   label:'Project Performance Assessment',      rawMax:5,  scaledMax:5 },
     ],
@@ -619,7 +619,7 @@ const EVAL_TEMPLATES = [
     cie:[
       { key:'tt1',               label:'Term Test - 1',                          rawMax:50, scaledMax:12.5 },
       { key:'tt2',               label:'Term Test - 2',                          rawMax:50, scaledMax:12.5 },
-      { key:'sia',               label:'SIA Tests - 5 Objective',                rawMax:10, scaledMax:5 },
+      { key:'sia',               label:'SIA Tests - 5 Objective',                rawMax:50, scaledMax:5 },
       { key:'regularSkillPerf',  label:'Regular Skill Performance Assessment#',  rawMax:10, scaledMax:10 },
       { key:'skillCert',         label:'Skill Certification',                    rawMax:10, scaledMax:10 },
     ],
@@ -893,6 +893,11 @@ function generateAcademicYears(){
 }
 const ACADEMIC_YEARS = generateAcademicYears();
 const SEMESTER_LABELS = ['Semester 1','Semester 2'];
+// Subject-to-semester mapping (Timetable Incharge sets this per subject
+// shell in Manage Coordinators) — a straight 1-8 semester number, distinct
+// from SEMESTER_LABELS above (which is about the Term Test cycle's
+// "Semester 1 / Semester 2" academic-year half, a different concept).
+const SEMESTER_NUMBERS = ['1','2','3','4','5','6','7','8'];
 
 /* Per-pair Unit + marks-split, set by the Course Instructor before entering
    marks (units are chosen by the CI when setting the question paper, not
@@ -1142,7 +1147,7 @@ async function fetchStateFromSupabase(){
   const courses = coursesR.data.map(c=>{
     const comp = completionByCourse[c.id];
     return {
-      id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch,
+      id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, semester:c.semester||'',
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
       evalType:c.eval_type || null,
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
@@ -1223,7 +1228,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1370,12 +1375,10 @@ function getActiveAssignment(courseId, type){
 }
 function getCourseCCUser(courseId){ const a=getActiveAssignment(courseId,'CC'); return a ? App.getUserById(a.userId) : null; }
 function getCourseCIUser(courseId){ const a=getActiveAssignment(courseId,'CI'); return a ? App.getUserById(a.userId) : null; }
-function getCourseScrutinizerUser(courseId){ const a=getActiveAssignment(courseId,'SCRUTINIZER'); return a ? App.getUserById(a.userId) : null; }
 function getFacultyCourses(userId){
   const ccCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'CC')?.userId===userId);
   const ciCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'CI')?.userId===userId);
-  const scrutinyCourses = App.state.courses.filter(c => getActiveAssignment(c.id,'SCRUTINIZER')?.userId===userId);
-  return { ccCourses, ciCourses, scrutinyCourses };
+  return { ccCourses, ciCourses };
 }
 function createFacultyIfNeeded(email, name){
   const existing = App.state.users.find(u=>u.email.toLowerCase()===email.toLowerCase());
@@ -1552,24 +1555,27 @@ const App = {
     }
   },
 
-  /* ---------- HOD/Admin: create a course-section ----------
-     The HOD no longer picks a real Subject here (and so no longer fixes an
-     Evaluation Type at this stage) — the Course Coordinator is the one who
-     later selects the real Subject from "Courses Applicable" when assigning
-     the Course Instructor (see App.ccCreateSectionAndAssignInstructor /
-     App.assignRole), and THAT is what fixes the Abbr, Course Type &
-     Evaluation Type. Here the HOD just needs a working title (code/name) to
-     create the coordination shell and hand it to a Coordinator.
+  /* ---------- Timetable Incharge/Admin: create a course-section ----------
+     The Timetable Incharge no longer picks a real Subject here (and so no
+     longer fixes an Evaluation Type at this stage) — the Course Coordinator
+     is the one who later selects the real Subject from "Courses Applicable"
+     when assigning the Course Instructor (see
+     App.ccCreateSectionAndAssignInstructor / App.assignRole), and THAT is
+     what fixes the Abbr, Course Type & Evaluation Type. Here the Timetable
+     Incharge just needs a working title (code/name) to create the
+     coordination shell and hand it to a Coordinator.
 
      If rawEmail is provided, the Course Coordinator is assigned in the same
      step (single "Code + Name + Faculty email/name" form in Manage
      Coordinators) — no separate "Assign Coordinator" click needed. */
-  async createCourseSection(rawCode, rawName, rawEmail, rawCcName){
+  async createCourseSection(rawCode, rawName, rawEmail, rawCcName, rawSemester){
     const actor = this.currentUser();
-    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can create a course section.', 'err'); return; }
+    if(!['TTI','ADMIN'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can create a course section.', 'err'); return; }
     const code = (rawCode||'').trim().toUpperCase();
     const name = (rawName||'').trim();
     if(!code || !name){ toast('Enter both a working Course Code and Course Name for this coordination.', 'err'); return; }
+    const semester = String(rawSemester||'').trim();
+    if(!SEMESTER_NUMBERS.includes(semester)){ toast('Choose which Semester this subject belongs to.', 'err'); return; }
     const email = (rawEmail||'').trim().toLowerCase();
     if(email && !isValidEmail(email)){ toast('Enter a valid Coordinator email address.', 'err'); return; }
     // A subject only needs one coordination "shell" — the Coordinator
@@ -1579,7 +1585,7 @@ const App = {
     const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && !c.branch);
     if(dupe){ toast(`${code} already has a coordination shell — open it from Manage Coordinators.`, 'err'); return; }
     const course = {
-      id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '',
+      id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '', semester,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       // Roster starts empty — the Course Coordinator builds it from the real
@@ -1640,7 +1646,7 @@ const App = {
     const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(req.subjectCode) && c.section===sec && c.branch===branch);
     if(dupe){ toast(`${req.subjectCode} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     const course = {
-      id: bizId('CRS', [req.subjectCode, branch, sec], this.state.courses.map(c=>c.id)), code: req.subjectCode, name: req.subjectName, section: sec, branch,
+      id: bizId('CRS', [req.subjectCode, branch, sec], this.state.courses.map(c=>c.id)), code: req.subjectCode, name: req.subjectName, section: sec, branch, semester: base.semester||'',
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       students: [], history: []
@@ -1902,7 +1908,7 @@ const App = {
     const email = (rawEmail||'').trim().toLowerCase();
     if(!email){ toast('A faculty email is required.', 'err'); return; }
     if(!isValidEmail(email)){ toast('Enter a valid email address.', 'err'); return; }
-    if(type==='CC' && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can assign a Course Coordinator.', 'err'); return; }
+    if(type==='CC' && !['TTI','ADMIN'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can assign a Course Coordinator.', 'err'); return; }
     let subj = null;
     if(type==='CI'){
       const ccA = getActiveAssignment(courseId,'CC');
@@ -1947,7 +1953,7 @@ const App = {
     const actor = this.currentUser();
     const existing = getActiveAssignment(courseId, type);
     if(!existing){ toast('No active assignment to revoke.', 'err'); return; }
-    if(type==='CC' && !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can revoke a Course Coordinator.', 'err'); return; }
+    if(type==='CC' && !['TTI','ADMIN'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can revoke a Course Coordinator.', 'err'); return; }
     if(type==='CC'){
       const siblings = this.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(course.code));
       if(siblings.some(c=>c.status==='approved') && actor.systemRole!=='ADMIN'){ toast('This subject has an approved, locked record — the Course Coordinator can no longer be revoked. Contact an Administrator if this needs to be corrected.', 'err'); return; }
@@ -2115,10 +2121,8 @@ const App = {
   },
 
   /* ---------- CC: verify the instructor's submission and forward to the
-     assigned Scrutinizer. Sits between the CI's submission and the
-     Scrutinizer's review in the approval chain. If the HOD hasn't assigned
-     a Scrutinizer to this section yet, the HOD is notified directly instead
-     so the record doesn't silently stall. ---------- */
+     Executive Assistant. Sits between the CI's submission and the EA's
+     verification in the approval chain. ---------- */
   ccForward(courseId){
     const course = this.getCourse(courseId);
     if(!course) return;
@@ -2130,78 +2134,27 @@ const App = {
     const remark = remarkEl ? remarkEl.value.trim() : '';
     course.status = 'coordinated';
     syncCourse(course);
-    this.logHistory(course, 'Verified by the Course Coordinator and forwarded for scrutiny', remark);
-    const scrutinizer = getCourseScrutinizerUser(courseId);
-    if(scrutinizer){
-      this.notifyUser(scrutinizer.id, course, `${course.code} ready for scrutiny`, `${course.code} — ${course.name} has been verified by the Course Coordinator and is awaiting your scrutiny.`, true);
-      toast(`${course.code} forwarded to the Scrutinizer.`, 'ok');
-    } else {
-      this.state.users.filter(u => u.systemRole === 'HOD').forEach(u =>
-        this.notifyUser(u.id, course, `${course.code} needs a Scrutinizer`, `${course.code} — ${course.name} has been verified by the Course Coordinator, but no Scrutinizer is assigned yet — please assign one.`, true)
-      );
-      toast(`${course.code} forwarded, but no Scrutinizer is assigned yet — the HOD has been notified to assign one.`, 'ok');
-    }
+    this.logHistory(course, 'Verified by the Course Coordinator and forwarded to the Executive Assistant', remark);
+    this.state.users.filter(u => u.systemRole === 'EA').forEach(u =>
+      this.notifyUser(u.id, course, `${course.code} ready for verification`, `${course.code} — ${course.name} has been verified by the Course Coordinator and is awaiting your verification.`, true)
+    );
+    toast(`${course.code} forwarded to the Executive Assistant.`, 'ok');
     this.navigate('cc-list');
   },
 
-  /* ---------- HOD: assign / revoke the Scrutinizer for a section, same
-     pattern as CC assigning a Course Instructor — creates a FACULTY profile
-     if one doesn't already exist for this email, then adds an active
-     SCRUTINIZER assignment. ---------- */
-  async assignScrutinizer(courseId, rawEmail, rawName){
-    const actor = this.currentUser();
-    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can assign a Scrutinizer.', 'err'); return; }
+  eaForward(courseId){
     const course = this.getCourse(courseId);
-    if(!course){ toast('Course not found.', 'err'); return; }
-    const email = (rawEmail||'').trim().toLowerCase();
-    if(!email || !isValidEmail(email)){ toast('Enter a valid Scrutinizer email address.', 'err'); return; }
-    const existing = getActiveAssignment(courseId, 'SCRUTINIZER');
-    if(existing){ existing.status = 'revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; await syncAssignment(existing); }
-    const { user, isNew } = createFacultyIfNeeded(email, (rawName||'').trim());
-    if(isNew){
-      const { error: profileErr } = await syncProfile(user);
-      if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==user.id); return; }
-    }
-    const rec = { id:bizId('ASG', ['SCR', course.code, course.section||'nosec'], this.state.assignments.map(a=>a.id)), type:'SCRUTINIZER', courseId:course.id, userId:user.id, email:user.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
-    this.state.assignments.push(rec);
-    syncAssignment(rec);
-    this.logHistory(course, `Scrutinizer assigned: ${user.name} (${user.email})`);
-    this.notifyUser(user.id, course, `You're now Scrutinizer`, `${actor.name} assigned you as Scrutinizer for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).`, true, actor.email);
-    toast(`${user.name} is now the Scrutinizer for ${course.code} · Section ${course.section}.`, 'ok');
-    closeModal();
-    renderSidebar();
-    renderContent();
-  },
-  revokeScrutinizer(courseId){
-    const actor = this.currentUser();
-    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can revoke a Scrutinizer.', 'err'); return; }
-    const rec = getActiveAssignment(courseId, 'SCRUTINIZER');
-    if(!rec) return;
-    rec.status = 'revoked';
-    syncAssignment(rec);
-    const course = this.getCourse(courseId);
-    this.logHistory(course, 'Scrutinizer assignment revoked');
-    toast('Scrutinizer removed from this section.', 'ok');
-    renderSidebar();
-    renderContent();
-  },
-
-  scrutinizerForward(courseId){
-    const course = this.getCourse(courseId);
-    const actor = this.currentUser();
-    const scrutinizer = getCourseScrutinizerUser(courseId);
-    if(scrutinizer?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s assigned Scrutinizer can forward this record.', 'err'); return; }
-    if(course.status !== 'coordinated'){ toast('This record is not awaiting scrutiny yet.', 'err'); return; }
-    const remarkEl = document.getElementById('scrutiny-remark-input');
-    course.scrutinyRemark = remarkEl ? remarkEl.value.trim() : course.scrutinyRemark;
+    if(course.status !== 'coordinated'){ toast('This record is not awaiting your verification yet.', 'err'); return; }
+    const remarkEl = document.getElementById('ea-remark-input');
+    course.eaRemark = remarkEl ? remarkEl.value.trim() : course.eaRemark;
     course.status = 'verified';
     syncCourse(course);
-    this.logHistory(course, 'Scrutinized and forwarded to HOD', course.scrutinyRemark);
+    this.logHistory(course, 'Verified for completeness and forwarded to HOD', course.eaRemark);
     this.state.users.filter(u => u.systemRole === 'HOD').forEach(u =>
-      this.notifyUser(u.id, course, `${course.code} ready for approval`, `${course.code} — ${course.name} has been scrutinized and is awaiting your approval.`, true)
+      this.notifyUser(u.id, course, `${course.code} ready for approval`, `${course.code} — ${course.name} has been verified by the Executive Assistant and is awaiting your approval.`, true)
     );
     toast(`${course.code} forwarded to the HOD.`, 'ok');
-    this.navigate('scrutinizer-list');
+    this.navigate('ea-list');
   },
 
   hodApprove(courseId){
@@ -2480,6 +2433,29 @@ const App = {
     renderContent();
   },
 
+  /* ---------- CI: SIA unit-wise entry — sums the per-unit /10 scores into
+     s.marks[compKey] (the same "raw" slot every other CIE component uses),
+     which the existing generic (raw/rawMax)*scaledMax pipeline then scales
+     down automatically. Mirrors setTermTestMark's ttDetail pattern. ---------- */
+  setSiaUnitMark(courseId, studentId, compKey, unitIdx, rawValue){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can enter SIA marks.', 'err'); return; }
+    if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked — SIA marks can no longer be edited.', 'err'); return; }
+    const s = (course.students||[]).find(x=>x.id===studentId);
+    if(!s) return;
+    s.marks = s.marks || {};
+    s.marks.siaDetail = s.marks.siaDetail || {};
+    const val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : Math.min(Math.max(parseFloat(rawValue)||0, 0), 10);
+    if(val===undefined) delete s.marks.siaDetail['unit'+unitIdx]; else s.marks.siaDetail['unit'+unitIdx] = val;
+    const sum = Object.values(s.marks.siaDetail).reduce((a,b)=>a+(typeof b==='number'?b:0), 0);
+    s.marks[compKey] = Math.round(sum*2)/2;
+    syncStudent(courseId, s);
+    renderContent();
+  },
+
   /* ---------- EA: faculty directory, uploaded branch-wise ---------- */
   addFacultyToDirectory(rawName, rawEmail, branch){
     const actor = this.currentUser();
@@ -2715,7 +2691,7 @@ const App = {
      course section — creates/reuses the course row, assigns the matched
      faculty account as Course Instructor (active immediately, same as every
      other Admin override in this app), and loads the roster from the
-     Student Directory so the CI sees these students under "My Sections"
+     Student Directory so the CI sees these students under "My Subjects"
      right away. Deliberately does NOT invent a faculty login from a bare
      name — the instructor must already exist as a FACULTY account (added
      via Manage System Accounts or the Faculty Directory) with a name that
@@ -2945,24 +2921,29 @@ function getNavForUser(user){
     {v:'hod-termtest-overview', label:'Term Test'},
     {v:'hod-labint-overview', label:'Lab Internals'},
     {v:'hod-labext-overview', label:'Lab Externals'},
-    {v:'hod-coordinators', label:'Manage Coordinators'},
     {v:'hod-faculty', label:'Faculty Directory'},
     {v:'hod-audit', label:'Audit Log'},
   ];
+  if(user.systemRole==='TTI') return [
+    {v:'hod-coordinators', label:'Manage Coordinators'},
+    {v:'hod-faculty', label:'Faculty Directory'},
+  ];
   if(user.systemRole==='EA') return [
+    {v:'ea-list', label:'Verification Queue'},
     {v:'ea-faculty', label:'Faculty Directory'},
     {v:'ea-students', label:'Student Directory'},
   ];
   if(user.systemRole==='EXAM') return [{v:'exam-list', label:'Approved Records'}];
   // FACULTY — dynamic, derived from assignments
-  const { ccCourses, ciCourses, scrutinyCourses } = getFacultyCourses(user.id);
+  const { ccCourses, ciCourses } = getFacultyCourses(user.id);
   const nav = [];
-  if(ciCourses.length) nav.push({v:'ci-sections', label:'My Sections'});
+  if(ciCourses.length) nav.push({v:'ci-sections', label:'My Subjects'});
   if(ciCourses.length) nav.push({v:'ci-termtest', label:'Term Test'});
   if(ciCourses.length) nav.push({v:'ci-labint', label:'Lab Internals'});
   if(ciCourses.length) nav.push({v:'ci-labext', label:'Lab Externals'});
+  if(ciCourses.length) nav.push({v:'ci-pending', label:'Pending Approval'});
+  if(ciCourses.length) nav.push({v:'ci-audit', label:'Audit Log'});
   if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
-  if(scrutinyCourses.length) nav.push({v:'scrutinizer-list', label:'Scrutiny Queue'});
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
 }
@@ -2976,7 +2957,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'cc-roster':true, 'cc-review':true, 'scrutinizer-review':true, 'hod-review':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -2997,8 +2978,8 @@ function renderContent(){
     'hod-audit': renderHODAudit,
     'ea-faculty': renderEAFacultyDirectory,
     'ea-students': renderEAStudents,
-    'scrutinizer-list': renderScrutinizerList,
-    'scrutinizer-review': renderScrutinizerReview,
+    'ea-list': renderEAList,
+    'ea-review': renderEAReview,
     'exam-list': renderExamList,
     'ci-sections': renderCISections,
     'ci-entry': renderCIEntry,
@@ -3006,6 +2987,8 @@ function renderContent(){
     'ci-termtest-entry': renderCITermTestEntry,
     'ci-labint': renderCILabInternalSections,
     'ci-labext': renderCILabExternalSections,
+    'ci-pending': renderCIPending,
+    'ci-audit': renderCIAudit,
     'cc-list': renderCCList,
     'cc-roster': renderCCRoster,
     'cc-review': renderCCReview,
@@ -3075,9 +3058,8 @@ function assignmentSummary(courseId){
   const course = App.getCourse(courseId);
   const ccUser = getCourseCCUser(courseId);
   const ciUser = getCourseCIUser(courseId);
-  const scrUser = getCourseScrutinizerUser(courseId);
   const etPart = course && course.evalType ? ` · Evaluation Type: ${escapeHtml(evalTypeLabel(course.evalType))}` : '';
-  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'} · Scrutinizer: ${scrUser ? escapeHtml(scrUser.name) : 'Unassigned'}${etPart}`;
+  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'}${etPart}`;
 }
 function courseMetaBlock(course){
   return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
@@ -3353,7 +3335,7 @@ function scriptUploadsEditHtml(course){
       </div>`).join('')}
   </div>`;
 }
-/* Read-only view — shown to CC / Scrutinizer / HOD / Examination Branch. */
+/* Read-only view — shown to CC / EA / HOD / Examination Branch. */
 function scriptUploadsViewHtml(course){
   const uploads = course.scriptUploads || {};
   const any = Object.keys(SCRIPT_KINDS).some(k=>uploads[k]);
@@ -3475,7 +3457,12 @@ function marksEntryTabs(course){
   const template = getCourseTemplate(course);
   const ttLabComps = ttLabApprovalComponents(template);
   const labExtComps = labExternalApprovalComponents(template);
-  const otherCie = otherCieComponents(template);
+  const otherCieAll = otherCieComponents(template);
+  // SIA gets its own unit-wise entry widget (5 or more /10 columns summing to
+  // comp.rawMax, auto-scaled to comp.scaledMax) instead of one flat input —
+  // pulled out of the generic "Other CIE" table below.
+  const siaComp = otherCieAll.find(c=>c.key==='sia') || null;
+  const otherCie = otherCieAll.filter(c=>c.key!=='sia');
   const otherSee = otherSeeComponents(template);
   const showLabExtTab = labExtComps.length > 0;
   const showSeeTab = otherSee.length > 0;
@@ -3536,13 +3523,41 @@ function marksEntryTabs(course){
       ${approvalGroupPanel(course, template, 'labext', labExtComps, editable)}
     </div>` : ''}
     <div id="tab-othercie" class="tab-panel ${activeMarksTab==='othercie'?'':'hidden'}">
-      <p class="section-meta" style="margin-bottom:8px;">No HOD approval needed here — scaled straight per the Evaluation Type as usual: ${otherCie.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ') || '— none for this Evaluation Type —'}.</p>
+      ${siaComp ? siaEntryHtml(course, siaComp, editable) : ''}
+      <p class="section-meta" style="margin-bottom:8px;margin-top:${siaComp?'16px':'0'};">No HOD approval needed here — scaled straight per the Evaluation Type as usual: ${otherCie.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ') || '— none for this Evaluation Type —'}.</p>
       ${otherCie.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>Group Total</th></tr></thead><tbody>${cieRows}</tbody></table></div>` : ''}
     </div>
     ${showSeeTab ? `<div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
       <p class="section-meta" style="margin-bottom:8px;">No HOD approval needed here: ${otherSee.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ')}. SEE Theory is entered and evaluated separately by the Examination Branch and no longer appears on this screen.</p>
       <div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${seeHead}<th>Group Total</th></tr></thead><tbody>${seeRows}</tbody></table></div>
     </div>` : ''}`;
+}
+/* SIA Tests — unit-wise entry (5, or however many comp.rawMax/10 works out
+   to, columns of /10 each), summed into s.marks[comp.key] (the same "raw"
+   slot every other component uses) and auto-scaled to comp.scaledMax by the
+   existing generic scaling pipeline (see computeCIE / the /rawMax*scaledMax
+   formula) — no other code needs to know the entry happened unit-wise. */
+function siaEntryHtml(course, comp, editable){
+  const unitCount = Math.max(1, Math.round(comp.rawMax/10));
+  const rows = course.students.map(s=>{
+    const detail = (s.marks.siaDetail)||{};
+    const cells = Array.from({length:unitCount}, (_,i)=>{
+      const idx = i+1;
+      const val = detail['unit'+idx];
+      return `<td><input type="number" min="0" max="10" step="0.5" style="width:56px;"
+        value="${val===undefined||val===null?'':val}" placeholder="/10" ${editable?'':'disabled'}
+        onchange="App.setSiaUnitMark('${course.id}','${s.id}','${comp.key}',${idx},this.value)"></td>`;
+    }).join('');
+    const rawTotal = typeof s.marks[comp.key]==='number' ? s.marks[comp.key] : 0;
+    const scaled = round1((Math.min(rawTotal, comp.rawMax)/comp.rawMax) * comp.scaledMax);
+    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${rawTotal}/${comp.rawMax}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
+  }).join('');
+  const unitHead = Array.from({length:unitCount}, (_,i)=>`<th>Unit ${i+1}<br><span style="text-transform:none;">/10</span></th>`).join('');
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">${escapeHtml(comp.label)} — unit-wise entry</div>
+    <p class="section-meta" style="margin-top:4px;">Enter each unit's score out of 10 (${unitCount} unit${unitCount===1?'':'s'} = ${comp.rawMax} raw), automatically scaled down to /${comp.scaledMax} for the CIE total.</p>
+    <div class="table-scroll" style="margin-top:8px;"><table class="data-table"><thead><tr><th>Student</th>${unitHead}<th>Raw Total</th><th>Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
 }
 function switchMarksTab(tab){
   activeMarksTab = tab;
@@ -3593,7 +3608,7 @@ function openAssignModal(type, courseId){
 window.openAssignModal = openAssignModal;
 
 /* ================= ADMIN VIEWS ================= */
-const FIXED_ROLE_OPTIONS = ['ADMIN','HOD','EA','EXAM','FACULTY'];
+const FIXED_ROLE_OPTIONS = ['ADMIN','HOD','TTI','EA','EXAM','FACULTY'];
 function roleSelectHtml(userId, currentRole){
   return `<select onchange="if(confirm('Change role to '+this.value+'?')){App.setSystemRole('${userId}', this.value);}else{this.value='${currentRole}';}">
     ${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}" ${r===currentRole?'selected':''}>${ROLE_LABELS[r]}</option>`).join('')}
@@ -3808,7 +3823,7 @@ function renderAdminCourseRegistrations(){
     <div class="page-head">
       <div class="page-eyebrow">Administrator</div>
       <h2>Course Registrations</h2>
-      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. Use "Activate as Course Section" on any subject/section to turn it into a real, live section — it assigns the matching Course Instructor (they must already have a faculty account with a matching name) and loads its roster, so it appears under their "My Sections" right away.</p>
+      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. Use "Activate as Course Section" on any subject/section to turn it into a real, live section — it assigns the matching Course Instructor (they must already have a faculty account with a matching name) and loads its roster, so it appears under their "My Subjects" right away.</p>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Import from Excel</div>
@@ -3921,7 +3936,7 @@ function hodDashboardSummaryHtml(all){
   const counts = {
     pendingEvaluation: all.filter(c=>c.status==='draft').length,
     pendingModeration: all.filter(c=>c.status==='submitted').length,
-    pendingScrutiny: all.filter(c=>c.status==='coordinated').length,
+    pendingVerification: all.filter(c=>c.status==='coordinated').length,
     pendingApproval: all.filter(c=>c.status==='verified').length,
     frozen: all.filter(c=>c.status==='approved').length,
   };
@@ -3944,7 +3959,7 @@ function hodDashboardSummaryHtml(all){
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
         ${stat('Pending evaluation (CI)', counts.pendingEvaluation)}
         ${stat('Pending moderation (CC)', counts.pendingModeration)}
-        ${stat('Pending scrutiny', counts.pendingScrutiny)}
+        ${stat('Pending verification (EA)', counts.pendingVerification)}
         ${stat('Pending approval', counts.pendingApproval)}
         ${stat('Marks frozen', counts.frozen)}
       </div>
@@ -3980,7 +3995,7 @@ function renderHODList(){
       ${filterBtn('pending','Pending')}
       ${filterBtn('approved','Approved')}
     </div>
-    ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Go to "Manage Coordinators" to create one, then it will appear here once records start flowing through for approval.') : list.map(c=>`
+    ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Once the Timetable Incharge creates one from "Manage Coordinators" and it moves through the approval pipeline, it will appear here.') : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
@@ -4001,7 +4016,7 @@ function renderHODList(){
   return wrap;
 }
 /* Small status pill for an HOD-facing approval-group overview row — mirrors
-   the badge shown inside approvalGroupPanel (My Sections), just without the
+   the badge shown inside approvalGroupPanel (My Subjects), just without the
    marks table around it. */
 function approvalGroupStatusPill(status){
   return status==='approved' ? `<span class="status-pill status-approved">Approved by HOD — locked</span>`
@@ -4098,7 +4113,6 @@ function renderHODLabExternalOverview(){
 function renderHODReview(params){
   const course = App.getCourse(params.courseId);
   const actionable = course.status === 'verified';
-  const scrUser = getCourseScrutinizerUser(course.id);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -4110,20 +4124,9 @@ function renderHODReview(params){
       ${deadlineBadge(course)}
       ${completionStatsChipsHtml(course)}
     </div>
-    <div class="card">
-      <div class="section-title" style="font-size:14px;">Scrutinizer</div>
-      ${scrUser ? `<p style="margin:8px 0;color:var(--text-soft);">${escapeHtml(scrUser.name)} (${escapeHtml(scrUser.email)})</p>
-        ${course.status!=='approved' ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Remove the Scrutinizer from this section?')) App.revokeScrutinizer('${course.id}')">Remove Scrutinizer</button>` : ''}`
-       : (course.status!=='approved' ? `
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;">
-          <div class="config-field" style="max-width:260px;"><label>Email</label><input type="email" id="scr-email-${course.id}" placeholder="scrutinizer@suh.in"></div>
-          <div class="config-field" style="max-width:220px;"><label>Name (optional)</label><input type="text" id="scr-name-${course.id}"></div>
-          <button class="btn btn-sm" onclick="App.assignScrutinizer('${course.id}', document.getElementById('scr-email-${course.id}').value, document.getElementById('scr-name-${course.id}').value)">Assign Scrutinizer</button>
-        </div>` : `<p style="margin:8px 0 0;color:var(--text-soft);">No Scrutinizer was assigned to this section.</p>`)}
-    </div>
     ${scriptUploadsViewHtml(course)}
     ${deviationReportHtml(course)}
-    ${course.scrutinyRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">Scrutiny observations</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.scrutinyRemark)}</p></div>` : ''}
+    ${course.eaRemark ? `<div class="card"><div class="section-title" style="font-size:14px;">EA verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : ''}
     ${(!course.evalType && App.currentUser().systemRole==='ADMIN') ? `
       <div class="card" style="border-left:3px solid var(--brass);">
         <div class="section-title" style="font-size:14px;">Evaluation Type not fixed</div>
@@ -4247,13 +4250,13 @@ window.fillCoordinatorFromDirectory = fillCoordinatorFromDirectory;
 function renderHODCoordinators(){
   const courses = App.state.courses;
   const actor = App.currentUser();
-  const eyebrow = actor.systemRole==='ADMIN' ? 'Administrator' : 'Head of Department';
+  const eyebrow = actor.systemRole==='ADMIN' ? 'Administrator' : 'Timetable Incharge';
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">${eyebrow}</div>
       <h2>Manage Course Coordinators</h2>
-      <p>Assign a Course Coordinator to each section using their university email — only the HOD or an Administrator can do this. Once assigned, that Coordinator picks the real Subject and assigns their own Course Instructor; you don't need to touch that layer.</p>
+      <p>Assign a Course Coordinator to each section using their university email — only the Timetable Incharge or an Administrator can do this. Once assigned, that Coordinator picks the real Subject and assigns their own Course Instructor; you don't need to touch that layer.</p>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Create Section &amp; Assign Coordinator</div>
@@ -4268,6 +4271,13 @@ function renderHODCoordinators(){
           <input id="hod-newcourse-name" type="text" placeholder="e.g. Data Structures">
         </div>
         <div class="config-field">
+          <label>Semester <span style="text-transform:none;">(which semester this subject belongs to)</span></label>
+          <select id="hod-newcourse-semester">
+            <option value="">— Select —</option>
+            ${SEMESTER_NUMBERS.map(n=>`<option value="${n}">Semester ${n}</option>`).join('')}
+          </select>
+        </div>
+        <div class="config-field">
           <label>Existing faculty <span style="text-transform:none;">(pick from directory, all branches)</span></label>
           <select id="hod-newcourse-cc-pick" onchange="fillCoordinatorFromDirectory(this.value)">${facultyDropdownOptionsHtml()}</select>
         </div>
@@ -4280,7 +4290,7 @@ function renderHODCoordinators(){
           <input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe">
         </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-code').value, document.getElementById('hod-newcourse-name').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value)">Assign Coordinator</button>
+      <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-code').value, document.getElementById('hod-newcourse-name').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value, document.getElementById('hod-newcourse-semester').value)">Assign Coordinator</button>
     </div>
     ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
       const ccUser = getCourseCCUser(c.id);
@@ -4290,7 +4300,7 @@ function renderHODCoordinators(){
         <div class="card-row">
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
-            <div class="section-meta">${escapeHtml(c.code)} · ${etPillFixed(c)}</div>
+            <div class="section-meta">${escapeHtml(c.code)} · ${etPillFixed(c)}${c.semester ? ` · Semester ${escapeHtml(c.semester)}` : ` · <span style="color:var(--seal-red);">Semester not set</span>`}</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;" onclick="event.stopPropagation()">
             ${ccUser
@@ -4317,12 +4327,14 @@ function renderHODCCDetail(params){
   const base = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
   if(!base){ wrap.innerHTML = emptyStateHtml('Not found', 'Go back to Manage Coordinators.'); return wrap; }
+  const actor = App.currentUser();
+  const eyebrow = actor.systemRole==='ADMIN' ? 'Administrator' : actor.systemRole==='TTI' ? 'Timetable Incharge' : 'Head of Department';
   const ccUser = getCourseCCUser(base.id);
   const children = App.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(base.code) && c.branch);
   wrap.innerHTML = `
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('hod-coordinators')">← Back to Manage Coordinators</button>
-      <div class="page-eyebrow">Head of Department</div>
+      <div class="page-eyebrow">${eyebrow}</div>
       <h2>${escapeHtml(base.name)}</h2>
       <p>${escapeHtml(base.code)} · Coordinator: <strong>${ccUser ? escapeHtml(ccUser.name)+' ('+escapeHtml(ccUser.email)+')' : 'Unassigned'}</strong></p>
     </div>
@@ -4408,6 +4420,12 @@ function getAuditEntries(){
   entries.sort((a,b)=>b.ts-a.ts);
   return entries;
 }
+function getAuditEntriesForCourses(courses){
+  const entries = [];
+  courses.forEach(c=>{ (c.history||[]).forEach(h=> entries.push({...h, code:c.code, name:c.name})); });
+  entries.sort((a,b)=>b.ts-a.ts);
+  return entries;
+}
 function auditDateKey(ts){
   const d = new Date(ts);
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -4461,28 +4479,28 @@ function updateHODAuditList(dateKey){
 window.updateHODAuditList = updateHODAuditList;
 
 /* ================= EA VIEWS ================= */
-function renderScrutinizerList(){
-  const actor = App.currentUser();
-  const list = App.state.courses.filter(c=>c.branch && getCourseScrutinizerUser(c.id)?.id===actor.id);
+function renderEAList(){
+  const list = App.state.courses.filter(c=>c.branch);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
-      <div class="page-eyebrow">Scrutinizer</div>
-      <h2>Scrutiny Queue</h2>
-      <p>Submissions reach you after the Course Coordinator has verified them, for the sections the HOD has assigned you to scrutinize. Check each record for completeness and any discrepancy before it reaches the HOD.</p>
+      <div class="page-eyebrow">Executive Assistant</div>
+      <h2>Verification Queue</h2>
+      <p>Submissions reach you after the Course Coordinator has verified them. Check each record for completeness before it reaches the HOD.</p>
     </div>
-    ${list.length===0 ? emptyStateHtml('No sections assigned to you yet', 'The HOD assigns Scrutinizers per section — nothing has been assigned to you yet.') : list.map(c=>`
+    ${list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
+            ${lightweightCompletionChipsHtml(c)}
           </div>
           <div style="display:flex;align-items:center;gap:14px;">
             ${statusPill(c)}
             ${etPill(c)}
-            <button class="btn ${c.status==='coordinated'?'':'btn-outline'} btn-sm" onclick="App.navigate('scrutinizer-review',{courseId:'${c.id}'})">
-              ${c.status==='coordinated' ? 'Scrutinize' : 'View'}
+            <button class="btn ${c.status==='coordinated'?'':'btn-outline'} btn-sm" onclick="App.navigate('ea-review',{courseId:'${c.id}'})">
+              ${c.status==='coordinated' ? 'Verify' : 'View'}
             </button>
           </div>
         </div>
@@ -4490,30 +4508,30 @@ function renderScrutinizerList(){
   `;
   return wrap;
 }
-function renderScrutinizerReview(params){
+function renderEAReview(params){
   const course = App.getCourse(params.courseId);
   const actionable = course.status === 'coordinated';
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
-      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('scrutinizer-list')">← Back to queue</button>
-      <div class="page-eyebrow">Stage 3 · Scrutiny</div>
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ea-list')">← Back to queue</button>
+      <div class="page-eyebrow">Stage 3 · Verification</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>${courseMeta(course)} ${statusPill(course)} ${etPill(course)}</p>
       <p class="section-meta" style="margin-top:6px;">${assignmentSummary(course.id)}</p>
       ${deadlineBadge(course)}
       ${completionStatsChipsHtml(course)}
     </div>
+    ${scriptUploadsViewHtml(course)}
     ${deviationReportHtml(course)}
     <div class="card">
-      ${scriptUploadsViewHtml(course)}
       ${marksViewTable(course)}
       ${actionable ? `
-        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Scrutiny observations (record any discrepancy or recommendation here)</label>
-        <textarea id="scrutiny-remark-input" class="remark-box" placeholder="Note any discrepancy, deviation, or recommendation for the HOD's review...">${course.scrutinyRemark||''}</textarea>
+        <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional)</label>
+        <textarea id="ea-remark-input" class="remark-box" placeholder="Note anything relevant for the HOD's review...">${course.eaRemark||''}</textarea>
         <div style="display:flex;gap:10px;margin-top:14px;">
-          <button class="btn" onclick="App.scrutinizerForward('${course.id}')">Forward to HOD</button>
-        </div>` : (course.scrutinyRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Scrutiny observations</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.scrutinyRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`)}
+          <button class="btn" onclick="App.eaForward('${course.id}')">Forward to HOD</button>
+        </div>` : (course.eaRemark ? `<div class="card" style="margin-top:16px;"><div class="section-title" style="font-size:14px;">Verification remarks</div><p style="margin:8px 0 0;color:var(--text-soft);">${escapeHtml(course.eaRemark)}</p></div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`)}
     </div>
   `;
   return wrap;
@@ -4906,17 +4924,135 @@ function downloadStudentTemplate(){
 window.downloadStudentTemplate = downloadStudentTemplate;
 
 
+/* Evaluation-Type reference table — the "which components, how many raw
+   marks, how many weighted marks" table the Coordinator/HOD already sees
+   elsewhere as EVAL_TEMPLATES data, rendered here as the same visual table
+   (Abbr / Course Type / Eval Type / Components / Exam Marks / Marks-Weights)
+   so the Course Instructor can see exactly what a Term Test 1 mark of 42/50
+   turns into on their CIE total, before they start entering anything. */
+function evalTypeTableHtml(course){
+  const tpl = getCourseTemplate(course);
+  if(!course.evalType || !tpl){
+    return `<div class="card"><p style="color:var(--text-soft);margin:0;">Evaluation Type not fixed yet for this section — ask your Course Coordinator.</p></div>`;
+  }
+  const cie = tpl.cie||[], see = tpl.see||[];
+  const cieTotal = cie.reduce((a,c)=>a+c.scaledMax,0);
+  const seeTotal = see.reduce((a,c)=>a+c.scaledMax,0);
+  const grand = cieTotal + seeTotal;
+  const cs = 'border:1px solid #999;padding:6px 10px;';
+  const compCells = (c) => `<td style="${cs}text-align:left;">${escapeHtml(c.label)}</td><td style="${cs}text-align:center;">${c.rawMax||''}</td><td style="${cs}text-align:center;">${c.scaledMax}</td>`;
+  const totalRowSpan = cie.length + see.length + 2; // + CIE Total row + SEE Total row
+  let rows = '';
+  cie.forEach((c,i)=>{
+    rows += `<tr>`;
+    if(i===0){
+      rows += `<td rowspan="${totalRowSpan}" style="${cs}text-align:center;font-weight:600;">${escapeHtml(tpl.abbr)}</td>`;
+      rows += `<td rowspan="${totalRowSpan}" style="${cs}text-align:center;">${escapeHtml(tpl.courseType)}</td>`;
+      rows += `<td rowspan="${cie.length+1}" style="${cs}text-align:center;font-weight:600;">CIE</td>`;
+    }
+    rows += compCells(c);
+    rows += `</tr>`;
+  });
+  rows += `<tr style="background:#92D050;"><td colspan="2" style="${cs}text-align:center;font-weight:700;">CIE Total</td><td style="${cs}text-align:center;font-weight:700;">${cieTotal}</td></tr>`;
+  see.forEach((c,i)=>{
+    rows += `<tr>`;
+    if(i===0) rows += `<td rowspan="${see.length+1}" style="${cs}text-align:center;font-weight:600;">SEE</td>`;
+    rows += compCells(c);
+    rows += `</tr>`;
+  });
+  rows += `<tr style="background:#92D050;"><td colspan="2" style="${cs}text-align:center;font-weight:700;">SEE Total</td><td style="${cs}text-align:center;font-weight:700;">${seeTotal}</td></tr>`;
+  return `<div class="card" style="overflow-x:auto;">
+    <table style="border-collapse:collapse;width:100%;font-size:12.5px;">
+      <thead><tr style="background:#FFFF00;">
+        <th style="${cs}">Abbr</th><th style="${cs}">Course Type</th><th style="${cs}">Eval Type</th>
+        <th style="${cs}">Components</th><th style="${cs}">Exam Marks</th><th style="${cs}">Marks - Weights</th>
+      </tr></thead>
+      <tbody>
+        ${rows}
+        <tr style="background:#00B0F0;"><td colspan="4" style="${cs}text-align:center;font-weight:700;">Total Marks</td><td style="${cs}"></td><td style="${cs}text-align:center;font-weight:700;">${grand}</td></tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+
+let ciSubjectSemester = '';
+function setCISubjectSemester(v){ ciSubjectSemester = v; renderContent(); }
+window.setCISubjectSemester = setCISubjectSemester;
+
 function renderCISections(){
   const user = App.currentUser();
   const { ciCourses } = getFacultyCourses(user.id);
+  const tt = App.state.currentTermTest;
+  const academicYear = tt?.academicYear || '';
+  // Only offer semesters that at least one of the CI's own sections is
+  // actually mapped to (that mapping is set by the Timetable Incharge on
+  // the subject shell) — no point listing 1-8 if the CI only teaches one.
+  const availableSemesters = SEMESTER_NUMBERS.filter(n=>ciCourses.some(c=>String(c.semester||'')===n));
+  if(ciSubjectSemester && !availableSemesters.includes(ciSubjectSemester)) ciSubjectSemester = '';
+  const matching = ciSubjectSemester ? ciCourses.filter(c=>String(c.semester||'')===ciSubjectSemester) : [];
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Instructor</div>
-      <h2>My Sections</h2>
-      <p>Enter component marks for your assigned course-sections. Submitting hands the record to your Course Coordinator.</p>
+      <h2>My Subjects</h2>
+      <p>Pick the semester your subject belongs to, then enter marks against the Evaluation Type fixed for it.</p>
     </div>
-    ${ciCourses.length===0 ? emptyStateHtml('No sections assigned','No course-sections are currently assigned to you as instructor.') : ciCourses.map(c=>`
+    <div class="card">
+      <div class="config-grid">
+        <div class="config-field">
+          <label>Academic Year <span style="text-transform:none;">(fixed by Admin/HOD)</span></label>
+          <input type="text" value="${academicYear ? escapeHtml(academicYear) : 'Not set yet'}" disabled>
+        </div>
+        <div class="config-field">
+          <label>Semester <span style="text-transform:none;">(mapped by Timetable Incharge)</span></label>
+          <select onchange="setCISubjectSemester(this.value)">
+            <option value="">— Select Semester —</option>
+            ${SEMESTER_NUMBERS.map(n=>`<option value="${n}" ${ciSubjectSemester===n?'selected':''} ${availableSemesters.includes(n)?'':'disabled'}>Semester ${n}${availableSemesters.includes(n)?'':' (no subject of yours here)'}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>
+    ${!ciSubjectSemester ? emptyStateHtml('Choose a semester', availableSemesters.length ? 'Select the semester above to see your subject(s) for it.' : 'The Timetable Incharge hasn\'t mapped any of your subjects to a semester yet — check back once they have.') :
+      matching.length===0 ? emptyStateHtml('No subject here', 'None of your assigned sections are mapped to this semester.') :
+      matching.map(c=>`
+      <div class="card">
+        <div class="card-row" style="align-items:flex-start;">
+          <div style="flex:1;min-width:260px;">
+            <div class="section-title">${escapeHtml(c.name)}</div>
+            ${courseMetaBlock(c)}
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:8px;">
+              ${statusPill(c)}
+              ${etPill(c)}
+              ${c.status==='approved' && c.editRequestStatus==='pending' ? `<span class="status-pill status-submitted">Correction pending HOD</span>` : ''}
+              ${c.status==='approved' && c.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
+            </div>
+            ${evalTypeTableHtml(c)}
+          </div>
+          <div style="min-width:220px;display:flex;flex-direction:column;gap:8px;">
+            <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Enter marks</div>
+            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'TT1'})">Enter Term Test 1</button>
+            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'TT2'})">Enter Term Test 2</button>
+            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
+              ${c.status==='draft'||c.editUnlocked ? 'Enter CIE / SEE Marks' : 'View CIE / SEE Record'}
+            </button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+function renderCIPending(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const list = ciCourses.filter(c=>c.status!=='draft');
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Pending Approval</h2>
+      <p>Sections you've submitted, tracked through Coordinator verification, Executive Assistant verification, and HOD approval.</p>
+    </div>
+    ${list.length===0 ? emptyStateHtml('Nothing pending', 'Sections you submit will appear here while they move through the approval pipeline.') : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
@@ -4926,20 +5062,31 @@ function renderCISections(){
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             ${statusPill(c)}
             ${etPill(c)}
-            ${c.status==='approved' && c.editRequestStatus==='pending' ? `<span class="status-pill status-submitted">Correction pending HOD</span>` : ''}
-            ${c.status==='approved' && c.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
-            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
-              ${c.status==='draft'||c.editUnlocked ? 'Enter Marks' : 'View Record'}
-            </button>
+            <button class="btn btn-outline btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">View Record</button>
           </div>
         </div>
       </div>`).join('')}
   `;
   return wrap;
 }
+function renderCIAudit(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const entries = getAuditEntriesForCourses(ciCourses);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Audit Log</h2>
+      <p>Every mark entry, correction, and workflow transition on your own assigned sections.</p>
+    </div>
+    ${renderAuditEntriesHtml(entries)}
+  `;
+  return wrap;
+}
 /* Separate "Term Test" sidebar landing page — lists the Instructor's
    sections and the currently active TT cycle, linking into the structured
-   entry screen for each. Kept apart from "My Sections" / ci-entry (CIE/SEE)
+   entry screen for each. Kept apart from "My Subjects" / ci-entry (CIE/SEE)
    per the fixed Term Test paper pattern. */
 function renderCITermTestSections(params={}){
   const user = App.currentUser();
@@ -5181,7 +5328,7 @@ function renderCITermTestEntry(params){
   `;
   return wrap;
 }
-/* Sets which tab is active on the "My Sections" marks-entry screen (ci-entry)
+/* Sets which tab is active on the "My Subjects" marks-entry screen (ci-entry)
    before navigating there — lets the Lab Internals / Lab Externals sidebar
    shortcuts below drop the CI straight into the right tab instead of always
    landing on "Term Test & Lab Internal" by default. */
@@ -5193,9 +5340,9 @@ window.openMarksTab = openMarksTab;
 
 /* "Lab Internals" sidebar shortcut — lists every section with a Lab Internal
    component on its fixed Evaluation Type and links straight into the
-   "Term Test & Lab Internal" tab of My Sections (the two share one HOD
+   "Term Test & Lab Internal" tab of My Subjects (the two share one HOD
    approval group, so they can't be split into a separate submission — this
-   is just a faster way in than going through My Sections first). */
+   is just a faster way in than going through My Subjects first). */
 function renderCILabInternalSections(){
   const user = App.currentUser();
   const { ciCourses } = getFacultyCourses(user.id);
@@ -5277,7 +5424,7 @@ function renderCIEntry(params){
   const approvedNotEditing = course.status==='approved' && !correctionMode;
   wrap.innerHTML = `
     <div class="page-head">
-      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my sections</button>
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>
       <div class="page-eyebrow">${correctionMode ? 'Correction unlocked' : 'Stage 1 · Submission'}</div>
       <h2>Subject: ${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
@@ -5719,9 +5866,9 @@ function renderCCReview(params){
       ${marksViewTable(course)}
       ${actionable ? `
         <label class="mono" style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-soft);margin-top:18px;">Verification remarks (optional) — note any deviation across sections or scripts here</label>
-        <textarea id="cc-remark-input" class="remark-box" placeholder="Note anything relevant for the Scrutinizer's review..."></textarea>
+        <textarea id="cc-remark-input" class="remark-box" placeholder="Note anything relevant for the Executive Assistant's review..."></textarea>
         <div style="display:flex;gap:10px;margin-top:14px;">
-          <button class="btn" onclick="App.ccForward('${course.id}')">Verify &amp; Forward for Scrutiny</button>
+          <button class="btn" onclick="App.ccForward('${course.id}')">Verify &amp; Forward to Executive Assistant</button>
         </div>` : `<p style="margin-top:16px;color:var(--text-soft);font-size:13.5px;">This record is ${statusSentenceLabel(course.status)} and is not currently actionable.</p>`}
     </div>
   `;
