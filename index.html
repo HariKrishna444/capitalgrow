@@ -899,6 +899,231 @@ const SEMESTER_LABELS = ['Semester 1','Semester 2'];
 // "Semester 1 / Semester 2" academic-year half, a different concept).
 const SEMESTER_NUMBERS = ['1','2','3','4','5','6','7','8'];
 
+/* Master Subject Catalog — regulation + branch + semester mapping for every
+   course code across the curricula uploaded so far (A24/A25 x CSE/AIML).
+   Extend this array as more regulations/branches are provided; nothing else
+   needs to change since lookups are done purely by course code. */
+const SUBJECT_CATALOG = [
+  {reg:'A24',branch:'AIML',sem:'1',code:'24PHY101',name:'Engineering Physics'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24CHE201',name:'Environmental Chemistry & Engineering Biology'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24CSE102',name:'Problem Solving and Computer Programming through C++'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24MAT103',name:'Calculus'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24ENG104',name:'English for Skill Enhancement'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24EEE105',name:'Elements of Electrical and Electronics Engineering'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24ENGL106',name:'Oral Communication Skills Lab - I'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24PHYL107',name:'Engineering Physics Lab'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24CSEL109',name:'Fundamentals of Web Technologies'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24CSEL108',name:'Problem Solving and Computer Programming through C++ Lab'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24CSEL207',name:'IT Workshop'},
+  {reg:'A24',branch:'AIML',sem:'1',code:'24MC110',name:'Induction Program'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24MAT202',name:'Discrete Mathematics'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24CSE203',name:'Computer Organization and Architecture'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24CSEJ204',name:'Data Structures through C++'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24CSEL205',name:'Programming through Python'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24ENGL206',name:'Oral Communication Lab - II'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24HASL207',name:'Sustainability through Design Thinking'},
+  {reg:'A24',branch:'AIML',sem:'2',code:'24CSEI222',name:'Social Internship'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24MAT301',name:'Linear Algebra'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ302',name:'Database Management Systems'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ303',name:'Object Oriented Programming through Java'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ304',name:'Operating Systems'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ305',name:'Design and Analysis of Algorithms'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24SEC306',name:'Soft Skills 1 - Quantitative Aptitude and Personal Effectiveness'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24SEC307',name:'Competitive Programming Practicum'},
+  {reg:'A24',branch:'AIML',sem:'3',code:'24HASL308',name:'Marketing for Sustainability'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24MAT401',name:'Probability and Statistics'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24CSEJ402',name:'Automata and Compiler Design'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24AMLJ402',name:'Artificial Intelligence'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24AMLJ403',name:'Machine Learning'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24CSES405',name:'Full Stack Application Development'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24SEC406',name:'Soft Skills 2 - Reasoning, Verbal Ability and Emotional Intelligence'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24HASL407',name:'Innovation and Entrepreneurship - I'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24SEC507',name:'Code Challenge Accelerator Program'},
+  {reg:'A24',branch:'AIML',sem:'4',code:'24AMLI444',name:'Technical Writing'},
+  {reg:'A24',branch:'AIML',sem:'5',code:'24CSEJ601',name:'Software Engineering'},
+  {reg:'A24',branch:'AIML',sem:'5',code:'24AMLJ502',name:'Computer Vision through Open CV'},
+  {reg:'A24',branch:'AIML',sem:'5',code:'24AMLJ602',name:'Deep Learning'},
+  {reg:'A24',branch:'AIML',sem:'5',code:'24SEC506',name:'Soft Skills 3'},
+  {reg:'A24',branch:'AIML',sem:'5',code:'24CSES507',name:'Coding Excellence Program I'},
+  {reg:'A24',branch:'AIML',sem:'5',code:'24HASL508',name:'Innovation and Entrepreneurship - II'},
+  {reg:'A24',branch:'AIML',sem:'6',code:'24CSEJ501',name:'Computer Networks'},
+  {reg:'A24',branch:'AIML',sem:'6',code:'24AMLJ503',name:'Natural Language Processing'},
+  {reg:'A24',branch:'AIML',sem:'6',code:'24ENGL605',name:'Communication Skills - III'},
+  {reg:'A24',branch:'AIML',sem:'6',code:'24CSES606',name:'Coding Excellence Program II'},
+  {reg:'A24',branch:'AIML',sem:'6',code:'24MC607',name:'Indian Constitution'},
+  {reg:'A24',branch:'AIML',sem:'6',code:'24AMLI666',name:'Summer Internship'},
+  {reg:'A24',branch:'AIML',sem:'7',code:'24AMLJ701',name:'Generative AI'},
+  {reg:'A24',branch:'AIML',sem:'7',code:'24MC704',name:'Environmental Studies'},
+  {reg:'A24',branch:'AIML',sem:'7',code:'24MC705',name:'Universal Human Values - II'},
+  {reg:'A24',branch:'AIML',sem:'7',code:'24AMLI777',name:'Capstone Project - 1/Internship-1'},
+  {reg:'A24',branch:'AIML',sem:'8',code:'24AMLI888',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24PHY101',name:'Engineering Physics'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24CHE201',name:'Environmental Chemistry & Engineering Biology'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24CSE102',name:'Problem Solving and Computer Programming through C++'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24MAT103',name:'Calculus'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24ENG104',name:'English for Skill Enhancement'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24EEE105',name:'Elements of Electrical and Electronics Engineering'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24ENGL106',name:'Oral Communication Skills Lab - I'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24PHYL107',name:'Engineering Physics Lab'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24CSEL109',name:'Fundamentals of Web Technologies'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24CSEL108',name:'Problem Solving and Computer Programming through C++ Lab'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24CSEL207',name:'IT Workshop'},
+  {reg:'A24',branch:'CSE',sem:'1',code:'24MC110',name:'Induction Program'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24MAT202',name:'Discrete Mathematics'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24CSE203',name:'Computer Organization and Architecture'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24CSEJ204',name:'Data Structures through C++'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24CSEL205',name:'Programming through Python'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24ENGL206',name:'Oral Communication Lab - II'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24HASL207',name:'Sustainability through Design Thinking'},
+  {reg:'A24',branch:'CSE',sem:'2',code:'24CSEI222',name:'Social Internship'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24MAT301',name:'Linear Algebra'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ302',name:'Database Management Systems'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ303',name:'Object Oriented Programming through Java'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ304',name:'Operating Systems'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ305',name:'Design and Analysis of Algorithms'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24SEC306',name:'Soft Skills 1 - Quantitative Aptitude and Personal Effectiveness'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24SEC307',name:'Competitive Programming Practicum'},
+  {reg:'A24',branch:'CSE',sem:'3',code:'24HASL308',name:'Marketing for Sustainability'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24MAT401',name:'Probability and Statistics'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24CSEJ402',name:'Automata and Compiler Design'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24AMLJ404',name:'Artificial Intelligence & Machine Learning'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24ECE405',name:'Microprocessors & Microcontrollers'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24CSES405',name:'Full Stack Application Development'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24SEC406',name:'Soft Skills 2 - Reasoning, Verbal Ability and Emotional Intelligence'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24HASL407',name:'Innovation and Entrepreneurship - I'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24SEC507',name:'Code Challenge Accelerator Program'},
+  {reg:'A24',branch:'CSE',sem:'4',code:'24CSEI444',name:'Technical Writing'},
+  {reg:'A24',branch:'CSE',sem:'5',code:'24CSEJ601',name:'Software Engineering'},
+  {reg:'A24',branch:'CSE',sem:'5',code:'24SEC506',name:'Soft Skills 3'},
+  {reg:'A24',branch:'CSE',sem:'5',code:'24CSES507',name:'Coding Excellence Program I'},
+  {reg:'A24',branch:'CSE',sem:'5',code:'24HASL508',name:'Innovation and Entrepreneurship - II'},
+  {reg:'A24',branch:'CSE',sem:'6',code:'24CSEJ501',name:'Computer Networks'},
+  {reg:'A24',branch:'CSE',sem:'6',code:'24ENGL605',name:'Communication Skills - III'},
+  {reg:'A24',branch:'CSE',sem:'6',code:'24CSES606',name:'Coding Excellence Program II'},
+  {reg:'A24',branch:'CSE',sem:'6',code:'24MC607',name:'Indian Constitution'},
+  {reg:'A24',branch:'CSE',sem:'6',code:'24CSEI666',name:'Summer Internship'},
+  {reg:'A24',branch:'CSE',sem:'7',code:'24MC704',name:'Environmental Studies'},
+  {reg:'A24',branch:'CSE',sem:'7',code:'24MC705',name:'Universal Human Values - II'},
+  {reg:'A24',branch:'CSE',sem:'7',code:'24CSEI777',name:'Capstone Project - 1/Internship-1'},
+  {reg:'A24',branch:'CSE',sem:'8',code:'24CSEI888',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25PHY1001',name:'Engineering Physics'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25CHE1001',name:'Engineering Chemistry'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25ENG1001',name:'English for Engineers'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25MAT1001',name:'Linear Algebra and Calculus'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25CSE1101',name:'Problem Solving and Computer Programming through C'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25EEC1101',name:'Fundamentals of Electrical and Electronics Engineering'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25CSE1001',name:'IT Workshop'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25HAS1201',name:'Journey into Engineering'},
+  {reg:'A25',branch:'AIML',sem:'1',code:'25VAC1001',name:'Induction Program'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25MAT1002',name:'Discrete Mathematics'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1202',name:'Digital Logic Design'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1102',name:'Data Structures through C'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE2101',name:'Object Oriented Programming through Java'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25ENG1002',name:'Joy of Communication: The Digital Edge'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1002',name:'Thinking in Code - Logic, Design & Innovation'},
+  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1901',name:'Social Internship'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25MAT1003',name:'Probability and Statistics'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2201',name:'Operating Systems'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2404',name:'Artificial Intelligence'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE1203',name:'Computer Organization and Architecture'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2102',name:'Design and Analysis of Algorithms'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE1103',name:'Programming through Python'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2302',name:'Full Stack Development - Front End'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25SDC1103',name:'Foundations for Personal Effectiveness'},
+  {reg:'A25',branch:'AIML',sem:'3',code:'25HAS1202',name:'Marketing for Sustainability'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2103',name:'Database Management Systems'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE3401',name:'Machine Learning'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2301',name:'Software Engineering'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2303',name:'Full Stack Development - Back End'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25SDC1101',name:'Quantitative Aptitude and Verbal Ability - I'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE1104',name:'Competitive Programming Practicum - I'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25HAS2201',name:'Design Thinking for Engineers'},
+  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2901',name:'Technical Writing'},
+  {reg:'A25',branch:'AIML',sem:'5',code:'25CSE3405',name:'Computer Vision through Open CV'},
+  {reg:'A25',branch:'AIML',sem:'5',code:'25CSE3407',name:'Deep Learning'},
+  {reg:'A25',branch:'AIML',sem:'5',code:'25SDC1102',name:'Quantitative Aptitude and Verbal Ability - II'},
+  {reg:'A25',branch:'AIML',sem:'5',code:'25CSE1105',name:'Competitive Programming Practicum - II'},
+  {reg:'A25',branch:'AIML',sem:'5',code:'25HAS2202',name:'Innovation and Entrepreneurship-I'},
+  {reg:'A25',branch:'AIML',sem:'5',code:'25VAC1005',name:'Indian Knowledge Systems: Vedic Mathematics'},
+  {reg:'A25',branch:'AIML',sem:'6',code:'25CSE2202',name:'Automata and Compiler Design'},
+  {reg:'A25',branch:'AIML',sem:'6',code:'25CSE3406',name:'Natural Language Processing'},
+  {reg:'A25',branch:'AIML',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
+  {reg:'A25',branch:'AIML',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
+  {reg:'A25',branch:'AIML',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
+  {reg:'A25',branch:'AIML',sem:'6',code:'24CSE2902',name:'Summer Internship'},
+  {reg:'A25',branch:'AIML',sem:'7',code:'25CSE2601',name:'Computer Networks'},
+  {reg:'A25',branch:'AIML',sem:'7',code:'25CSE4401',name:'Generative AI'},
+  {reg:'A25',branch:'AIML',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
+  {reg:'A25',branch:'AIML',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
+  {reg:'A25',branch:'AIML',sem:'7',code:'25CSE3901',name:'Capstone Project - 1/Internship-1'},
+  {reg:'A25',branch:'AIML',sem:'8',code:'25AML4901',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25PHY1001',name:'Engineering Physics'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25CHE1001',name:'Engineering Chemistry'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25ENG1001',name:'English for Engineers'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25MAT1001',name:'Linear Algebra and Calculus'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25CSE1101',name:'Problem Solving and Computer Programming through C'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25EEC1101',name:'Fundamentals of Electrical and Electronics Engineering'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25CSE1001',name:'IT Workshop'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25HAS1201',name:'Journey into Engineering'},
+  {reg:'A25',branch:'CSE',sem:'1',code:'25VAC1001',name:'Induction Program'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25MAT1002',name:'Discrete Mathematics'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1202',name:'Digital Logic Design'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1102',name:'Data Structures through C'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE2101',name:'Object Oriented Programming through Java'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25ENG1002',name:'Joy of Communication: The Digital Edge'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1002',name:'Thinking in Code - Logic, Design & Innovation'},
+  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1901',name:'Social Internship'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25MAT1003',name:'Probability and Statistics'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE2201',name:'Operating Systems'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE1203',name:'Computer Organization and Architecture'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE2102',name:'Design and Analysis of Algorithms'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE1103',name:'Programming through Python'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE2302',name:'Full Stack Development - Front End'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25SDC1103',name:'Foundations for Personal Effectiveness'},
+  {reg:'A25',branch:'CSE',sem:'3',code:'25HAS1202',name:'Marketing for Sustainability'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2103',name:'Database Management Systems'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2401',name:'Artificial Intelligence & Machine Learning'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2301',name:'Software Engineering'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2303',name:'Full Stack Development - Back End'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25SDC1101',name:'Quantitative Aptitude and Verbal Ability - I'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE1104',name:'Competitive Programming Practicum - I'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25HAS2201',name:'Design Thinking for Engineers'},
+  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2901',name:'Technical Writing'},
+  {reg:'A25',branch:'CSE',sem:'5',code:'25SDC1102',name:'Quantitative Aptitude and Verbal Ability - II'},
+  {reg:'A25',branch:'CSE',sem:'5',code:'25CSE1105',name:'Competitive Programming Practicum - II'},
+  {reg:'A25',branch:'CSE',sem:'5',code:'25HAS2202',name:'Innovation and Entrepreneurship-I'},
+  {reg:'A25',branch:'CSE',sem:'5',code:'25VAC1005',name:'Indian Knowledge Systems: Vedic Mathematics'},
+  {reg:'A25',branch:'CSE',sem:'6',code:'25CSE2202',name:'Automata and Compiler Design'},
+  {reg:'A25',branch:'CSE',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
+  {reg:'A25',branch:'CSE',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
+  {reg:'A25',branch:'CSE',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
+  {reg:'A25',branch:'CSE',sem:'6',code:'24CSE2902',name:'Summer Internship'},
+  {reg:'A25',branch:'CSE',sem:'7',code:'25CSE2601',name:'Computer Networks'},
+  {reg:'A25',branch:'CSE',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
+  {reg:'A25',branch:'CSE',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
+  {reg:'A25',branch:'CSE',sem:'7',code:'25CSE3901',name:'Capstone Project - 1/Internship-1'},
+  {reg:'A25',branch:'CSE',sem:'8',code:'25CSE4901',name:'Capstone Project - 2/Internship-2/Research'},
+];
+
+function catalogEntriesForCode(code){
+  const norm = String(code||'').trim().toUpperCase();
+  if(!norm) return [];
+  return SUBJECT_CATALOG.filter(r=>r.code===norm);
+}
+/* Returns { semester } if every catalog entry for this code agrees on the
+   same semester (the common case — a shared/common-core code, or a code
+   that only appears once), or { options: [...] } if the same code somehow
+   maps to more than one semester across different regulation/branch rows,
+   so the caller can ask the Timetable Incharge to pick instead of guessing. */
+function resolveSemesterForCode(code){
+  const entries = catalogEntriesForCode(code);
+  if(!entries.length) return null;
+  const semesters = [...new Set(entries.map(e=>e.sem))];
+  if(semesters.length===1) return { semester: semesters[0], entries };
+  return { options: entries };
+}
+
+
 /* Per-pair Unit + marks-split, set by the Course Instructor before entering
    marks (units are chosen by the CI when setting the question paper, not
    fixed by the app) — one Unit + one split (two equal halves, or a single
@@ -4247,6 +4472,38 @@ function fillCoordinatorFromDirectory(userId){
 }
 window.fillCoordinatorFromDirectory = fillCoordinatorFromDirectory;
 
+/* Looks the typed Course Code up in SUBJECT_CATALOG and, when it resolves
+   to exactly one semester, auto-selects it in the Semester dropdown (still
+   freely overridable) and fills the Course Name if that field is still
+   empty. When the same code maps to more than one semester (shouldn't
+   normally happen — see resolveSemesterForCode) it lists the options
+   instead of guessing. Unrecognized codes just get a quiet note; the
+   Timetable Incharge can still fill Semester manually as before. */
+function onNewCourseCodeChange(rawCode){
+  const noteEl = document.getElementById('hod-newcourse-code-note');
+  const semEl = document.getElementById('hod-newcourse-semester');
+  const nameEl = document.getElementById('hod-newcourse-name');
+  if(!noteEl || !semEl) return;
+  const code = (rawCode||'').trim();
+  if(!code){ noteEl.textContent = ''; return; }
+  const result = resolveSemesterForCode(code);
+  if(!result){
+    noteEl.innerHTML = `Not in the Subject Catalog yet — set Semester manually.`;
+    return;
+  }
+  if(result.semester){
+    semEl.value = result.semester;
+    const entry = result.entries[0];
+    if(nameEl && !nameEl.value.trim()) nameEl.value = entry.name;
+    const regsBranches = [...new Set(result.entries.map(e=>`${e.reg} ${e.branch}`))].join(', ');
+    noteEl.innerHTML = `Matched in Subject Catalog (${escapeHtml(regsBranches)}) — Semester ${result.semester} filled in automatically.`;
+  } else if(result.options){
+    noteEl.innerHTML = `This code maps to different semesters depending on regulation/branch — pick the right one: `
+      + result.options.map(o=>`<button type="button" class="btn btn-outline btn-sm" style="margin:2px 4px 0 0;" onclick="document.getElementById('hod-newcourse-semester').value='${o.sem}';${nameEl?`document.getElementById('hod-newcourse-name').value='${o.name.replace(/'/g,"\\'")}';`:''}">${escapeHtml(o.reg)} ${escapeHtml(o.branch)} — Sem ${o.sem}</button>`).join('');
+  }
+}
+window.onNewCourseCodeChange = onNewCourseCodeChange;
+
 function renderHODCoordinators(){
   const courses = App.state.courses;
   const actor = App.currentUser();
@@ -4264,14 +4521,15 @@ function renderHODCoordinators(){
       <div class="config-grid">
         <div class="config-field">
           <label>Course Code <span style="text-transform:none;">(working label only)</span></label>
-          <input id="hod-newcourse-code" type="text" placeholder="e.g. CS301">
+          <input id="hod-newcourse-code" type="text" placeholder="e.g. 24CSEJ302" onchange="onNewCourseCodeChange(this.value)" onblur="onNewCourseCodeChange(this.value)">
+          <div id="hod-newcourse-code-note" class="section-meta" style="margin-top:4px;"></div>
         </div>
         <div class="config-field">
           <label>Course Name <span style="text-transform:none;">(working label only)</span></label>
           <input id="hod-newcourse-name" type="text" placeholder="e.g. Data Structures">
         </div>
         <div class="config-field">
-          <label>Semester <span style="text-transform:none;">(which semester this subject belongs to)</span></label>
+          <label>Semester <span style="text-transform:none;">(auto-filled from the Subject Catalog by code, when recognized)</span></label>
           <select id="hod-newcourse-semester">
             <option value="">— Select —</option>
             ${SEMESTER_NUMBERS.map(n=>`<option value="${n}">Semester ${n}</option>`).join('')}
