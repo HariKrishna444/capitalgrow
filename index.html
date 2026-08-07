@@ -898,211 +898,216 @@ const SEMESTER_LABELS = ['Semester 1','Semester 2'];
 // from SEMESTER_LABELS above (which is about the Term Test cycle's
 // "Semester 1 / Semester 2" academic-year half, a different concept).
 const SEMESTER_NUMBERS = ['1','2','3','4','5','6','7','8'];
+// Regulation years available for the CC's "narrow down to a subject" picker
+// (Academic Year → Regulation → Semester → Subject). Extend as new
+// regulations are introduced; SUBJECT_CATALOG rows for R26+ can be added
+// later without touching this list's shape.
+const REGULATION_OPTIONS = ['R24','R25','R26'];
 
 /* Master Subject Catalog — regulation + branch + semester mapping for every
    course code across the curricula uploaded so far (A24/A25 x CSE/AIML).
    Extend this array as more regulations/branches are provided; nothing else
    needs to change since lookups are done purely by course code. */
 const SUBJECT_CATALOG = [
-  {reg:'A24',branch:'AIML',sem:'1',code:'24PHY101',name:'Engineering Physics'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24CHE201',name:'Environmental Chemistry & Engineering Biology'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24CSE102',name:'Problem Solving and Computer Programming through C++'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24MAT103',name:'Calculus'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24ENG104',name:'English for Skill Enhancement'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24EEE105',name:'Elements of Electrical and Electronics Engineering'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24ENGL106',name:'Oral Communication Skills Lab - I'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24PHYL107',name:'Engineering Physics Lab'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24CSEL109',name:'Fundamentals of Web Technologies'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24CSEL108',name:'Problem Solving and Computer Programming through C++ Lab'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24CSEL207',name:'IT Workshop'},
-  {reg:'A24',branch:'AIML',sem:'1',code:'24MC110',name:'Induction Program'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24MAT202',name:'Discrete Mathematics'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24CSE203',name:'Computer Organization and Architecture'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24CSEJ204',name:'Data Structures through C++'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24CSEL205',name:'Programming through Python'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24ENGL206',name:'Oral Communication Lab - II'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24HASL207',name:'Sustainability through Design Thinking'},
-  {reg:'A24',branch:'AIML',sem:'2',code:'24CSEI222',name:'Social Internship'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24MAT301',name:'Linear Algebra'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ302',name:'Database Management Systems'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ303',name:'Object Oriented Programming through Java'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ304',name:'Operating Systems'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24CSEJ305',name:'Design and Analysis of Algorithms'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24SEC306',name:'Soft Skills 1 - Quantitative Aptitude and Personal Effectiveness'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24SEC307',name:'Competitive Programming Practicum'},
-  {reg:'A24',branch:'AIML',sem:'3',code:'24HASL308',name:'Marketing for Sustainability'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24MAT401',name:'Probability and Statistics'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24CSEJ402',name:'Automata and Compiler Design'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24AMLJ402',name:'Artificial Intelligence'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24AMLJ403',name:'Machine Learning'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24CSES405',name:'Full Stack Application Development'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24SEC406',name:'Soft Skills 2 - Reasoning, Verbal Ability and Emotional Intelligence'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24HASL407',name:'Innovation and Entrepreneurship - I'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24SEC507',name:'Code Challenge Accelerator Program'},
-  {reg:'A24',branch:'AIML',sem:'4',code:'24AMLI444',name:'Technical Writing'},
-  {reg:'A24',branch:'AIML',sem:'5',code:'24CSEJ601',name:'Software Engineering'},
-  {reg:'A24',branch:'AIML',sem:'5',code:'24AMLJ502',name:'Computer Vision through Open CV'},
-  {reg:'A24',branch:'AIML',sem:'5',code:'24AMLJ602',name:'Deep Learning'},
-  {reg:'A24',branch:'AIML',sem:'5',code:'24SEC506',name:'Soft Skills 3'},
-  {reg:'A24',branch:'AIML',sem:'5',code:'24CSES507',name:'Coding Excellence Program I'},
-  {reg:'A24',branch:'AIML',sem:'5',code:'24HASL508',name:'Innovation and Entrepreneurship - II'},
-  {reg:'A24',branch:'AIML',sem:'6',code:'24CSEJ501',name:'Computer Networks'},
-  {reg:'A24',branch:'AIML',sem:'6',code:'24AMLJ503',name:'Natural Language Processing'},
-  {reg:'A24',branch:'AIML',sem:'6',code:'24ENGL605',name:'Communication Skills - III'},
-  {reg:'A24',branch:'AIML',sem:'6',code:'24CSES606',name:'Coding Excellence Program II'},
-  {reg:'A24',branch:'AIML',sem:'6',code:'24MC607',name:'Indian Constitution'},
-  {reg:'A24',branch:'AIML',sem:'6',code:'24AMLI666',name:'Summer Internship'},
-  {reg:'A24',branch:'AIML',sem:'7',code:'24AMLJ701',name:'Generative AI'},
-  {reg:'A24',branch:'AIML',sem:'7',code:'24MC704',name:'Environmental Studies'},
-  {reg:'A24',branch:'AIML',sem:'7',code:'24MC705',name:'Universal Human Values - II'},
-  {reg:'A24',branch:'AIML',sem:'7',code:'24AMLI777',name:'Capstone Project - 1/Internship-1'},
-  {reg:'A24',branch:'AIML',sem:'8',code:'24AMLI888',name:'Capstone Project - 2/Internship-2/Research'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24PHY101',name:'Engineering Physics'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24CHE201',name:'Environmental Chemistry & Engineering Biology'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24CSE102',name:'Problem Solving and Computer Programming through C++'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24MAT103',name:'Calculus'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24ENG104',name:'English for Skill Enhancement'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24EEE105',name:'Elements of Electrical and Electronics Engineering'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24ENGL106',name:'Oral Communication Skills Lab - I'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24PHYL107',name:'Engineering Physics Lab'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24CSEL109',name:'Fundamentals of Web Technologies'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24CSEL108',name:'Problem Solving and Computer Programming through C++ Lab'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24CSEL207',name:'IT Workshop'},
-  {reg:'A24',branch:'CSE',sem:'1',code:'24MC110',name:'Induction Program'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24MAT202',name:'Discrete Mathematics'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24CSE203',name:'Computer Organization and Architecture'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24CSEJ204',name:'Data Structures through C++'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24CSEL205',name:'Programming through Python'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24ENGL206',name:'Oral Communication Lab - II'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24HASL207',name:'Sustainability through Design Thinking'},
-  {reg:'A24',branch:'CSE',sem:'2',code:'24CSEI222',name:'Social Internship'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24MAT301',name:'Linear Algebra'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ302',name:'Database Management Systems'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ303',name:'Object Oriented Programming through Java'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ304',name:'Operating Systems'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24CSEJ305',name:'Design and Analysis of Algorithms'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24SEC306',name:'Soft Skills 1 - Quantitative Aptitude and Personal Effectiveness'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24SEC307',name:'Competitive Programming Practicum'},
-  {reg:'A24',branch:'CSE',sem:'3',code:'24HASL308',name:'Marketing for Sustainability'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24MAT401',name:'Probability and Statistics'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24CSEJ402',name:'Automata and Compiler Design'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24AMLJ404',name:'Artificial Intelligence & Machine Learning'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24ECE405',name:'Microprocessors & Microcontrollers'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24CSES405',name:'Full Stack Application Development'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24SEC406',name:'Soft Skills 2 - Reasoning, Verbal Ability and Emotional Intelligence'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24HASL407',name:'Innovation and Entrepreneurship - I'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24SEC507',name:'Code Challenge Accelerator Program'},
-  {reg:'A24',branch:'CSE',sem:'4',code:'24CSEI444',name:'Technical Writing'},
-  {reg:'A24',branch:'CSE',sem:'5',code:'24CSEJ601',name:'Software Engineering'},
-  {reg:'A24',branch:'CSE',sem:'5',code:'24SEC506',name:'Soft Skills 3'},
-  {reg:'A24',branch:'CSE',sem:'5',code:'24CSES507',name:'Coding Excellence Program I'},
-  {reg:'A24',branch:'CSE',sem:'5',code:'24HASL508',name:'Innovation and Entrepreneurship - II'},
-  {reg:'A24',branch:'CSE',sem:'6',code:'24CSEJ501',name:'Computer Networks'},
-  {reg:'A24',branch:'CSE',sem:'6',code:'24ENGL605',name:'Communication Skills - III'},
-  {reg:'A24',branch:'CSE',sem:'6',code:'24CSES606',name:'Coding Excellence Program II'},
-  {reg:'A24',branch:'CSE',sem:'6',code:'24MC607',name:'Indian Constitution'},
-  {reg:'A24',branch:'CSE',sem:'6',code:'24CSEI666',name:'Summer Internship'},
-  {reg:'A24',branch:'CSE',sem:'7',code:'24MC704',name:'Environmental Studies'},
-  {reg:'A24',branch:'CSE',sem:'7',code:'24MC705',name:'Universal Human Values - II'},
-  {reg:'A24',branch:'CSE',sem:'7',code:'24CSEI777',name:'Capstone Project - 1/Internship-1'},
-  {reg:'A24',branch:'CSE',sem:'8',code:'24CSEI888',name:'Capstone Project - 2/Internship-2/Research'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25PHY1001',name:'Engineering Physics'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25CHE1001',name:'Engineering Chemistry'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25ENG1001',name:'English for Engineers'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25MAT1001',name:'Linear Algebra and Calculus'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25CSE1101',name:'Problem Solving and Computer Programming through C'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25EEC1101',name:'Fundamentals of Electrical and Electronics Engineering'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25CSE1001',name:'IT Workshop'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25HAS1201',name:'Journey into Engineering'},
-  {reg:'A25',branch:'AIML',sem:'1',code:'25VAC1001',name:'Induction Program'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25MAT1002',name:'Discrete Mathematics'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1202',name:'Digital Logic Design'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1102',name:'Data Structures through C'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE2101',name:'Object Oriented Programming through Java'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25ENG1002',name:'Joy of Communication: The Digital Edge'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1002',name:'Thinking in Code - Logic, Design & Innovation'},
-  {reg:'A25',branch:'AIML',sem:'2',code:'25CSE1901',name:'Social Internship'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25MAT1003',name:'Probability and Statistics'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2201',name:'Operating Systems'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2404',name:'Artificial Intelligence'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE1203',name:'Computer Organization and Architecture'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2102',name:'Design and Analysis of Algorithms'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE1103',name:'Programming through Python'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25CSE2302',name:'Full Stack Development - Front End'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25SDC1103',name:'Foundations for Personal Effectiveness'},
-  {reg:'A25',branch:'AIML',sem:'3',code:'25HAS1202',name:'Marketing for Sustainability'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2103',name:'Database Management Systems'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE3401',name:'Machine Learning'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2301',name:'Software Engineering'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2303',name:'Full Stack Development - Back End'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25SDC1101',name:'Quantitative Aptitude and Verbal Ability - I'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE1104',name:'Competitive Programming Practicum - I'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25HAS2201',name:'Design Thinking for Engineers'},
-  {reg:'A25',branch:'AIML',sem:'4',code:'25CSE2901',name:'Technical Writing'},
-  {reg:'A25',branch:'AIML',sem:'5',code:'25CSE3405',name:'Computer Vision through Open CV'},
-  {reg:'A25',branch:'AIML',sem:'5',code:'25CSE3407',name:'Deep Learning'},
-  {reg:'A25',branch:'AIML',sem:'5',code:'25SDC1102',name:'Quantitative Aptitude and Verbal Ability - II'},
-  {reg:'A25',branch:'AIML',sem:'5',code:'25CSE1105',name:'Competitive Programming Practicum - II'},
-  {reg:'A25',branch:'AIML',sem:'5',code:'25HAS2202',name:'Innovation and Entrepreneurship-I'},
-  {reg:'A25',branch:'AIML',sem:'5',code:'25VAC1005',name:'Indian Knowledge Systems: Vedic Mathematics'},
-  {reg:'A25',branch:'AIML',sem:'6',code:'25CSE2202',name:'Automata and Compiler Design'},
-  {reg:'A25',branch:'AIML',sem:'6',code:'25CSE3406',name:'Natural Language Processing'},
-  {reg:'A25',branch:'AIML',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
-  {reg:'A25',branch:'AIML',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
-  {reg:'A25',branch:'AIML',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
-  {reg:'A25',branch:'AIML',sem:'6',code:'24CSE2902',name:'Summer Internship'},
-  {reg:'A25',branch:'AIML',sem:'7',code:'25CSE2601',name:'Computer Networks'},
-  {reg:'A25',branch:'AIML',sem:'7',code:'25CSE4401',name:'Generative AI'},
-  {reg:'A25',branch:'AIML',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
-  {reg:'A25',branch:'AIML',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
-  {reg:'A25',branch:'AIML',sem:'7',code:'25CSE3901',name:'Capstone Project - 1/Internship-1'},
-  {reg:'A25',branch:'AIML',sem:'8',code:'25AML4901',name:'Capstone Project - 2/Internship-2/Research'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25PHY1001',name:'Engineering Physics'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25CHE1001',name:'Engineering Chemistry'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25ENG1001',name:'English for Engineers'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25MAT1001',name:'Linear Algebra and Calculus'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25CSE1101',name:'Problem Solving and Computer Programming through C'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25EEC1101',name:'Fundamentals of Electrical and Electronics Engineering'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25CSE1001',name:'IT Workshop'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25HAS1201',name:'Journey into Engineering'},
-  {reg:'A25',branch:'CSE',sem:'1',code:'25VAC1001',name:'Induction Program'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25MAT1002',name:'Discrete Mathematics'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1202',name:'Digital Logic Design'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1102',name:'Data Structures through C'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE2101',name:'Object Oriented Programming through Java'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25ENG1002',name:'Joy of Communication: The Digital Edge'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1002',name:'Thinking in Code - Logic, Design & Innovation'},
-  {reg:'A25',branch:'CSE',sem:'2',code:'25CSE1901',name:'Social Internship'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25MAT1003',name:'Probability and Statistics'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE2201',name:'Operating Systems'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE1203',name:'Computer Organization and Architecture'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE2102',name:'Design and Analysis of Algorithms'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE1103',name:'Programming through Python'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25CSE2302',name:'Full Stack Development - Front End'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25SDC1103',name:'Foundations for Personal Effectiveness'},
-  {reg:'A25',branch:'CSE',sem:'3',code:'25HAS1202',name:'Marketing for Sustainability'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2103',name:'Database Management Systems'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2401',name:'Artificial Intelligence & Machine Learning'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2301',name:'Software Engineering'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2303',name:'Full Stack Development - Back End'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25SDC1101',name:'Quantitative Aptitude and Verbal Ability - I'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE1104',name:'Competitive Programming Practicum - I'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25HAS2201',name:'Design Thinking for Engineers'},
-  {reg:'A25',branch:'CSE',sem:'4',code:'25CSE2901',name:'Technical Writing'},
-  {reg:'A25',branch:'CSE',sem:'5',code:'25SDC1102',name:'Quantitative Aptitude and Verbal Ability - II'},
-  {reg:'A25',branch:'CSE',sem:'5',code:'25CSE1105',name:'Competitive Programming Practicum - II'},
-  {reg:'A25',branch:'CSE',sem:'5',code:'25HAS2202',name:'Innovation and Entrepreneurship-I'},
-  {reg:'A25',branch:'CSE',sem:'5',code:'25VAC1005',name:'Indian Knowledge Systems: Vedic Mathematics'},
-  {reg:'A25',branch:'CSE',sem:'6',code:'25CSE2202',name:'Automata and Compiler Design'},
-  {reg:'A25',branch:'CSE',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
-  {reg:'A25',branch:'CSE',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
-  {reg:'A25',branch:'CSE',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
-  {reg:'A25',branch:'CSE',sem:'6',code:'24CSE2902',name:'Summer Internship'},
-  {reg:'A25',branch:'CSE',sem:'7',code:'25CSE2601',name:'Computer Networks'},
-  {reg:'A25',branch:'CSE',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
-  {reg:'A25',branch:'CSE',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
-  {reg:'A25',branch:'CSE',sem:'7',code:'25CSE3901',name:'Capstone Project - 1/Internship-1'},
-  {reg:'A25',branch:'CSE',sem:'8',code:'25CSE4901',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24PHY101',name:'Engineering Physics'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24CHE201',name:'Environmental Chemistry & Engineering Biology'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24CSE102',name:'Problem Solving and Computer Programming through C++'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24MAT103',name:'Calculus'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24ENG104',name:'English for Skill Enhancement'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24EEE105',name:'Elements of Electrical and Electronics Engineering'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24ENGL106',name:'Oral Communication Skills Lab - I'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24PHYL107',name:'Engineering Physics Lab'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24CSEL109',name:'Fundamentals of Web Technologies'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24CSEL108',name:'Problem Solving and Computer Programming through C++ Lab'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24CSEL207',name:'IT Workshop'},
+  {reg:'R24',branch:'AIML',sem:'1',code:'24MC110',name:'Induction Program'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24MAT202',name:'Discrete Mathematics'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24CSE203',name:'Computer Organization and Architecture'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24CSEJ204',name:'Data Structures through C++'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24CSEL205',name:'Programming through Python'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24ENGL206',name:'Oral Communication Lab - II'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24HASL207',name:'Sustainability through Design Thinking'},
+  {reg:'R24',branch:'AIML',sem:'2',code:'24CSEI222',name:'Social Internship'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24MAT301',name:'Linear Algebra'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24CSEJ302',name:'Database Management Systems'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24CSEJ303',name:'Object Oriented Programming through Java'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24CSEJ304',name:'Operating Systems'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24CSEJ305',name:'Design and Analysis of Algorithms'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24SEC306',name:'Soft Skills 1 - Quantitative Aptitude and Personal Effectiveness'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24SEC307',name:'Competitive Programming Practicum'},
+  {reg:'R24',branch:'AIML',sem:'3',code:'24HASL308',name:'Marketing for Sustainability'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24MAT401',name:'Probability and Statistics'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24CSEJ402',name:'Automata and Compiler Design'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24AMLJ402',name:'Artificial Intelligence'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24AMLJ403',name:'Machine Learning'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24CSES405',name:'Full Stack Application Development'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24SEC406',name:'Soft Skills 2 - Reasoning, Verbal Ability and Emotional Intelligence'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24HASL407',name:'Innovation and Entrepreneurship - I'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24SEC507',name:'Code Challenge Accelerator Program'},
+  {reg:'R24',branch:'AIML',sem:'4',code:'24AMLI444',name:'Technical Writing'},
+  {reg:'R24',branch:'AIML',sem:'5',code:'24CSEJ601',name:'Software Engineering'},
+  {reg:'R24',branch:'AIML',sem:'5',code:'24AMLJ502',name:'Computer Vision through Open CV'},
+  {reg:'R24',branch:'AIML',sem:'5',code:'24AMLJ602',name:'Deep Learning'},
+  {reg:'R24',branch:'AIML',sem:'5',code:'24SEC506',name:'Soft Skills 3'},
+  {reg:'R24',branch:'AIML',sem:'5',code:'24CSES507',name:'Coding Excellence Program I'},
+  {reg:'R24',branch:'AIML',sem:'5',code:'24HASL508',name:'Innovation and Entrepreneurship - II'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24CSEJ501',name:'Computer Networks'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24AMLJ503',name:'Natural Language Processing'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24ENGL605',name:'Communication Skills - III'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24CSES606',name:'Coding Excellence Program II'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24MC607',name:'Indian Constitution'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24AMLI666',name:'Summer Internship'},
+  {reg:'R24',branch:'AIML',sem:'7',code:'24AMLJ701',name:'Generative AI'},
+  {reg:'R24',branch:'AIML',sem:'7',code:'24MC704',name:'Environmental Studies'},
+  {reg:'R24',branch:'AIML',sem:'7',code:'24MC705',name:'Universal Human Values - II'},
+  {reg:'R24',branch:'AIML',sem:'7',code:'24AMLI777',name:'Capstone Project - 1/Internship-1'},
+  {reg:'R24',branch:'AIML',sem:'8',code:'24AMLI888',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24PHY101',name:'Engineering Physics'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24CHE201',name:'Environmental Chemistry & Engineering Biology'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24CSE102',name:'Problem Solving and Computer Programming through C++'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24MAT103',name:'Calculus'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24ENG104',name:'English for Skill Enhancement'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24EEE105',name:'Elements of Electrical and Electronics Engineering'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24ENGL106',name:'Oral Communication Skills Lab - I'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24PHYL107',name:'Engineering Physics Lab'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24CSEL109',name:'Fundamentals of Web Technologies'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24CSEL108',name:'Problem Solving and Computer Programming through C++ Lab'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24CSEL207',name:'IT Workshop'},
+  {reg:'R24',branch:'CSE',sem:'1',code:'24MC110',name:'Induction Program'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24MAT202',name:'Discrete Mathematics'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24CSE203',name:'Computer Organization and Architecture'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24CSEJ204',name:'Data Structures through C++'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24CSEL205',name:'Programming through Python'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24ENGL206',name:'Oral Communication Lab - II'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24HASL207',name:'Sustainability through Design Thinking'},
+  {reg:'R24',branch:'CSE',sem:'2',code:'24CSEI222',name:'Social Internship'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24MAT301',name:'Linear Algebra'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24CSEJ302',name:'Database Management Systems'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24CSEJ303',name:'Object Oriented Programming through Java'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24CSEJ304',name:'Operating Systems'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24CSEJ305',name:'Design and Analysis of Algorithms'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24SEC306',name:'Soft Skills 1 - Quantitative Aptitude and Personal Effectiveness'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24SEC307',name:'Competitive Programming Practicum'},
+  {reg:'R24',branch:'CSE',sem:'3',code:'24HASL308',name:'Marketing for Sustainability'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24MAT401',name:'Probability and Statistics'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24CSEJ402',name:'Automata and Compiler Design'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24AMLJ404',name:'Artificial Intelligence & Machine Learning'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24ECE405',name:'Microprocessors & Microcontrollers'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24CSES405',name:'Full Stack Application Development'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24SEC406',name:'Soft Skills 2 - Reasoning, Verbal Ability and Emotional Intelligence'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24HASL407',name:'Innovation and Entrepreneurship - I'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24SEC507',name:'Code Challenge Accelerator Program'},
+  {reg:'R24',branch:'CSE',sem:'4',code:'24CSEI444',name:'Technical Writing'},
+  {reg:'R24',branch:'CSE',sem:'5',code:'24CSEJ601',name:'Software Engineering'},
+  {reg:'R24',branch:'CSE',sem:'5',code:'24SEC506',name:'Soft Skills 3'},
+  {reg:'R24',branch:'CSE',sem:'5',code:'24CSES507',name:'Coding Excellence Program I'},
+  {reg:'R24',branch:'CSE',sem:'5',code:'24HASL508',name:'Innovation and Entrepreneurship - II'},
+  {reg:'R24',branch:'CSE',sem:'6',code:'24CSEJ501',name:'Computer Networks'},
+  {reg:'R24',branch:'CSE',sem:'6',code:'24ENGL605',name:'Communication Skills - III'},
+  {reg:'R24',branch:'CSE',sem:'6',code:'24CSES606',name:'Coding Excellence Program II'},
+  {reg:'R24',branch:'CSE',sem:'6',code:'24MC607',name:'Indian Constitution'},
+  {reg:'R24',branch:'CSE',sem:'6',code:'24CSEI666',name:'Summer Internship'},
+  {reg:'R24',branch:'CSE',sem:'7',code:'24MC704',name:'Environmental Studies'},
+  {reg:'R24',branch:'CSE',sem:'7',code:'24MC705',name:'Universal Human Values - II'},
+  {reg:'R24',branch:'CSE',sem:'7',code:'24CSEI777',name:'Capstone Project - 1/Internship-1'},
+  {reg:'R24',branch:'CSE',sem:'8',code:'24CSEI888',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25PHY1001',name:'Engineering Physics'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25CHE1001',name:'Engineering Chemistry'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25ENG1001',name:'English for Engineers'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25MAT1001',name:'Linear Algebra and Calculus'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25CSE1101',name:'Problem Solving and Computer Programming through C'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25EEC1101',name:'Fundamentals of Electrical and Electronics Engineering'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25CSE1001',name:'IT Workshop'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25HAS1201',name:'Journey into Engineering'},
+  {reg:'R25',branch:'AIML',sem:'1',code:'25VAC1001',name:'Induction Program'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25MAT1002',name:'Discrete Mathematics'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25CSE1202',name:'Digital Logic Design'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25CSE1102',name:'Data Structures through C'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25CSE2101',name:'Object Oriented Programming through Java'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25ENG1002',name:'Joy of Communication: The Digital Edge'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25CSE1002',name:'Thinking in Code - Logic, Design & Innovation'},
+  {reg:'R25',branch:'AIML',sem:'2',code:'25CSE1901',name:'Social Internship'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25MAT1003',name:'Probability and Statistics'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25CSE2201',name:'Operating Systems'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25CSE2404',name:'Artificial Intelligence'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25CSE1203',name:'Computer Organization and Architecture'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25CSE2102',name:'Design and Analysis of Algorithms'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25CSE1103',name:'Programming through Python'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25CSE2302',name:'Full Stack Development - Front End'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25SDC1103',name:'Foundations for Personal Effectiveness'},
+  {reg:'R25',branch:'AIML',sem:'3',code:'25HAS1202',name:'Marketing for Sustainability'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25CSE2103',name:'Database Management Systems'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25CSE3401',name:'Machine Learning'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25CSE2301',name:'Software Engineering'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25CSE2303',name:'Full Stack Development - Back End'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25SDC1101',name:'Quantitative Aptitude and Verbal Ability - I'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25CSE1104',name:'Competitive Programming Practicum - I'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25HAS2201',name:'Design Thinking for Engineers'},
+  {reg:'R25',branch:'AIML',sem:'4',code:'25CSE2901',name:'Technical Writing'},
+  {reg:'R25',branch:'AIML',sem:'5',code:'25CSE3405',name:'Computer Vision through Open CV'},
+  {reg:'R25',branch:'AIML',sem:'5',code:'25CSE3407',name:'Deep Learning'},
+  {reg:'R25',branch:'AIML',sem:'5',code:'25SDC1102',name:'Quantitative Aptitude and Verbal Ability - II'},
+  {reg:'R25',branch:'AIML',sem:'5',code:'25CSE1105',name:'Competitive Programming Practicum - II'},
+  {reg:'R25',branch:'AIML',sem:'5',code:'25HAS2202',name:'Innovation and Entrepreneurship-I'},
+  {reg:'R25',branch:'AIML',sem:'5',code:'25VAC1005',name:'Indian Knowledge Systems: Vedic Mathematics'},
+  {reg:'R25',branch:'AIML',sem:'6',code:'25CSE2202',name:'Automata and Compiler Design'},
+  {reg:'R25',branch:'AIML',sem:'6',code:'25CSE3406',name:'Natural Language Processing'},
+  {reg:'R25',branch:'AIML',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
+  {reg:'R25',branch:'AIML',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
+  {reg:'R25',branch:'AIML',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
+  {reg:'R25',branch:'AIML',sem:'6',code:'24CSE2902',name:'Summer Internship'},
+  {reg:'R25',branch:'AIML',sem:'7',code:'25CSE2601',name:'Computer Networks'},
+  {reg:'R25',branch:'AIML',sem:'7',code:'25CSE4401',name:'Generative AI'},
+  {reg:'R25',branch:'AIML',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
+  {reg:'R25',branch:'AIML',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
+  {reg:'R25',branch:'AIML',sem:'7',code:'25CSE3901',name:'Capstone Project - 1/Internship-1'},
+  {reg:'R25',branch:'AIML',sem:'8',code:'25AML4901',name:'Capstone Project - 2/Internship-2/Research'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25PHY1001',name:'Engineering Physics'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25CHE1001',name:'Engineering Chemistry'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25ENG1001',name:'English for Engineers'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25MAT1001',name:'Linear Algebra and Calculus'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25CSE1101',name:'Problem Solving and Computer Programming through C'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25EEC1101',name:'Fundamentals of Electrical and Electronics Engineering'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25CSE1001',name:'IT Workshop'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25HAS1201',name:'Journey into Engineering'},
+  {reg:'R25',branch:'CSE',sem:'1',code:'25VAC1001',name:'Induction Program'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25MAT1002',name:'Discrete Mathematics'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25CSE1202',name:'Digital Logic Design'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25CSE1102',name:'Data Structures through C'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25CSE2101',name:'Object Oriented Programming through Java'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25ENG1002',name:'Joy of Communication: The Digital Edge'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25CSE1002',name:'Thinking in Code - Logic, Design & Innovation'},
+  {reg:'R25',branch:'CSE',sem:'2',code:'25CSE1901',name:'Social Internship'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25MAT1003',name:'Probability and Statistics'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25CSE2201',name:'Operating Systems'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25CSE1203',name:'Computer Organization and Architecture'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25CSE2102',name:'Design and Analysis of Algorithms'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25CSE1103',name:'Programming through Python'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25CSE2302',name:'Full Stack Development - Front End'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25SDC1103',name:'Foundations for Personal Effectiveness'},
+  {reg:'R25',branch:'CSE',sem:'3',code:'25HAS1202',name:'Marketing for Sustainability'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25CSE2103',name:'Database Management Systems'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25CSE2401',name:'Artificial Intelligence & Machine Learning'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25CSE2301',name:'Software Engineering'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25CSE2303',name:'Full Stack Development - Back End'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25SDC1101',name:'Quantitative Aptitude and Verbal Ability - I'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25CSE1104',name:'Competitive Programming Practicum - I'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25HAS2201',name:'Design Thinking for Engineers'},
+  {reg:'R25',branch:'CSE',sem:'4',code:'25CSE2901',name:'Technical Writing'},
+  {reg:'R25',branch:'CSE',sem:'5',code:'25SDC1102',name:'Quantitative Aptitude and Verbal Ability - II'},
+  {reg:'R25',branch:'CSE',sem:'5',code:'25CSE1105',name:'Competitive Programming Practicum - II'},
+  {reg:'R25',branch:'CSE',sem:'5',code:'25HAS2202',name:'Innovation and Entrepreneurship-I'},
+  {reg:'R25',branch:'CSE',sem:'5',code:'25VAC1005',name:'Indian Knowledge Systems: Vedic Mathematics'},
+  {reg:'R25',branch:'CSE',sem:'6',code:'25CSE2202',name:'Automata and Compiler Design'},
+  {reg:'R25',branch:'CSE',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
+  {reg:'R25',branch:'CSE',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
+  {reg:'R25',branch:'CSE',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
+  {reg:'R25',branch:'CSE',sem:'6',code:'24CSE2902',name:'Summer Internship'},
+  {reg:'R25',branch:'CSE',sem:'7',code:'25CSE2601',name:'Computer Networks'},
+  {reg:'R25',branch:'CSE',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
+  {reg:'R25',branch:'CSE',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
+  {reg:'R25',branch:'CSE',sem:'7',code:'25CSE3901',name:'Capstone Project - 1/Internship-1'},
+  {reg:'R25',branch:'CSE',sem:'8',code:'25CSE4901',name:'Capstone Project - 2/Internship-2/Research'},
 ];
 
 function catalogEntriesForCode(code){
@@ -1121,6 +1126,20 @@ function resolveSemesterForCode(code){
   const semesters = [...new Set(entries.map(e=>e.sem))];
   if(semesters.length===1) return { semester: semesters[0], entries };
   return { options: entries };
+}
+/* Subjects available for a given Regulation + Branch + Semester — powers
+   the CC's "Add Section & Assign Instructor" subject dropdown, narrowed
+   down instead of showing every subject in Courses Applicable at once. */
+function catalogSubjectsFor(regulation, branch, semester){
+  if(!regulation || !branch || !semester) return [];
+  return SUBJECT_CATALOG.filter(r=>r.reg===regulation && r.branch===branch && r.sem===semester);
+}
+function ccSubjectDropdownOptionsHtml(regulation, branch, semester){
+  const list = catalogSubjectsFor(regulation, branch, semester);
+  if(!regulation || !branch || !semester) return `<option value="">— Pick Regulation, Branch &amp; Semester first —</option>`;
+  if(!list.length) return `<option value="">— No subjects in the catalog for this Regulation/Branch/Semester —</option>`;
+  return `<option value="">— Select Subject —</option>` +
+    list.map(s=>`<option value="${escapeHtml(s.code)}">${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`).join('');
 }
 
 
@@ -1372,7 +1391,7 @@ async function fetchStateFromSupabase(){
   const courses = coursesR.data.map(c=>{
     const comp = completionByCourse[c.id];
     return {
-      id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, semester:c.semester||'',
+      id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, semester:c.semester||'', regulation:c.regulation||'',
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
       evalType:c.eval_type || null,
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
@@ -1453,7 +1472,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1844,42 +1863,54 @@ const App = {
   },
 
   /* ---------- CC: split a subject coordination into a real branch/section
-     and assign its Course Instructor, all in one step. The Coordinator can
-     no longer pick a raw Subject here — they must first request a Subject +
-     Evaluation Type (ETP) pairing on the "Evaluation Type" tab and have the
-     HOD approve it (see App.requestEvalType / App.hodApproveEvalType); only
-     an APPROVED pairing appears in the dropdown here. This is what fixes the
-     section's Course Code/Name and its Evaluation Type — the HOD's working
-     code/name on the base coordination shell is just a label and never
-     carried an Evaluation Type. Can be called repeatedly to allocate several
-     instructors/pairings across different sections under the same
-     coordination. */
-  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, etRequestId){
+     and assign its Course Instructor, all in one step. The Subject is now
+     picked from the Subject Catalog (App.state.subjects, the Supabase
+     "Courses Applicable" table) narrowed down by Regulation + Branch +
+     Semester — no HOD approval step anymore. The Evaluation Type is fixed
+     straight from that subject's row in Supabase (masterSubject/Abbr); if
+     the picked subject code isn't in the Supabase Courses Applicable table
+     yet, the section is still created (using the Subject Catalog's own
+     code/name) but its Evaluation Type is left unfixed until an Admin adds
+     it — same graceful fallback as the rest of the app already uses. Can be
+     called repeatedly to allocate several instructors/sections under the
+     same coordination. */
+  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, subjectCode, regulation, semester, instructorName){
     const actor = this.currentUser();
     const base = this.getCourse(baseCourseId);
     if(!base){ toast('Choose a coordination to add a section to.', 'err'); return; }
     const ccUser = getCourseCCUser(baseCourseId);
     const isOwner = ccUser?.id === actor.id;
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this subject\'s Course Coordinator can add a section.', 'err'); return; }
-    const req = (base.etRequests||[]).find(r=>r.id===etRequestId && r.status==='approved');
-    if(!req){ toast('Choose an HOD-approved Evaluation Type — request one on the Evaluation Type tab first.', 'err'); return; }
+    if(!REGULATION_OPTIONS.includes(regulation)){ toast('Choose a Regulation.', 'err'); return; }
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
+    if(!SEMESTER_NUMBERS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
+    const code = (subjectCode||'').trim().toUpperCase();
+    if(!code){ toast('Choose a Subject.', 'err'); return; }
+    const catalogEntry = SUBJECT_CATALOG.find(s=>s.reg===regulation && s.branch===branch && s.sem===semester && s.code===code);
+    if(!catalogEntry){ toast('That subject isn\'t in the catalog for this Regulation/Branch/Semester — pick one from the list.', 'err'); return; }
     const sec = (section||'').trim().toUpperCase();
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
     const email = (instructorEmail||'').trim().toLowerCase();
     if(!email){ toast('Choose an Instructor.', 'err'); return; }
-    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(req.subjectCode) && c.section===sec && c.branch===branch);
-    if(dupe){ toast(`${req.subjectCode} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
+    const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && c.section===sec && c.branch===branch);
+    if(dupe){ toast(`${code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
+    // Evaluation Type comes straight from Supabase's "Courses Applicable"
+    // subjects table (App.state.subjects), matched by this same code — not
+    // a manual pick, and no HOD approval needed.
+    const subj = masterSubject(code);
+    const evalType = subj ? subj.abbr : null;
+    const displayName = subj ? subj.name : catalogEntry.name;
     const course = {
-      id: bizId('CRS', [req.subjectCode, branch, sec], this.state.courses.map(c=>c.id)), code: req.subjectCode, name: req.subjectName, section: sec, branch, semester: base.semester||'',
-      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
+      id: bizId('CRS', [code, branch, sec], this.state.courses.map(c=>c.id)), code, name: displayName, section: sec, branch, semester, regulation,
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       students: [], history: []
     };
     this.state.courses.push(course);
     const { error: courseErr } = await syncCourse(course);
     if(courseErr){ this.state.courses = this.state.courses.filter(x=>x.id!==course.id); renderContent(); return; }
-    this.logHistory(course, `Section created under ${req.subjectCode} coordination: Section ${sec} · ${branchLabel(branch)} — Evaluation Type ${req.abbr} (HOD-approved) (by ${actor.name})`);
+    this.logHistory(course, `Section created under ${code} coordination: Section ${sec} · ${branchLabel(branch)} · ${regulation} · Semester ${semester}`
+      + (evalType ? ` — Evaluation Type ${evalType} (fixed from Courses Applicable)` : ' — Evaluation Type not yet fixed (subject not found in Courses Applicable)') + ` (by ${actor.name})`);
     // Coordinator on the new section is whoever coordinates the base subject
     // (usually the acting user; kept explicit so an Admin can do this on
     // their behalf without silently reassigning coordination).
@@ -1888,16 +1919,7 @@ const App = {
       this.state.assignments.push(rec);
       syncAssignment(rec);
     }
-    // Assign the Course Instructor directly here rather than going through
-    // App.assignRole('CI', ...) — that method requires the subject code to
-    // exist in the "Courses Applicable" master sheet (App.state.subjects),
-    // which no longer applies: the Subject here is just the coordination's
-    // own Course Code/Name (set by the HOD) paired with an HOD-approved ETP,
-    // not a Courses-Applicable lookup. Routing through assignRole would
-    // silently fail (toast + no assignment created) whenever the working
-    // code doesn't happen to match a real subject row.
-    const email2 = email; // (kept name distinct from the outer `email` for clarity below)
-    const { user: ciUser, isNew } = createFacultyIfNeeded(email2, '');
+    const { user: ciUser, isNew } = createFacultyIfNeeded(email, (instructorName||'').trim());
     if(isNew){
       const { error: profileErr } = await syncProfile(ciUser);
       if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==ciUser.id); renderContent(); return; }
@@ -1905,23 +1927,21 @@ const App = {
     const ciRec = { id:bizId('ASG', ['CI', course.code, course.section], this.state.assignments.map(a=>a.id)), type:'CI', courseId:course.id, userId:ciUser.id, email:ciUser.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
     this.state.assignments.push(ciRec);
     syncAssignment(ciRec);
-    course.evalType = req.abbr;
 
     // Auto-populate this section's roster straight from the imported Course
     // Registration sheet — mirrors what App.activateCourseRegistrationGroup
     // does for the Admin's "Activate as Course Section" button, but fires
     // automatically the moment the CC assigns a Course Instructor here, so
     // an Admin no longer has to separately find and activate the matching
-    // registration group. Matches by Subject Name + Branch + Section only
-    // (this flow has no batch/semester picker), so it picks up every batch
-    // registered under this subject/section/branch at once. If nothing in
-    // course_registrations matches yet (e.g. the sheet hasn't been imported
-    // for this subject/section), the roster is simply left empty and the CC
-    // can still add students manually or via the roster import, same as
-    // before this change.
+    // registration group. Matches by Subject Name + Branch + Section only,
+    // so it picks up every batch registered under this subject/section/
+    // branch at once. If nothing in course_registrations matches yet (e.g.
+    // the sheet hasn't been imported for this subject/section), the roster
+    // is simply left empty and the CC can still add students manually or
+    // via the roster import.
     const normReg = s => String(s||'').trim().toLowerCase();
     const regRows = (this.state.courseRegistrations||[]).filter(r=>
-      r.branch===branch && normReg(r.sectionCode)===normReg(sec) && normReg(r.subjectName)===normReg(req.subjectName));
+      r.branch===branch && normReg(r.sectionCode)===normReg(sec) && normReg(r.subjectName)===normReg(displayName));
     let loadedCount = 0;
     if(regRows.length){
       const dirByBatchRoll = {};
@@ -1940,78 +1960,14 @@ const App = {
     }
 
     await syncCourse(course);
-    this.logHistory(course, `Course Instructor assigned: ${ciUser.name} (${ciUser.email}) · Evaluation Type ${req.abbr} (HOD-approved)`
+    this.logHistory(course, `Course Instructor assigned: ${ciUser.name} (${ciUser.email})`
       + (loadedCount ? ` · ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registration import` : ''));
-    this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}). The Evaluation Type for this section is fixed as "${evalTypeLabel(req.abbr)}" — enter marks only for the components shown. This role is active immediately — no separate approval step is needed.`, true, actor.email);
+    this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).${evalType ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ' The Evaluation Type for this section is not fixed yet — check with your Coordinator.'} This role is active immediately — no separate approval step is needed.`, true, actor.email);
     toast(loadedCount
       ? `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section} — ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registrations.`
       : `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section}. No matching Course Registration rows were found, so the roster is empty — add students from the roster page, or import the registration sheet first.`, 'ok');
     renderSidebar();
     this.navigate('cc-list');
-  },
-
-  /* ---------- CC: request an Evaluation Type (ETP) for this coordination.
-     No separate Subject picker — the coordination's own Course Code/Name
-     (set by the HOD) IS the subject here. Every ETP request needs explicit
-     HOD sign-off before it can be used to create a section/assign an
-     instructor — see App.hodApproveEvalType / App.hodRejectEvalType. */
-  requestEvalType(baseCourseId, abbr){
-    const actor = this.currentUser();
-    const base = this.getCourse(baseCourseId);
-    if(!base){ toast('Choose a coordination first.', 'err'); return; }
-    const ccUser = getCourseCCUser(baseCourseId);
-    if(ccUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this coordination\'s Course Coordinator can request an Evaluation Type.', 'err'); return; }
-    const template = getTemplate(abbr);
-    if(!template){ toast('Choose an ETP Type.', 'err'); return; }
-    base.etRequests = base.etRequests || [];
-    const dupe = base.etRequests.find(r=>r.abbr===abbr && r.status!=='rejected');
-    if(dupe){ toast(`${abbr} has already been ${dupe.status==='approved'?'approved':'requested'} for this coordination — see the list below.`, 'err'); return; }
-    const req = {
-      id: uid('etq'), subjectCode: base.code, subjectName: base.name, abbr, courseType: template.courseType,
-      status:'pending', remark:'', requestedBy: actor.name, requestedByEmail: actor.email, requestedAt: Date.now()
-    };
-    base.etRequests.push(req);
-    syncCourse(base);
-    this.logHistory(base, `Requested Evaluation Type ${abbr} for ${base.code} — ${base.name} (by ${actor.name})`);
-    this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>
-      this.notifyUser(u.id, base, `Evaluation Type approval needed — ${base.code}`, `${actor.name} requested "${template.label}" for the ${base.code} — ${base.name} coordination, and is awaiting your approval before they can assign a Course Instructor to it.`, true)
-    );
-    toast(`Requested ${abbr} for ${base.code} — sent to the HOD for approval.`, 'ok');
-    renderContent();
-  },
-  /* ---------- HOD: approve a pending Subject + ETP request. Once approved,
-     it becomes selectable in "Add Section & Assign Instructor". */
-  hodApproveEvalType(baseCourseId, requestId){
-    const actor = this.currentUser();
-    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can approve this.', 'err'); return; }
-    const base = this.getCourse(baseCourseId);
-    if(!base) return;
-    const req = (base.etRequests||[]).find(r=>r.id===requestId);
-    if(!req){ toast('Request not found.', 'err'); return; }
-    req.status = 'approved'; req.remark = '';
-    syncCourse(base);
-    this.logHistory(base, `Evaluation Type ${req.abbr} for ${req.subjectCode} approved by the HOD`);
-    const ccUser = getCourseCCUser(baseCourseId);
-    if(ccUser) this.notifyUser(ccUser.id, base, `Evaluation Type approved — ${req.subjectCode}`, `${actor.name} (HOD) approved "${evalTypeLabel(req.abbr)}" for ${req.subjectCode} — ${req.subjectName}. You can now add a section and assign an instructor using it.`, true);
-    toast(`${req.abbr} approved for ${req.subjectCode}.`, 'ok');
-    renderContent();
-  },
-  /* ---------- HOD: reject a pending Subject + ETP request, with a remark. */
-  hodRejectEvalType(baseCourseId, requestId, remark){
-    const actor = this.currentUser();
-    if(!['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD or an Administrator can do this.', 'err'); return; }
-    const base = this.getCourse(baseCourseId);
-    if(!base) return;
-    const req = (base.etRequests||[]).find(r=>r.id===requestId);
-    if(!req){ toast('Request not found.', 'err'); return; }
-    const rmk = (remark||'').trim();
-    req.status = 'rejected'; req.remark = rmk;
-    syncCourse(base);
-    this.logHistory(base, `Evaluation Type ${req.abbr} for ${req.subjectCode} rejected by the HOD`, rmk);
-    const ccUser = getCourseCCUser(baseCourseId);
-    if(ccUser) this.notifyUser(ccUser.id, base, `Evaluation Type rejected — ${req.subjectCode}`, `${actor.name} (HOD) did not approve "${evalTypeLabel(req.abbr)}" for ${req.subjectCode} — ${req.subjectName}.${rmk?` Remark: "${rmk}"`:''}`, true);
-    toast(`${req.abbr} rejected for ${req.subjectCode}.`, 'err');
-    renderContent();
   },
 
   /* ---------- HOD → CC, CC → CI: assign / revoke ----------
@@ -4127,31 +4083,12 @@ function pendingApprovalGroupsHtml(){
     </div>`;
 }
 function pendingEtRequestsHtml(){
-  const rows = [];
-  // Scan every course's et_requests, not just branch-less "shell" coordinations —
-  // a course that already has a branch/section (e.g. from before the ETP-request
-  // workflow existed) can still have its Course Coordinator submit a request, and
-  // that request must still surface for HOD approval here.
-  App.state.courses.forEach(base=>{
-    (base.etRequests||[]).forEach(r=>{ if(r.status==='pending') rows.push({ base, r }); });
-  });
-  if(!rows.length) return '';
-  return `
-    <div class="card" style="border-left:3px solid var(--brass);margin-bottom:16px;">
-      <div class="section-title" style="font-size:15px;">Evaluation Type Approvals Pending</div>
-      <p class="section-meta" style="margin-top:4px;">A Course Coordinator can't assign an Instructor to a Subject+ETP pairing until you approve it here.</p>
-      ${rows.map(({base,r})=>`
-        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
-          <div>
-            <div class="section-title" style="font-size:14px;">${escapeHtml(r.subjectCode)} — ${escapeHtml(r.subjectName)} <span style="color:var(--text-soft);font-weight:400;">(${escapeHtml(r.abbr)})</span></div>
-            <div class="section-meta">Coordination: ${escapeHtml(base.code)} — ${escapeHtml(base.name)}${base.branch ? ` · Section ${escapeHtml(base.section||'—')} · ${branchLabel(base.branch)}` : ''} · Requested by ${escapeHtml(r.requestedBy||'—')}</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-outline" onclick="const rmk=prompt('Remark for rejecting this (optional):'); if(rmk!==null) App.hodRejectEvalType('${base.id}','${r.id}', rmk);">Reject</button>
-            <button class="btn btn-sm" onclick="App.hodApproveEvalType('${base.id}','${r.id}')">Approve</button>
-          </div>
-        </div>`).join('')}
-    </div>`;
+  // Evaluation Type is now fixed straight from Supabase's "Courses
+  // Applicable" table (App.state.subjects) the moment a Course Coordinator
+  // picks a Subject — there's no HOD approval step in that path anymore, so
+  // this panel is retired. Kept as a no-op (returns '') rather than deleted
+  // outright in case any older call site still references it.
+  return '';
 }
 /* ============================================================
    CHECKPOINT D — HOD Dashboard: status counts across all sections,
@@ -5755,84 +5692,41 @@ function absentManagementHtml(course){
 function ccCoordinationOptionsHtml(ccCourses){
   const seen = {};
   ccCourses.forEach(c=>{ if(!seen[c.code]) seen[c.code] = c; });
-  return Object.values(seen).map(c=>`<option value="${c.id}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
+  return Object.values(seen).map(c=>`<option value="${c.id}" data-semester="${escapeHtml(c.semester||'')}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
 }
-/* Flat ETP Type dropdown built straight from EVAL_TEMPLATES — independent of
-   whatever Abbr a Subject defaults to on Courses Applicable, since the CC
-   now picks Subject and ETP Type as two separate decisions. */
-function etpTypeDropdownOptionsHtml(){
-  return `<option value="">— Select ETP Type —</option>` +
-    EVAL_TEMPLATES.map(t=>`<option value="${escapeHtml(t.abbr)}">${escapeHtml(t.label)}</option>`).join('');
+/* Refreshes the Subject dropdown whenever Regulation, Branch, or Semester
+   changes on the "Add Section & Assign Instructor" form — narrowed to the
+   Subject Catalog rows matching all three, per Regulation/Branch/Semester,
+   which is what fixes the Evaluation Type (via Supabase Courses Applicable)
+   once a Subject is picked. No HOD approval step anywhere in this flow. */
+function refreshCCSubjectOptions(){
+  const regEl = document.getElementById('cc-assign-regulation');
+  const branchEl = document.getElementById('cc-assign-branch');
+  const semEl = document.getElementById('cc-assign-semester');
+  const subjEl = document.getElementById('cc-assign-subject');
+  if(!regEl || !branchEl || !semEl || !subjEl) return;
+  subjEl.innerHTML = ccSubjectDropdownOptionsHtml(regEl.value, branchEl.value, semEl.value);
+  onCCSubjectChange();
 }
-/* Options for the "Add Section & Assign Instructor" ETP dropdown —
-   restricted to THIS coordination's HOD-approved ETP requests only.
-   Re-rendered whenever the Coordination dropdown changes. */
-function approvedEtOptionsHtml(baseCourseId){
-  const base = App.getCourse(baseCourseId);
-  const approved = ((base && base.etRequests) || []).filter(r=>r.status==='approved');
-  if(!approved.length) return `<option value="">— No HOD-approved ETP Type yet — request one on the Evaluation Type tab —</option>`;
-  return `<option value="">— Select an approved ETP Type —</option>` +
-    approved.map(r=>`<option value="${r.id}">${escapeHtml(r.abbr)} — ${escapeHtml(evalTypeLabel(r.abbr))}</option>`).join('');
+function onCCSubjectChange(){
+  const noteEl = document.getElementById('cc-assign-subject-note');
+  const subjEl = document.getElementById('cc-assign-subject');
+  if(!noteEl || !subjEl) return;
+  noteEl.innerHTML = subjectNoteHtml(subjEl.value);
 }
-function refreshCCAssignSubjectOptions(baseCourseId){
-  const el = document.getElementById('cc-assign-etreq');
-  if(el) el.innerHTML = approvedEtOptionsHtml(baseCourseId);
+/* When the Coordination dropdown changes, prefill Semester from that
+   coordination's own semester (set by the Timetable Incharge on the shell)
+   — still freely overridable — then re-narrow the Subject list. */
+function onCCBaseChange(baseId){
+  const semEl = document.getElementById('cc-assign-semester');
+  const base = App.getCourse(baseId);
+  if(semEl && base && base.semester) semEl.value = base.semester;
+  refreshCCSubjectOptions();
 }
-let activeCCTab = 'sections';
-function switchCCTab(tab){ activeCCTab = tab; renderContent(); }
-window.switchCCTab = switchCCTab;
-window.refreshCCAssignSubjectOptions = refreshCCAssignSubjectOptions;
-function etReqStatusPill(status){
-  if(status==='approved') return `<span class="status-pill status-approved">Approved</span>`;
-  if(status==='rejected') return `<span class="status-pill status-rejected">Rejected</span>`;
-  return `<span class="status-pill status-submitted">Pending HOD approval</span>`;
-}
-/* "Evaluation Type" tab — CC picks the Coordination in one dropdown and the
-   ETP Type in a separate dropdown, then sends it to the HOD for approval.
-   The coordination's own Course Code/Name (set by the HOD) already stands
-   in for "Subject" — there's no separate Courses-Applicable lookup here.
-   Only once approved does an ETP Type become selectable on the "Add
-   Section & Assign Instructor" tab. */
-function ccEvalTypeTabHtml(ccCourses){
-  const bases = [];
-  const seen = {};
-  ccCourses.forEach(c=>{ if(!seen[c.code]){ seen[c.code]=true; bases.push(c); } });
-  return `
-    <div class="card">
-      <div class="section-title" style="font-size:15px;">Request Evaluation Type (ETP)</div>
-      <p class="section-meta" style="margin-top:4px;">Pick the Coordination in one dropdown and the ETP Type in a separate dropdown, then send it to the HOD. Once approved, it appears on the "Add Section &amp; Assign Instructor" tab and you can assign a Course Instructor to it. Every ETP request needs its own HOD approval, per coordination.</p>
-      <div class="config-grid">
-        <div class="config-field">
-          <label>Coordination</label>
-          <select id="cc-etreq-base">${ccCoordinationOptionsHtml(ccCourses)}</select>
-        </div>
-        <div class="config-field">
-          <label>ETP Type <span style="text-transform:none;">(Evaluation Type)</span></label>
-          <select id="cc-etreq-abbr">${etpTypeDropdownOptionsHtml()}</select>
-        </div>
-      </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.requestEvalType(document.getElementById('cc-etreq-base').value, document.getElementById('cc-etreq-abbr').value)">Send for HOD Approval</button>
-    </div>
-    <div class="card">
-      <div class="section-title" style="font-size:15px;">Requested Evaluation Types</div>
-      ${bases.every(b=>!(b.etRequests||[]).length) ? `<p class="section-meta" style="margin-top:8px;">No Evaluation Types requested yet.</p>` : bases.map(b=>{
-        const reqs = b.etRequests||[];
-        if(!reqs.length) return '';
-        return `
-          <div style="margin-top:12px;">
-            <div class="section-meta" style="text-transform:uppercase;letter-spacing:0.05em;font-size:11px;color:var(--brass);">${escapeHtml(b.code)} — ${escapeHtml(b.name)}</div>
-            ${reqs.map(r=>`
-              <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:8px;">
-                <div>
-                  <div class="section-title" style="font-size:14px;">${escapeHtml(r.abbr)} <span style="color:var(--text-soft);font-weight:400;">— ${escapeHtml(evalTypeLabel(r.abbr))}</span></div>
-                  ${r.status==='rejected' && r.remark ? `<p class="section-meta" style="margin-top:4px;color:var(--seal-red);">Remark: ${escapeHtml(r.remark)}</p>` : ''}
-                </div>
-                <div>${etReqStatusPill(r.status)}</div>
-              </div>`).join('')}
-          </div>`;
-      }).join('')}
-    </div>`;
-}
+window.refreshCCSubjectOptions = refreshCCSubjectOptions;
+window.onCCSubjectChange = onCCSubjectChange;
+window.onCCBaseChange = onCCBaseChange;
+
 function renderCCList(){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
@@ -5841,71 +5735,77 @@ function renderCCList(){
   const seenCodes = {};
   const baseList = [];
   ccCourses.forEach(c=>{ if(!seenCodes[c.code]){ seenCodes[c.code]=true; baseList.push(c); } });
-  const initialBaseId = baseList[0]?.id || null;
-  const tabs = [
-    { key:'evaltype', label:'Evaluation Type' },
-    { key:'sections', label:'Add Section & Assign Instructor' },
-  ];
-  if(!tabs.some(t=>t.key===activeCCTab)) activeCCTab = 'evaltype';
+  const initialBase = baseList[0] || null;
+  const academicYear = App.state.currentTermTest?.academicYear || '';
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Request an ETP (Evaluation Type) on the Evaluation Type tab and get it HOD-approved, then add a Branch/Section and assign its Course Instructor using that approved ETP — choosing the Instructor from the Executive Assistant's faculty directory for that branch. Every ETP request needs its own HOD approval before it can be used. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
+      <p>Pick Regulation, Branch &amp; Semester to narrow down to a real Subject (Courses Applicable) — its Evaluation Type is fixed automatically from Supabase, no approval needed — then add a Section and assign its Course Instructor by email and name. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
     </div>
-    ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the HOD assigns you as coordinator for a subject, it will appear here.') : `
-      <div class="tab-bar">
-        ${tabs.map(t=>`<button type="button" class="tab-btn ${activeCCTab===t.key?'active':''}" onclick="switchCCTab('${t.key}')">${t.label}</button>`).join('')}
-      </div>
-      <div id="tab-cc-evaltype" class="tab-panel ${activeCCTab==='evaltype'?'':'hidden'}">
-        ${ccEvalTypeTabHtml(ccCourses)}
-      </div>
-      <div id="tab-cc-sections" class="tab-panel ${activeCCTab==='sections'?'':'hidden'}">
-        <div class="card">
-          <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
-          <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one), an HOD-approved ETP Type, then the Branch, Section, and Instructor for that section.</p>
-          <div class="config-grid">
-            <div class="config-field">
-              <label>Coordination</label>
-              <select id="cc-assign-base" onchange="refreshCCAssignSubjectOptions(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select>
-            </div>
-            <div class="config-field">
-              <label>ETP Type <span style="text-transform:none;">(HOD-approved only)</span></label>
-              <select id="cc-assign-etreq">${approvedEtOptionsHtml(initialBaseId)}</select>
-            </div>
-            <div class="config-field">
-              <label>Branch</label>
-              <select id="cc-assign-branch" onchange="document.getElementById('cc-assign-instructor').innerHTML = buildInstructorOptionsHtml(this.value)">
-                ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
-              </select>
-            </div>
-            <div class="config-field">
-              <label>Section</label>
-              <input id="cc-assign-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
-            </div>
-            <div class="config-field">
-              <label>Instructor <span style="text-transform:none;">(from faculty directory)</span></label>
-              <select id="cc-assign-instructor">${buildInstructorOptionsHtml(firstBranch)}</select>
-            </div>
+    ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
+      <div class="card">
+        <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
+        <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one), then narrow down to the real Subject and fill in the Instructor.</p>
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Coordination</label>
+            <select id="cc-assign-base" onchange="onCCBaseChange(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select>
           </div>
-          <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-etreq').value)">Add Section &amp; Assign Instructor</button>
+          <div class="config-field">
+            <label>Academic Year <span style="text-transform:none;">(fixed by Admin/HOD)</span></label>
+            <input type="text" value="${academicYear ? escapeHtml(academicYear) : 'Not set yet'}" disabled>
+          </div>
+          <div class="config-field">
+            <label>Regulation</label>
+            <select id="cc-assign-regulation" onchange="refreshCCSubjectOptions()">
+              <option value="">— Select —</option>
+              ${REGULATION_OPTIONS.map(r=>`<option value="${r}">${r}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Branch</label>
+            <select id="cc-assign-branch" onchange="refreshCCSubjectOptions();">
+              ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Semester <span style="text-transform:none;">(prefilled from the coordination's own mapping)</span></label>
+            <select id="cc-assign-semester" onchange="refreshCCSubjectOptions()">
+              <option value="">— Select —</option>
+              ${SEMESTER_NUMBERS.map(n=>`<option value="${n}" ${initialBase && initialBase.semester===n?'selected':''}>Semester ${n}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Subject <span style="text-transform:none;">(Courses Applicable, narrowed to the above)</span></label>
+            <select id="cc-assign-subject" onchange="onCCSubjectChange()">${ccSubjectDropdownOptionsHtml('', firstBranch, initialBase?.semester||'')}</select>
+            <div id="cc-assign-subject-note"></div>
+          </div>
+          <div class="config-field">
+            <label>Section</label>
+            <input id="cc-assign-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
+          </div>
+          <div class="config-field">
+            <label>Instructor email</label>
+            <input id="cc-assign-instructor" type="email" placeholder="name@suh.in">
+          </div>
+          <div class="config-field">
+            <label>Instructor name <span style="text-transform:none;">(only needed for a new account)</span></label>
+            <input id="cc-assign-instructor-name" type="text" placeholder="Dr. Jane Doe">
+          </div>
         </div>
-
-        <div class="card">
-          <div class="section-title" style="font-size:15px;">Search my sections</div>
-          <input id="cc-search-input" class="search-input" type="text" placeholder="Search by course code, name, branch, or instructor..." style="margin-top:10px;" oninput="updateCCBranchGroups(this.value)">
-        </div>
-
-        <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch),'')}</div>
+        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-subject').value, document.getElementById('cc-assign-regulation').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value)">Add Section &amp; Assign Instructor</button>
       </div>
+
+      <div class="card">
+        <div class="section-title" style="font-size:15px;">Search my sections</div>
+        <input id="cc-search-input" class="search-input" type="text" placeholder="Search by course code, name, branch, or instructor..." style="margin-top:10px;" oninput="updateCCBranchGroups(this.value)">
+      </div>
+
+      <div id="cc-branch-groups">${renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch),'')}</div>
     `}
   `;
   return wrap;
-}
-function buildInstructorOptionsHtml(branch){
-  const directoryFaculty = App.state.users.filter(u=>u.systemRole==='FACULTY' && u.homeBranch===branch);
-  if(directoryFaculty.length===0) return `<option value="">— No faculty uploaded for ${escapeHtml(branchLabel(branch))} yet —</option>`;
-  return directoryFaculty.map(f=>`<option value="${escapeHtml(f.email)}">${escapeHtml(f.name)} (${escapeHtml(f.email)})</option>`).join('');
 }
 function renderCCBranchGroupsHtml(ccCourses, term){
   const q = (term||'').trim().toLowerCase();
