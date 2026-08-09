@@ -402,6 +402,17 @@ table.data-table{
   .content{padding:22px 16px 50px;}
   .notif-panel{right:16px;width:280px;}
 }
+/* Marks-entry number inputs: no spin buttons, just a plain typing box —
+   faculty type a value and press Enter to jump to the next box. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button{
+  -webkit-appearance:none;
+  margin:0;
+}
+input[type="number"]{
+  -moz-appearance:textfield;
+  appearance:textfield;
+}
 #print-area{display:none;}
 @media print{
   #app{display:none !important;}
@@ -2593,13 +2604,12 @@ const App = {
     s.marks = s.marks || {};
     s.marks.ttDetail = s.marks.ttDetail || {};
     s.marks.ttDetail[cycle] = s.marks.ttDetail[cycle] || {};
-    const pair = TT_LONG_PAIRS.find(p=>p.a===qKey||p.b===qKey);
-    let cap = TT_SHORT_EACH_MAX;
-    if(pair){
-      const cfg = getQuestionConfig(course, cycle, qKey);
-      cap = cfg.split === cfg.fullValue ? pair.max : pair.max/2;
-    }
-    const val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : Math.min(Math.max(parseFloat(rawValue)||0, 0), cap);
+    // Note: no longer clamped to the question's max here — an out-of-range
+    // entry is kept as typed and flagged red (see the `invalid` class in
+    // renderCITermTestEntry) so the faculty member notices and fixes it
+    // themselves, instead of it silently being rewritten to the maximum.
+    let val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : parseFloat(rawValue);
+    if(typeof val==='number' && isNaN(val)) val = undefined;
     if(subpart){
       s.marks.ttDetail[cycle][qKey] = s.marks.ttDetail[cycle][qKey] || {};
       if(val===undefined) delete s.marks.ttDetail[cycle][qKey][subpart]; else s.marks.ttDetail[cycle][qKey][subpart] = val;
@@ -2629,7 +2639,12 @@ const App = {
     if(!s) return;
     s.marks = s.marks || {};
     s.marks.siaDetail = s.marks.siaDetail || {};
-    const val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : Math.min(Math.max(parseFloat(rawValue)||0, 0), 10);
+    // Note: no longer clamped to 10 here — an out-of-range entry is kept as
+    // typed and flagged red (see the `invalid` class in siaEntryHtml) so the
+    // faculty member notices and fixes it, instead of it silently being
+    // rewritten to the maximum.
+    let val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : parseFloat(rawValue);
+    if(typeof val==='number' && isNaN(val)) val = undefined;
     if(val===undefined) delete s.marks.siaDetail['unit'+unitIdx]; else s.marks.siaDetail['unit'+unitIdx] = val;
     const sum = Object.values(s.marks.siaDetail).reduce((a,b)=>a+(typeof b==='number'?b:0), 0);
     s.marks[compKey] = Math.round(sum*2)/2;
@@ -3119,9 +3134,6 @@ function getNavForUser(user){
   const { ccCourses, ciCourses } = getFacultyCourses(user.id);
   const nav = [];
   if(ciCourses.length) nav.push({v:'ci-sections', label:'My Subjects'});
-  if(ciCourses.length) nav.push({v:'ci-termtest', label:'Term Test'});
-  if(ciCourses.length) nav.push({v:'ci-labint', label:'Lab Internals'});
-  if(ciCourses.length) nav.push({v:'ci-labext', label:'Lab Externals'});
   if(ciCourses.length) nav.push({v:'ci-pending', label:'Pending Approval'});
   if(ciCourses.length) nav.push({v:'ci-audit', label:'Audit Log'});
   if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
@@ -3603,6 +3615,7 @@ function approvalGroupPanel(course, template, group, comps, editableOverride){
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        data-markkey="${course.id}|${s.id}|${comp.key}"
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         ${editable?'':'disabled'}
         onchange="onMarkChange(this)"></td>`;
@@ -3656,6 +3669,7 @@ function marksEntryTabs(course){
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        data-markkey="${course.id}|${s.id}|${comp.key}"
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
     }).join('');
@@ -3671,6 +3685,7 @@ function marksEntryTabs(course){
       return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
         class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        data-markkey="${course.id}|${s.id}|${comp.key}"
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
     }).join('');
@@ -3725,7 +3740,10 @@ function siaEntryHtml(course, comp, editable){
     const cells = Array.from({length:unitCount}, (_,i)=>{
       const idx = i+1;
       const val = detail['unit'+idx];
+      const overMax = typeof val==='number' && (val>10 || val<0);
       return `<td><input type="number" min="0" max="10" step="0.5" style="width:56px;"
+        class="${overMax?'invalid':''}"
+        data-markkey="${course.id}|${s.id}|sia${idx}"
         value="${val===undefined||val===null?'':val}" placeholder="/10" ${editable?'':'disabled'}
         onchange="App.setSiaUnitMark('${course.id}','${s.id}','${comp.key}',${idx},this.value)"></td>`;
     }).join('');
@@ -3754,6 +3772,28 @@ function onMarkChange(input){
   renderContent();
 }
 window.onMarkChange = onMarkChange;
+
+/* Marks-entry keyboard flow: pressing Enter in a marks number box commits
+   the value (same as tabbing/clicking away — fires the normal onchange
+   handler, which saves and re-renders) and moves focus straight to the
+   next marks box, in reading order, instead of doing nothing or submitting
+   a form. Every marks input carries a stable data-markkey identifying its
+   cell (course|student|field), so the "next" box can be re-found even
+   though onchange's renderContent() call rebuilds the table underneath us. */
+document.addEventListener('keydown', function(e){
+  if(e.key!=='Enter') return;
+  const t = e.target;
+  if(!(t.tagName==='INPUT' && t.type==='number' && t.dataset.markkey)) return;
+  e.preventDefault();
+  const boxes = Array.from(document.querySelectorAll('input[type="number"][data-markkey]:not([disabled])'));
+  const idx = boxes.indexOf(t);
+  const nextKey = (idx>-1 && idx<boxes.length-1) ? boxes[idx+1].dataset.markkey : null;
+  t.blur(); // synchronously fires onchange -> save + renderContent, if the value changed
+  if(nextKey){
+    const next = document.querySelector(`input[data-markkey="${CSS.escape(nextKey)}"]`);
+    if(next){ next.focus(); next.select(); }
+  }
+});
 
 /* ================= ASSIGN / REVOKE MODAL (shared by HOD and CC) ================= */
 function openAssignModal(type, courseId){
@@ -5426,7 +5466,10 @@ function renderCITermTestEntry(params){
     const calc = computeTermTestRaw(detail);
     const shortCells = TT_SHORT_KEYS.map(k=>{
       const v = detail[k];
+      const overMax = typeof v==='number' && (v>TT_SHORT_EACH_MAX || v<0);
       return `<td><input type="number" min="0" max="${TT_SHORT_EACH_MAX}" step="0.5" style="width:56px;"
+        class="${overMax?'invalid':''}"
+        data-markkey="${course.id}|${s.id}|${cycle}_${k}"
         value="${ttNum(v)}" ${editable?'':'disabled'}
         onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${k}',null,this.value)"></td>`;
     }).join('');
@@ -5439,20 +5482,30 @@ function renderCITermTestEntry(params){
       const cellFor = (qKey, winning) => {
         const cfg = getQuestionConfig(course, cycle, qKey);
         const winMark = winning ? ` style="background:#EAF3EA;"` : '';
+        const av = (detail[qKey]||{}).a, bv = (detail[qKey]||{}).b;
+        const fullCap = cfg.split===cfg.fullValue ? max : half;
+        const aOverMax = typeof av==='number' && (av>fullCap || av<0);
+        const bOverMax = typeof bv==='number' && (bv>half || bv<0);
         return cfg.split===cfg.fullValue
           ? `<td class="mono"${winMark} style="white-space:nowrap;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
               <input type="number" min="0" max="${max}" step="0.5" style="width:56px;" placeholder="/${max}"
-                value="${ttNum((detail[qKey]||{}).a)}" ${editable ? '' : 'disabled'}
+                class="${aOverMax?'invalid':''}"
+                data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_a"
+                value="${ttNum(av)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
             </td>`
           : `<td class="mono"${winMark} style="white-space:nowrap;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
               <input type="number" min="0" max="${half}" step="0.5" style="width:44px;" placeholder="a/${half}"
-                value="${ttNum((detail[qKey]||{}).a)}" ${editable ? '' : 'disabled'}
+                class="${aOverMax?'invalid':''}"
+                data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_a"
+                value="${ttNum(av)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
               <input type="number" min="0" max="${half}" step="0.5" style="width:44px;" placeholder="b/${half}"
-                value="${ttNum((detail[qKey]||{}).b)}" ${editable ? '' : 'disabled'}
+                class="${bOverMax?'invalid':''}"
+                data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_b"
+                value="${ttNum(bv)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
             </td>`;
       };
