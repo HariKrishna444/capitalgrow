@@ -506,6 +506,11 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
 
 const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.', CSD:'CSD — CS & Design', CSC:'CSC — CS & Cyber Security' };
+/* Whether the assigned Course Instructor is teaching the Lecture or the
+   Practical component of this section — the CC picks this at assignment
+   time (a subject can have separate L and P instructors), and it's shown
+   back to the CI everywhere their name appears. */
+const LOAD_TYPE_LABELS = { L:'Lecture (L)', P:'Practical (P)' };
 function branchLabel(b){ return BRANCH_LABELS[b] || b || '—'; }
 // Which branches exist for each admitted batch — the Student Directory upload
 // validates each row's Department against the list for the Batch selected.
@@ -1413,7 +1418,7 @@ async function fetchStateFromSupabase(){
     return {
       id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, semester:c.semester||'', regulation:c.regulation||'',
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
-      evalType:c.eval_type || null,
+      evalType:c.eval_type || null, ciLoadType:c.ci_load_type || null,
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
       etRequests: c.et_requests || [], ttPaperConfig: c.tt_paper_config || {},
@@ -1492,7 +1497,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -1894,7 +1899,7 @@ const App = {
      it — same graceful fallback as the rest of the app already uses. Can be
      called repeatedly to allocate several instructors/sections under the
      same coordination. */
-  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, subjectCode, regulation, semester, instructorName){
+  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, subjectCode, regulation, semester, instructorName, loadType){
     const actor = this.currentUser();
     const base = this.getCourse(baseCourseId);
     if(!base){ toast('Choose a coordination to add a section to.', 'err'); return; }
@@ -1912,6 +1917,7 @@ const App = {
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
     const email = (instructorEmail||'').trim().toLowerCase();
     if(!email){ toast('Choose an Instructor.', 'err'); return; }
+    if(loadType && !LOAD_TYPE_LABELS[loadType]){ toast('Choose Lecture or Practical.', 'err'); return; }
     const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && c.section===sec && c.branch===branch);
     if(dupe){ toast(`${code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     // Evaluation Type comes straight from Supabase's "Courses Applicable"
@@ -1924,6 +1930,7 @@ const App = {
       id: bizId('CRS', [code, branch, sec], this.state.courses.map(c=>c.id)), code, name: displayName, section: sec, branch, semester, regulation,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
+      ciLoadType: loadType || null,
       students: [], history: []
     };
     this.state.courses.push(course);
@@ -2102,7 +2109,7 @@ const App = {
     this.navigate('cc-roster', { courseId });
   },
 
-  async assignRole(type, courseId, rawEmail, rawName, subjectCode){
+  async assignRole(type, courseId, rawEmail, rawName, subjectCode, loadType){
     const course = this.getCourse(courseId);
     if(!course){ toast('Choose a course first.', 'err'); return; }
     const actor = this.currentUser();
@@ -2118,6 +2125,7 @@ const App = {
       if(course.status==='approved' && actor.systemRole!=='ADMIN'){ toast('This course is already approved — the Course Instructor can no longer be changed. Contact an Administrator if this needs to be corrected.', 'err'); return; }
       subj = masterSubject(subjectCode);
       if(!subj){ toast('Choose a Subject from Courses Applicable before assigning the Course Instructor.', 'err'); return; }
+      if(loadType && !LOAD_TYPE_LABELS[loadType]){ toast('Choose Lecture or Practical.', 'err'); return; }
     }
     const existing = getActiveAssignment(courseId, type);
     if(existing){ existing.status='revoked'; existing.revokedAt=Date.now(); existing.revokedBy=actor.id; await syncAssignment(existing); }
@@ -2139,8 +2147,9 @@ const App = {
       course.evalType = subj.abbr;
       course.code = subj.code;
       course.name = subj.name;
+      course.ciLoadType = loadType || null;
       syncCourse(course);
-      etNote = ` · Subject fixed as: ${subj.code} — ${subj.name} (${evalTypeLabel(subj.abbr)})`;
+      etNote = ` · Subject fixed as: ${subj.code} — ${subj.name} (${evalTypeLabel(subj.abbr)})${loadType ? ` · ${LOAD_TYPE_LABELS[loadType]}` : ''}`;
     }
     this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
     this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`, true, actor.email);
@@ -3234,6 +3243,7 @@ function renderContent(){
     'ea-review': renderEAReview,
     'exam-list': renderExamList,
     'ci-sections': renderCISections,
+    'ci-subject-detail': renderCISubjectDetail,
     'ci-entry': renderCIEntry,
     'ci-termtest': renderCITermTestSections,
     'ci-termtest-entry': renderCITermTestEntry,
@@ -3312,7 +3322,8 @@ function assignmentSummary(courseId){
   const ccUser = getCourseCCUser(courseId);
   const ciUser = getCourseCIUser(courseId);
   const etPart = course && course.evalType ? ` · Evaluation Type: ${escapeHtml(evalTypeLabel(course.evalType))}` : '';
-  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'}${etPart}`;
+  const loadPart = course && course.ciLoadType && LOAD_TYPE_LABELS[course.ciLoadType] ? ` (${LOAD_TYPE_LABELS[course.ciLoadType]})` : '';
+  return `Coordinator: ${ccUser ? escapeHtml(ccUser.name) : 'Unassigned'} · Instructor: ${ciUser ? escapeHtml(ciUser.name) : 'Unassigned'}${loadPart}${etPart}`;
 }
 function courseMetaBlock(course){
   return `<div class="section-meta">${courseMeta(course)}</div><div class="section-meta" style="margin-top:2px;">${assignmentSummary(course.id)}</div>`;
@@ -3865,6 +3876,14 @@ function openAssignModal(type, courseId){
       <label>Subject <span style="text-transform:none;">(Courses Applicable — fixes Abbr, Course Type &amp; Evaluation Type)</span></label>
       <select id="assign-subject" onchange="document.getElementById('assign-subject-note').innerHTML = subjectNoteHtml(this.value)">${subjectDropdownOptionsHtml(detectedCode)}</select>
       <div id="assign-subject-note">${subjectNoteHtml(detectedCode)}</div>
+    </div>
+    <div class="config-field" style="margin-top:12px;">
+      <label>Teaching component</label>
+      <select id="assign-loadtype">
+        <option value="">— Select —</option>
+        <option value="L" ${course.ciLoadType==='L'?'selected':''}>Lecture (L)</option>
+        <option value="P" ${course.ciLoadType==='P'?'selected':''}>Practical (P)</option>
+      </select>
     </div>` : '';
   openModal(`
     <button class="modal-close" onclick="closeModal()">&times;</button>
@@ -3882,7 +3901,7 @@ function openAssignModal(type, courseId){
     ${etField}
     <div style="display:flex;gap:10px;margin-top:18px;">
       <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
-      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value, ${type==='CI' ? "document.getElementById('assign-subject').value" : 'undefined'})">Assign &amp; Activate</button>
+      <button class="btn" onclick="App.assignRole('${type}','${courseId}', document.getElementById('assign-email').value, document.getElementById('assign-name').value, ${type==='CI' ? "document.getElementById('assign-subject').value" : 'undefined'}, ${type==='CI' ? "document.getElementById('assign-loadtype').value" : 'undefined'})">Assign &amp; Activate</button>
     </div>
   `);
 }
@@ -5310,29 +5329,59 @@ function renderCISections(){
     ${!ciSubjectSemester ? emptyStateHtml('Choose a semester', availableSemesters.length ? 'Select the semester above to see your subject(s) for it.' : 'The Timetable Incharge hasn\'t mapped any of your subjects to a semester yet — check back once they have.') :
       matching.length===0 ? emptyStateHtml('No subject here', 'None of your assigned sections are mapped to this semester.') :
       matching.map(c=>`
-      <div class="card">
-        <div class="card-row" style="align-items:flex-start;">
-          <div style="flex:1;min-width:260px;">
-            <div class="section-title">${escapeHtml(c.name)}</div>
-            ${courseMetaBlock(c)}
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:8px;">
-              ${statusPill(c)}
-              ${etPill(c)}
-              ${c.status==='approved' && c.editRequestStatus==='pending' ? `<span class="status-pill status-submitted">Correction pending HOD</span>` : ''}
-              ${c.status==='approved' && c.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
-            </div>
-            ${evalTypeTableHtml(c)}
+      <div class="card" style="cursor:pointer;" onclick="App.navigate('ci-subject-detail',{courseId:'${c.id}'})" role="button" tabindex="0" onkeydown="if(event.key==='Enter') App.navigate('ci-subject-detail',{courseId:'${c.id}'})">
+        <div class="section-title">${escapeHtml(c.name)}</div>
+        ${courseMetaBlock(c)}
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            ${statusPill(c)}
+            ${etPill(c)}
+            ${c.status==='approved' && c.editRequestStatus==='pending' ? `<span class="status-pill status-submitted">Correction pending HOD</span>` : ''}
+            ${c.status==='approved' && c.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
           </div>
-          <div style="min-width:220px;display:flex;flex-direction:column;gap:8px;">
-            <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Enter marks</div>
-            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'TT1'})">Enter Term Test 1</button>
-            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'TT2'})">Enter Term Test 2</button>
-            <button class="btn ${c.status==='draft'||c.editUnlocked?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${c.id}'})">
-              ${c.status==='draft'||c.editUnlocked ? 'Enter CIE / SEE Marks' : 'View CIE / SEE Record'}
-            </button>
-          </div>
+          <span class="section-meta" style="color:var(--brass);font-weight:600;">View &amp; enter marks →</span>
         </div>
       </div>`).join('')}
+  `;
+  return wrap;
+}
+/* ---------- CI: Subject detail page. Reached by clicking a subject card on
+   My Subjects. Shows the full Evaluation Type breakdown (the same
+   yellow/green/blue structure table as the official Excel) on the left,
+   and the "Enter marks" actions vertically centered on the right, instead
+   of every subject's marks buttons being crammed into the list view. ---------- */
+function renderCISubjectDetail(params){
+  const course = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
+  if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Subject not found','')}`; return wrap; }
+  const enterMode = course.status==='draft' || course.editUnlocked;
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>${escapeHtml(course.name)}</h2>
+      ${courseMetaBlock(course)}
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:8px;">
+        ${statusPill(course)}
+        ${etPill(course)}
+        ${course.status==='approved' && course.editRequestStatus==='pending' ? `<span class="status-pill status-submitted">Correction pending HOD</span>` : ''}
+        ${course.status==='approved' && course.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
+      </div>
+      ${deadlineBadge(course)}
+    </div>
+    ${sentBackBanner(course)}
+    <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">
+      <div style="flex:2;min-width:340px;">${evalTypeTableHtml(course)}</div>
+      <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px;">
+        <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Enter marks</div>
+        <button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})">Enter Term Test 1</button>
+        <button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})">Enter Term Test 2</button>
+        <button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${course.id}'})">
+          ${enterMode ? 'Enter Other CIE / SEE Marks' : 'View CIE / SEE Record'}
+        </button>
+      </div>
+    </div>
   `;
   return wrap;
 }
@@ -5540,14 +5589,15 @@ function renderCITermTestEntry(params){
       };
       return cellFor(a, aWinning) + cellFor(b, bWinning);
     }).join('');
+    const cieScaled = round1((Math.min(calc.total, comp.rawMax)/comp.rawMax) * comp.scaledMax);
     return `<tr>
       <td>${escapeHtml(s.name)}</td>
       ${shortCells}
       <td class="total-cell">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
       ${longCells}
       <td class="total-cell">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
-      <td class="total-cell">${calc.longScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_SCALED_MAX}</span></td>
       <td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
+      <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
     </tr>`;
   }).join('');
 
@@ -5594,7 +5644,7 @@ function renderCITermTestEntry(params){
 
         <table class="data-table" style="min-width:1400px;">
           <thead>
-            <tr><th rowspan="2">Student</th>${shortHead}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Long<br>Scaled</th><th rowspan="2">Term Test<br>Total</th></tr>
+            <tr><th rowspan="2">Student</th>${shortHead}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Term Test<br>Total</th><th rowspan="2">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -5873,8 +5923,16 @@ function renderCCList(){
             <label>Instructor name <span style="text-transform:none;">(only needed for a new account)</span></label>
             <input id="cc-assign-instructor-name" type="text" placeholder="Dr. Jane Doe">
           </div>
+          <div class="config-field">
+            <label>Teaching component</label>
+            <select id="cc-assign-loadtype">
+              <option value="">— Select —</option>
+              <option value="L">Lecture (L)</option>
+              <option value="P">Practical (P)</option>
+            </select>
+          </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-subject').value, document.getElementById('cc-assign-regulation').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value)">Add Section &amp; Assign Instructor</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-subject').value, document.getElementById('cc-assign-regulation').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value, document.getElementById('cc-assign-loadtype').value)">Add Section &amp; Assign Instructor</button>
       </div>
 
       <div class="card">
