@@ -1180,6 +1180,15 @@ const TT_ALL_QKEYS = TT_SHORT_KEYS.concat(TT_ALL_LONG_QKEYS);
 function ttSetupComplete(course, cycle){
   return TT_ALL_QKEYS.every(qKey=>!!getQuestionConfig(course, cycle, qKey).unit);
 }
+/* Whether the Course Coordinator has finished the Question Paper Setup for
+   this cycle and forwarded it to the Course Instructor. Stored as a sibling
+   key inside the same ttPaperConfig[cycle] jsonb blob (alongside the q-key
+   entries) so no Supabase schema change is needed. Before this is true, the
+   CI's marks-entry table for this cycle stays locked — units/splits are the
+   CC's call, made when the question paper itself is set. */
+function isTTForwarded(course, cycle){
+  return !!(((course.ttPaperConfig||{})[cycle]||{}).__forwarded);
+}
 /* Whether the Question Paper Setup panel is expanded (showing the Unit/split
    dropdowns) for a given course. Defaults to expanded until every question
    has a Unit set, then auto-collapses to a compact summary — the CI can
@@ -2577,18 +2586,67 @@ const App = {
      though they're the same choice pair. Applies to the whole class for
      that cycle — the CI picks the Unit because units are decided when the
      question paper is made, not fixed by the app. ---------- */
+  /* ---------- CC: set the Unit + marks-split ("8+8" or single "16") for
+     each individual long-answer question (Q6-Q11) — and the Unit alone for
+     each short question (Q1-Q5) — before the Course Instructor can enter
+     marks against it. e.g. Q6 can be 8+8 from Unit 1 while Q7 is a single
+     16 from Unit 2, even though they're the same choice pair. Applies to
+     the whole class for that cycle — the CC (not the CI) picks the Unit,
+     because the CC sets up the question paper and forwards it on; the CI
+     only enters marks once it's forwarded. ---------- */
   setTTPaperConfig(courseId, cycle, qKey, field, value){
     const actor = this.currentUser();
     const course = this.getCourse(courseId);
     if(!course){ toast('Course not found.', 'err'); return; }
-    const ciUser = getCourseCIUser(courseId);
-    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can set up the question paper.', 'err'); return; }
+    const ccUser = getCourseCCUser(courseId);
+    if(ccUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can set up the question paper.', 'err'); return; }
     if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked.', 'err'); return; }
+    if(isTTForwarded(course, cycle)){ toast('This setup was already forwarded to the Course Instructor — unlock it first to make changes.', 'err'); return; }
     course.ttPaperConfig = course.ttPaperConfig || {};
     course.ttPaperConfig[cycle] = course.ttPaperConfig[cycle] || {};
     course.ttPaperConfig[cycle][qKey] = course.ttPaperConfig[cycle][qKey] || {};
     course.ttPaperConfig[cycle][qKey][field] = value;
     syncCourse(course);
+    renderContent();
+  },
+
+  /* ---------- CC: forward the finished Question Paper Setup to the Course
+     Instructor. Locks the setup (CI cannot edit it, CC cannot either until
+     unlocked again) and opens up marks entry for that cycle on the CI's
+     side. Requires every question to have a Unit set first. ---------- */
+  forwardTTPaperConfig(courseId, cycle){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ccUser = getCourseCCUser(courseId);
+    if(ccUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can forward the question paper setup.', 'err'); return; }
+    if(!ttSetupComplete(course, cycle)){ toast('Set a Unit for every question (Q1–Q11) before forwarding.', 'err'); return; }
+    course.ttPaperConfig = course.ttPaperConfig || {};
+    course.ttPaperConfig[cycle] = course.ttPaperConfig[cycle] || {};
+    course.ttPaperConfig[cycle].__forwarded = true;
+    syncCourse(course);
+    this.logHistory(course, `Question Paper Setup for ${TERM_TEST_LABELS[cycle]||cycle} forwarded to the Course Instructor`);
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `Question paper set up for ${TERM_TEST_LABELS[cycle]||cycle}`, `${actor.name} finished the Question Paper Setup for ${course.code} — ${course.name} (${TERM_TEST_LABELS[cycle]||cycle}). You can now enter marks against it.`, true);
+    toast('Forwarded to the Course Instructor — marks entry is now open for this cycle.', 'ok');
+    renderContent();
+  },
+
+  /* ---------- CC: reopen a previously-forwarded setup for editing (e.g. a
+     mistake was found). Locks the CI back out of marks entry for this cycle
+     until it's forwarded again. ---------- */
+  unlockTTPaperConfig(courseId, cycle){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ccUser = getCourseCCUser(courseId);
+    if(ccUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can reopen the question paper setup.', 'err'); return; }
+    course.ttPaperConfig = course.ttPaperConfig || {};
+    course.ttPaperConfig[cycle] = course.ttPaperConfig[cycle] || {};
+    course.ttPaperConfig[cycle].__forwarded = false;
+    syncCourse(course);
+    this.logHistory(course, `Question Paper Setup for ${TERM_TEST_LABELS[cycle]||cycle} reopened for editing`);
+    toast('Reopened for editing — the Course Instructor is locked out of marks entry for this cycle until you forward it again.', 'ok');
     renderContent();
   },
 
@@ -2599,6 +2657,7 @@ const App = {
     const ciUser = getCourseCIUser(courseId);
     if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can enter Term Test marks.', 'err'); return; }
     if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked — Term Test marks can no longer be edited.', 'err'); return; }
+    if(!isTTForwarded(course, cycle)){ toast('Your Course Coordinator hasn\'t forwarded the Question Paper Setup for this cycle yet.', 'err'); return; }
     const s = (course.students||[]).find(x=>x.id===studentId);
     if(!s) return;
     s.marks = s.marks || {};
@@ -3185,6 +3244,7 @@ function renderContent(){
     'cc-list': renderCCList,
     'cc-roster': renderCCRoster,
     'cc-review': renderCCReview,
+    'cc-termtest-setup': renderCCTermTestSetup,
     'faculty-empty': renderFacultyEmpty,
   };
   const fn = routes[view] || renderFacultyEmpty;
@@ -5410,43 +5470,13 @@ function renderCITermTestEntry(params){
     return wrap;
   }
   const correctionMode = course.status==='approved' && course.editUnlocked;
-  const editable = course.status==='draft' || correctionMode;
+  const forwarded = isTTForwarded(course, cycle);
+  const editable = (course.status==='draft' || correctionMode) && forwarded;
   const comp = template.cie.find(c=>c.key===compKey);
 
-  const setupExpanded = isTTSetupExpanded(course, cycle);
-  const shortQuestionSetupHtml = TT_SHORT_KEYS.map(qKey=>{
-    const cfg = getQuestionConfig(course, cycle, qKey);
-    return `
-      <div class="config-grid" style="margin-top:10px;">
-        <div class="config-field">
-          <label>${qKey.toUpperCase()} — Unit</label>
-          <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','unit', this.value)">
-            <option value="">— Select Unit —</option>
-            ${TT_UNIT_OPTIONS.map(u=>`<option value="${escapeHtml(u)}" ${cfg.unit===u?'selected':''}>${escapeHtml(u)}</option>`).join('')}
-          </select>
-        </div>
-      </div>`;
-  }).join('');
-  const questionSetupHtml = TT_ALL_LONG_QKEYS.map(qKey=>{
-    const cfg = getQuestionConfig(course, cycle, qKey);
-    return `
-      <div class="config-grid" style="margin-top:10px;">
-        <div class="config-field">
-          <label>${qKey.toUpperCase()} — Unit</label>
-          <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','unit', this.value)">
-            <option value="">— Select Unit —</option>
-            ${TT_UNIT_OPTIONS.map(u=>`<option value="${escapeHtml(u)}" ${cfg.unit===u?'selected':''}>${escapeHtml(u)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="config-field">
-          <label>${qKey.toUpperCase()} — Marks split</label>
-          <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','split', this.value)">
-            <option value="${cfg.halfValue}" ${cfg.split===cfg.halfValue?'selected':''}>${cfg.halfValue} (parts a &amp; b)</option>
-            <option value="${cfg.fullValue}" ${cfg.split===cfg.fullValue?'selected':''}>${cfg.fullValue} (single answer)</option>
-          </select>
-        </div>
-      </div>`;
-  }).join('');
+  // Unit/split are the Course Coordinator's call now — this page only shows
+  // a read-only summary of what the CC has set, plus the forward status.
+  // Marks entry itself stays locked until the CC forwards the setup.
   const shortQuestionSetupSummaryHtml = `<div style="margin-top:10px;">${TT_SHORT_KEYS.map(qKey=>{
     const cfg = getQuestionConfig(course, cycle, qKey);
     return `<span style="display:inline-block;margin:4px 10px 4px 0;padding:4px 10px;background:#F3EEDD;border:1px solid var(--rule);border-radius:6px;font-size:12.5px;">
@@ -5459,7 +5489,6 @@ function renderCITermTestEntry(params){
       <strong>${qKey.toUpperCase()}</strong>: ${cfg.unit ? escapeHtml(cfg.unit) : `<span style="color:var(--seal-red);">Unit not set</span>`} · ${cfg.split===cfg.fullValue?`${cfg.fullValue} (single)`:cfg.halfValue}
     </span>`;
   }).join('')}</div>`;
-
 
   const rows = (course.students||[]).map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
@@ -5546,25 +5575,23 @@ function renderCITermTestEntry(params){
     <div class="card">
       <div class="card-row">
         <div class="section-title" style="font-size:15px;">Question Paper Setup</div>
-        <button class="btn btn-sm ${setupExpanded?'':'btn-outline'}" onclick="toggleTTSetup('${course.id}','${cycle}')">${setupExpanded ? 'Done — Hide Setup' : 'Edit Question Paper Setup'}</button>
+        ${forwarded
+          ? `<span class="status-pill status-approved">Set by your Course Coordinator</span>`
+          : `<span class="status-pill status-submitted">Not yet forwarded by your Course Coordinator</span>`}
       </div>
-      ${setupExpanded ? `
-        <p class="section-meta" style="margin-top:4px;">Set the Unit for EACH short-answer question (Q1–Q5) and the Unit + marks-split for EACH long-answer question (Q6–Q11) before entering marks — every question can have its own Unit, e.g. Q6 as 8+8 from Unit 1 while Q7 is a single 16 from Unit 2. Nothing is pre-filled since units are decided when you make the question paper. This applies to the whole class for ${escapeHtml(cycleLabel)}. Click "Done" once you're finished to hide these dropdowns and give the student marks table more room.</p>
-        <div class="section-meta" style="margin-top:12px;font-weight:600;">Short answers (Q1–Q5)</div>
-        ${shortQuestionSetupHtml}
-        <div class="section-meta" style="margin-top:16px;font-weight:600;">Long answers (Q6–Q11)</div>
-        ${questionSetupHtml}
-      ` : `
-        <p class="section-meta" style="margin-top:4px;">Set for ${escapeHtml(cycleLabel)} — click "Edit Question Paper Setup" to change it.</p>
-        <div class="section-meta" style="margin-top:8px;font-weight:600;">Short answers</div>
-        ${shortQuestionSetupSummaryHtml}
-        <div class="section-meta" style="margin-top:8px;font-weight:600;">Long answers</div>
-        ${questionSetupSummaryHtml}
-      `}
+      <p class="section-meta" style="margin-top:4px;">${forwarded
+        ? `Your Course Coordinator set the Unit for every question and forwarded it — you can enter marks below.`
+        : `Your Course Coordinator sets the Unit (and marks-split for Q6–Q11) when they make the question paper, then forwards it here. Marks entry for ${escapeHtml(cycleLabel)} stays locked until they do.`}</p>
+      <div class="section-meta" style="margin-top:12px;font-weight:600;">Short answers</div>
+      ${shortQuestionSetupSummaryHtml}
+      <div class="section-meta" style="margin-top:8px;font-weight:600;">Long answers</div>
+      ${questionSetupSummaryHtml}
     </div>
+    ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     <div class="card">
       <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks (half a unit — the 5-unit syllabus splits half for TT1, half for TT2). The 3 pairs total 40 raw with no further scaling needed. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
       <div class="table-scroll">
+
         <table class="data-table" style="min-width:1400px;">
           <thead>
             <tr><th rowspan="2">Student</th>${shortHead}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Long<br>Scaled</th><th rowspan="2">Term Test<br>Total</th></tr>
@@ -5572,7 +5599,7 @@ function renderCITermTestEntry(params){
           <tbody>${rows}</tbody>
         </table>
       </div>
-    </div>
+    </div>`}
   `;
   return wrap;
 }
@@ -5904,6 +5931,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
                   ? `<button class="btn btn-red btn-sm" onclick="if(confirm('Revoke Course Instructor access for ${escapeHtml(ciUser.name)} on ${c.code}?')) App.revokeRole('CI','${c.id}')">Revoke Instructor</button>`
                   : `<button class="btn btn-sm btn-outline" onclick="openAssignModal('CI','${c.id}')">Assign Instructor</button>`}
               `}
+              ${c.evalType && ['TT1','TT2'].some(cycle=>termTestComponentKey(getCourseTemplate(c), cycle)) ? `<button class="btn btn-outline btn-sm" onclick="App.navigate('cc-termtest-setup',{courseId:'${c.id}'})">Question Paper Setup</button>` : ''}
             </div>
           </div>
           ${lightweightCompletionChipsHtml(c)}
@@ -6052,6 +6080,126 @@ function handleCCRosterExcelImport(input, courseId){
   });
 }
 window.handleCCRosterExcelImport = handleCCRosterExcelImport;
+
+/* ---------- CC: Question Paper Setup page. Set the Unit for every short
+   question (Q1-Q5) and the Unit + marks-split for every long-answer choice
+   pair (Q6-Q11), for TT1 and/or TT2 (whichever cycles this section's
+   Evaluation Type actually has a Term Test slot for) — then forward to the
+   Course Instructor, who can only start entering marks once forwarded. ---------- */
+function renderCCTermTestSetup(params){
+  const course = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>`;
+  if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Course not found','')}`; return wrap; }
+  const template = course.evalType ? getCourseTemplate(course) : null;
+  if(!template){
+    wrap.innerHTML = `<div class="page-head">${backBtn}<h2>${escapeHtml(course.name)}</h2></div>${emptyStateHtml('Evaluation Type not yet fixed','Fix an Evaluation Type for this section first — Question Paper Setup needs it to know which cycles apply.')}`;
+    return wrap;
+  }
+  const cycles = ['TT1','TT2'].filter(cycle=>termTestComponentKey(template, cycle));
+  if(!cycles.length){
+    wrap.innerHTML = `<div class="page-head">${backBtn}<h2>${escapeHtml(course.name)}</h2></div>${emptyStateHtml('Not applicable','This section\'s Evaluation Type has no Term Test component.')}`;
+    return wrap;
+  }
+  const recordEditable = course.status==='draft' || (course.status==='approved' && course.editUnlocked);
+
+  const cyclePanelHtml = cycles.map(cycle=>{
+    const cycleLabel = TERM_TEST_LABELS[cycle];
+    const forwarded = isTTForwarded(course, cycle);
+    const complete = ttSetupComplete(course, cycle);
+    const setupExpanded = isTTSetupExpanded(course, cycle);
+    const editable = recordEditable && !forwarded;
+
+    const shortHtml = TT_SHORT_KEYS.map(qKey=>{
+      const cfg = getQuestionConfig(course, cycle, qKey);
+      return `
+        <div class="config-grid" style="margin-top:10px;">
+          <div class="config-field">
+            <label>${qKey.toUpperCase()} — Unit</label>
+            <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','unit', this.value)">
+              <option value="">— Select Unit —</option>
+              ${TT_UNIT_OPTIONS.map(u=>`<option value="${escapeHtml(u)}" ${cfg.unit===u?'selected':''}>${escapeHtml(u)}</option>`).join('')}
+            </select>
+          </div>
+        </div>`;
+    }).join('');
+    const longHtml = TT_ALL_LONG_QKEYS.map(qKey=>{
+      const cfg = getQuestionConfig(course, cycle, qKey);
+      return `
+        <div class="config-grid" style="margin-top:10px;">
+          <div class="config-field">
+            <label>${qKey.toUpperCase()} — Unit</label>
+            <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','unit', this.value)">
+              <option value="">— Select Unit —</option>
+              ${TT_UNIT_OPTIONS.map(u=>`<option value="${escapeHtml(u)}" ${cfg.unit===u?'selected':''}>${escapeHtml(u)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field">
+            <label>${qKey.toUpperCase()} — Marks split</label>
+            <select ${editable?'':'disabled'} onchange="App.setTTPaperConfig('${course.id}','${cycle}','${qKey}','split', this.value)">
+              <option value="${cfg.halfValue}" ${cfg.split===cfg.halfValue?'selected':''}>${cfg.halfValue} (parts a &amp; b)</option>
+              <option value="${cfg.fullValue}" ${cfg.split===cfg.fullValue?'selected':''}>${cfg.fullValue} (single answer)</option>
+            </select>
+          </div>
+        </div>`;
+    }).join('');
+    const shortSummaryHtml = `<div style="margin-top:10px;">${TT_SHORT_KEYS.map(qKey=>{
+      const cfg = getQuestionConfig(course, cycle, qKey);
+      return `<span style="display:inline-block;margin:4px 10px 4px 0;padding:4px 10px;background:#F3EEDD;border:1px solid var(--rule);border-radius:6px;font-size:12.5px;">
+        <strong>${qKey.toUpperCase()}</strong>: ${cfg.unit ? escapeHtml(cfg.unit) : `<span style="color:var(--seal-red);">Unit not set</span>`}
+      </span>`;
+    }).join('')}</div>`;
+    const longSummaryHtml = `<div style="margin-top:10px;">${TT_ALL_LONG_QKEYS.map(qKey=>{
+      const cfg = getQuestionConfig(course, cycle, qKey);
+      return `<span style="display:inline-block;margin:4px 10px 4px 0;padding:4px 10px;background:#F3EEDD;border:1px solid var(--rule);border-radius:6px;font-size:12.5px;">
+        <strong>${qKey.toUpperCase()}</strong>: ${cfg.unit ? escapeHtml(cfg.unit) : `<span style="color:var(--seal-red);">Unit not set</span>`} · ${cfg.split===cfg.fullValue?`${cfg.fullValue} (single)`:cfg.halfValue}
+      </span>`;
+    }).join('')}</div>`;
+
+    const badge = forwarded
+      ? `<span class="status-pill status-approved">Forwarded to Course Instructor</span>`
+      : complete ? `<span class="status-pill status-draft">Ready to forward</span>`
+      : `<span class="status-pill status-submitted">Setup incomplete</span>`;
+
+    const actionBtn = forwarded
+      ? (recordEditable ? `<button class="btn btn-outline btn-sm" onclick="App.unlockTTPaperConfig('${course.id}','${cycle}')">Reopen for Editing</button>` : '')
+      : `<button class="btn btn-sm" ${complete?'':'disabled'} onclick="App.forwardTTPaperConfig('${course.id}','${cycle}')">Forward to Course Instructor</button>`;
+
+    return `
+      <div class="card">
+        <div class="card-row">
+          <div class="section-title" style="font-size:15px;">${escapeHtml(cycleLabel)} Question Paper Setup</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${badge}
+            ${!forwarded ? `<button class="btn btn-sm ${setupExpanded?'':'btn-outline'}" onclick="toggleTTSetup('${course.id}','${cycle}')">${setupExpanded ? 'Hide' : 'Edit'}</button>` : ''}
+          </div>
+        </div>
+        <p class="section-meta" style="margin-top:4px;">Set the Unit for EACH short-answer question (Q1–Q5) and the Unit + marks-split for EACH long-answer question (Q6–Q11) — this is decided when the question paper itself is made. Once forwarded, the Course Instructor can enter marks against it, and this setup locks until you reopen it.</p>
+        ${(!forwarded && setupExpanded) ? `
+          <div class="section-meta" style="margin-top:12px;font-weight:600;">Short answers (Q1–Q5)</div>
+          ${shortHtml}
+          <div class="section-meta" style="margin-top:16px;font-weight:600;">Long answers (Q6–Q11)</div>
+          ${longHtml}
+        ` : `
+          <div class="section-meta" style="margin-top:12px;font-weight:600;">Short answers</div>
+          ${shortSummaryHtml}
+          <div class="section-meta" style="margin-top:8px;font-weight:600;">Long answers</div>
+          ${longSummaryHtml}
+        `}
+        <div style="margin-top:14px;">${actionBtn}</div>
+      </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">Course Coordinator</div>
+      <h2>${escapeHtml(course.name)}</h2>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
+    </div>
+    ${cyclePanelHtml}`;
+  return wrap;
+}
 
 function renderCCReview(params){
   const course = App.getCourse(params.courseId);
