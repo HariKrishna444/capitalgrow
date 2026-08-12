@@ -920,6 +920,16 @@ const SEMESTER_NUMBERS = ['1','2','3','4','5','6','7','8'];
 // later without touching this list's shape.
 const REGULATION_OPTIONS = ['R24','R25','R26'];
 
+/* A subject's Regulation is always the first 2 digits of its course code —
+   24xxxx = R24, 25xxxx = R25, 26xxxx = R26. Derived here rather than typed
+   by hand into SUBJECT_CATALOG, so a stray/mistyped `reg` field can never
+   silently put a subject under the wrong regulation. */
+function regulationFromCode(code){
+  const m = String(code||'').trim().match(/^(\d{2})/);
+  return m ? ('R'+m[1]) : null;
+}
+window.regulationFromCode = regulationFromCode;
+
 /* Master Subject Catalog — regulation + branch + semester mapping for every
    course code across the curricula uploaded so far (A24/A25 x CSE/AIML).
    Extend this array as more regulations/branches are provided; nothing else
@@ -1071,7 +1081,7 @@ const SUBJECT_CATALOG = [
   {reg:'R25',branch:'AIML',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
   {reg:'R25',branch:'AIML',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
   {reg:'R25',branch:'AIML',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
-  {reg:'R25',branch:'AIML',sem:'6',code:'24CSE2902',name:'Summer Internship'},
+  {reg:'R24',branch:'AIML',sem:'6',code:'24CSE2902',name:'Summer Internship'},
   {reg:'R25',branch:'AIML',sem:'7',code:'25CSE2601',name:'Computer Networks'},
   {reg:'R25',branch:'AIML',sem:'7',code:'25CSE4401',name:'Generative AI'},
   {reg:'R25',branch:'AIML',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
@@ -1118,7 +1128,7 @@ const SUBJECT_CATALOG = [
   {reg:'R25',branch:'CSE',sem:'6',code:'25CSE1204',name:'Competitive Programming Practicum - III'},
   {reg:'R25',branch:'CSE',sem:'6',code:'25HAS3201',name:'Innovation and Entrepreneurship-II'},
   {reg:'R25',branch:'CSE',sem:'6',code:'25VAC1002',name:'Indian Constitution'},
-  {reg:'R25',branch:'CSE',sem:'6',code:'24CSE2902',name:'Summer Internship'},
+  {reg:'R24',branch:'CSE',sem:'6',code:'24CSE2902',name:'Summer Internship'},
   {reg:'R25',branch:'CSE',sem:'7',code:'25CSE2601',name:'Computer Networks'},
   {reg:'R25',branch:'CSE',sem:'7',code:'25VAC1003',name:'Universal Human Values-II'},
   {reg:'R25',branch:'CSE',sem:'7',code:'25VAC1004',name:'Environmental Studies'},
@@ -1148,7 +1158,7 @@ function resolveSemesterForCode(code){
    down instead of showing every subject in Courses Applicable at once. */
 function catalogSubjectsFor(regulation, branch, semester){
   if(!regulation || !branch || !semester) return [];
-  return SUBJECT_CATALOG.filter(r=>r.reg===regulation && r.branch===branch && r.sem===semester);
+  return SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)===regulation && r.branch===branch && r.sem===semester);
 }
 function ccSubjectDropdownOptionsHtml(regulation, branch, semester){
   const list = catalogSubjectsFor(regulation, branch, semester);
@@ -1911,7 +1921,7 @@ const App = {
     if(!SEMESTER_NUMBERS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
     const code = (subjectCode||'').trim().toUpperCase();
     if(!code){ toast('Choose a Subject.', 'err'); return; }
-    const catalogEntry = SUBJECT_CATALOG.find(s=>s.reg===regulation && s.branch===branch && s.sem===semester && s.code===code);
+    const catalogEntry = SUBJECT_CATALOG.find(s=>regulationFromCode(s.code)===regulation && s.branch===branch && s.sem===semester && s.code===code);
     if(!catalogEntry){ toast('That subject isn\'t in the catalog for this Regulation/Branch/Semester — pick one from the list.', 'err'); return; }
     const sec = (section||'').trim().toUpperCase();
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
@@ -3316,7 +3326,7 @@ function etPillFixed(course){
   if(!abbr) return `<span class="status-pill status-draft">ET: Not fixed yet</span>`;
   return `<span class="status-pill" style="background:var(--brass);color:#FBF7EC;border-color:var(--brass);">ET: ${escapeHtml(evalTypeLabel(abbr))}</span>`;
 }
-function courseMeta(course){ return `${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}`; }
+function courseMeta(course){ return `${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}${course.regulation ? ` · ${escapeHtml(course.regulation)}` : ''}`; }
 function assignmentSummary(courseId){
   const course = App.getCourse(courseId);
   const ccUser = getCourseCCUser(courseId);
@@ -4551,11 +4561,11 @@ function onNewCourseCodeChange(rawCode){
     semEl.value = result.semester;
     const entry = result.entries[0];
     if(nameEl && !nameEl.value.trim()) nameEl.value = entry.name;
-    const regsBranches = [...new Set(result.entries.map(e=>`${e.reg} ${e.branch}`))].join(', ');
+    const regsBranches = [...new Set(result.entries.map(e=>`${regulationFromCode(e.code)} ${e.branch}`))].join(', ');
     noteEl.innerHTML = `Matched in Subject Catalog (${escapeHtml(regsBranches)}) — Semester ${result.semester} filled in automatically.`;
   } else if(result.options){
     noteEl.innerHTML = `This code maps to different semesters depending on regulation/branch — pick the right one: `
-      + result.options.map(o=>`<button type="button" class="btn btn-outline btn-sm" style="margin:2px 4px 0 0;" onclick="document.getElementById('hod-newcourse-semester').value='${o.sem}';${nameEl?`document.getElementById('hod-newcourse-name').value='${o.name.replace(/'/g,"\\'")}';`:''}">${escapeHtml(o.reg)} ${escapeHtml(o.branch)} — Sem ${o.sem}</button>`).join('');
+      + result.options.map(o=>`<button type="button" class="btn btn-outline btn-sm" style="margin:2px 4px 0 0;" onclick="document.getElementById('hod-newcourse-semester').value='${o.sem}';${nameEl?`document.getElementById('hod-newcourse-name').value='${o.name.replace(/'/g,"\\'")}';`:''}">${escapeHtml(regulationFromCode(o.code))} ${escapeHtml(o.branch)} — Sem ${o.sem}</button>`).join('');
   }
 }
 window.onNewCourseCodeChange = onNewCourseCodeChange;
