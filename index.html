@@ -287,15 +287,31 @@ input,select,textarea{font-family:inherit;}
 .btn-sm{padding:6px 12px;font-size:12px;}
 
 table.data-table{
-  width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px;
+  width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px;margin-top:6px;
+  border:1px solid var(--rule);border-radius:8px;overflow:hidden;
+  box-shadow:0 1px 3px rgba(43,30,16,0.06);
 }
 .data-table thead th{
   font-family:'IBM Plex Mono', monospace;font-size:10.5px;
-  letter-spacing:0.06em;text-transform:uppercase;color:var(--text-soft);
-  text-align:left;padding:9px 10px;border-bottom:1px solid var(--rule);
+  letter-spacing:0.06em;text-transform:uppercase;color:#FBF7EC;
+  text-align:left;padding:11px 12px;background:var(--brass);
+  border-bottom:2px solid var(--brass-dark, var(--ink));white-space:nowrap;
 }
-.data-table tbody td{padding:9px 10px;border-bottom:1px solid var(--rule-light);vertical-align:middle;}
+.data-table tbody td{padding:9px 12px;border-bottom:1px solid var(--rule-light);vertical-align:middle;}
 .data-table tbody tr:last-child td{border-bottom:none;}
+.data-table tbody tr:nth-child(even){background:var(--parchment-2);}
+.data-table tbody tr:hover{background:#F1EAD6;}
+/* Student-name column stays put while scrolling horizontally through a wide
+   marks table (many question/unit columns) — the same trick as a frozen
+   Excel pane, so you always know whose row you're editing. */
+.data-table thead th:first-child, .data-table tbody td:first-child{
+  position:sticky;left:0;z-index:1;font-weight:600;
+  box-shadow:2px 0 4px rgba(43,30,16,0.06);
+}
+.data-table thead th:first-child{ background:var(--brass); z-index:2; }
+.data-table tbody tr:nth-child(even) td:first-child{ background:var(--parchment-2); }
+.data-table tbody tr:nth-child(odd) td:first-child{ background:var(--card); }
+.data-table tbody tr:hover td:first-child{ background:#F1EAD6; }
 .data-table input[type=number]{
   width:64px;padding:5px 7px;border:1px solid var(--rule);
   background:#fff;font-size:13px;border-radius:2px;
@@ -1177,6 +1193,37 @@ function ccSubjectDropdownOptionsHtml(regulation, branch, semester){
    splits into "8+8" or "16", while the 8-mark Q10/Q11 pair splits into
    "4+4" or "8". */
 const TT_UNIT_OPTIONS = ['Unit 1','Unit 2','Unit 3','Unit 4','Unit 5'];
+/* A soft, consistent colour per Unit — used to band together every question
+   that belongs to the same Unit (Term Test header, SIA header) so a wide,
+   many-column marks table reads at a glance instead of as a wall of
+   identical grey cells. Falls back to a neutral tan for "Unit not set". */
+const UNIT_BAND_COLORS = ['#FBE6C6','#D9EFD9','#D6E7F7','#F6DCE8','#E6DCF6'];
+function unitBandColor(unitLabel){
+  const idx = TT_UNIT_OPTIONS.indexOf(unitLabel);
+  return idx>=0 ? UNIT_BAND_COLORS[idx % UNIT_BAND_COLORS.length] : '#EDE6D2';
+}
+/* Groups a column-ordered list of {unit, sub} header entries into a proper
+   two-row <thead>: a top row with one colour-banded, colspan-merged cell
+   per contiguous run of the same Unit, and a bottom row with each
+   question's own label — instead of cramming "Unit + Question" into a
+   single squished cell per column. */
+function groupedHeaderRows(items){
+  let top = '', sub = '';
+  let i = 0;
+  while(i < items.length){
+    let j = i;
+    while(j+1 < items.length && items[j+1].unit===items[i].unit) j++;
+    const span = j-i+1;
+    const color = unitBandColor(items[i].unit);
+    const unitText = items[i].unit ? escapeHtml(items[i].unit) : `<span style="color:var(--seal-red);">Unit not set</span>`;
+    top += `<th colspan="${span}" style="background:${color};border-bottom:2px solid var(--rule);color:var(--ink);">${unitText}</th>`;
+    for(let k=i; k<=j; k++){
+      sub += `<th style="background:${color};font-weight:500;color:var(--ink);">${items[k].sub}</th>`;
+    }
+    i = j+1;
+  }
+  return { top, sub };
+}
 function getLongPairForQKey(qKey){ return TT_LONG_PAIRS.find(p=>p.a===qKey||p.b===qKey); }
 function getLongPairMax(qKey){ const p = getLongPairForQKey(qKey); return p ? p.max : TT_SHORT_EACH_MAX; }
 function getQuestionConfig(course, cycle, qKey){
@@ -3834,7 +3881,11 @@ function siaEntryHtml(course, comp, editable){
     const scaled = round1((Math.min(rawTotal, comp.rawMax)/comp.rawMax) * comp.scaledMax);
     return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${rawTotal}/${comp.rawMax}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
   }).join('');
-  const unitHead = Array.from({length:unitCount}, (_,i)=>`<th>Unit ${i+1}<br><span style="text-transform:none;">/10</span></th>`).join('');
+  const unitHead = Array.from({length:unitCount}, (_,i)=>{
+    const label = TT_UNIT_OPTIONS[i] || `Unit ${i+1}`;
+    const color = unitBandColor(label);
+    return `<th style="background:${color};color:var(--ink);">${escapeHtml(label)}<br><span style="text-transform:none;">/10</span></th>`;
+  }).join('');
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">${escapeHtml(comp.label)} — unit-wise entry</div>
     <p class="section-meta" style="margin-top:4px;">Enter each unit's score out of 10 (${unitCount} unit${unitCount===1?'':'s'} = ${comp.rawMax} raw), automatically scaled down to /${comp.scaledMax} for the CIE total.</p>
@@ -5256,7 +5307,17 @@ window.downloadStudentTemplate = downloadStudentTemplate;
    (Abbr / Course Type / Eval Type / Components / Exam Marks / Marks-Weights)
    so the Course Instructor can see exactly what a Term Test 1 mark of 42/50
    turns into on their CIE total, before they start entering anything. */
-function evalTypeTableHtml(course){
+/* Evaluation-Type reference table — the "which components, how many raw
+   marks, how many weighted marks" table the Coordinator/HOD already sees
+   elsewhere as EVAL_TEMPLATES data, rendered here as the same visual table
+   (Abbr / Course Type / Eval Type / Components / Exam Marks / Marks-Weights)
+   so the Course Instructor can see exactly what a Term Test 1 mark of 42/50
+   turns into on their CIE total, before they start entering anything.
+   Pass `actions` (see renderCISubjectDetail) to append a right-hand column
+   with one Enter/View button per row, ROW-ALIGNED to that component since
+   it's rendered as an actual extra <td> in the same <tr> — not a separate
+   column of buttons that can drift out of alignment with wrapped labels. */
+function evalTypeTableHtml(course, actions){
   const tpl = getCourseTemplate(course);
   if(!course.evalType || !tpl){
     return `<div class="card"><p style="color:var(--text-soft);margin:0;">Evaluation Type not fixed yet for this section — ask your Course Coordinator.</p></div>`;
@@ -5266,7 +5327,8 @@ function evalTypeTableHtml(course){
   const seeTotal = see.reduce((a,c)=>a+c.scaledMax,0);
   const grand = cieTotal + seeTotal;
   const cs = 'border:1px solid #999;padding:6px 10px;';
-  const compCells = (c) => `<td style="${cs}text-align:left;">${escapeHtml(c.label)}</td><td style="${cs}text-align:center;">${c.rawMax||''}</td><td style="${cs}text-align:center;">${c.scaledMax}</td>`;
+  const actionCell = (html) => actions ? `<td style="${cs}text-align:center;padding:4px 8px;">${html||''}</td>` : '';
+  const compCells = (c, section) => `<td style="${cs}text-align:left;">${escapeHtml(c.label)}</td><td style="${cs}text-align:center;">${c.rawMax||''}</td><td style="${cs}text-align:center;">${c.scaledMax}</td>${actionCell(actions ? actions.component(c, section) : '')}`;
   const totalRowSpan = cie.length + see.length + 2; // + CIE Total row + SEE Total row
   let rows = '';
   cie.forEach((c,i)=>{
@@ -5276,26 +5338,26 @@ function evalTypeTableHtml(course){
       rows += `<td rowspan="${totalRowSpan}" style="${cs}text-align:center;">${escapeHtml(tpl.courseType)}</td>`;
       rows += `<td rowspan="${cie.length+1}" style="${cs}text-align:center;font-weight:600;">CIE</td>`;
     }
-    rows += compCells(c);
+    rows += compCells(c, 'cie');
     rows += `</tr>`;
   });
-  rows += `<tr style="background:#92D050;"><td colspan="2" style="${cs}text-align:center;font-weight:700;">CIE Total</td><td style="${cs}text-align:center;font-weight:700;">${cieTotal}</td></tr>`;
+  rows += `<tr style="background:#92D050;"><td colspan="2" style="${cs}text-align:center;font-weight:700;">CIE Total</td><td style="${cs}text-align:center;font-weight:700;">${cieTotal}</td>${actionCell(actions ? actions.cieTotal() : '')}</tr>`;
   see.forEach((c,i)=>{
     rows += `<tr>`;
     if(i===0) rows += `<td rowspan="${see.length+1}" style="${cs}text-align:center;font-weight:600;">SEE</td>`;
-    rows += compCells(c);
+    rows += compCells(c, 'see');
     rows += `</tr>`;
   });
-  rows += `<tr style="background:#92D050;"><td colspan="2" style="${cs}text-align:center;font-weight:700;">SEE Total</td><td style="${cs}text-align:center;font-weight:700;">${seeTotal}</td></tr>`;
+  rows += `<tr style="background:#92D050;"><td colspan="2" style="${cs}text-align:center;font-weight:700;">SEE Total</td><td style="${cs}text-align:center;font-weight:700;">${seeTotal}</td>${actionCell(actions ? actions.seeTotal() : '')}</tr>`;
   return `<div class="card" style="overflow-x:auto;">
     <table style="border-collapse:collapse;width:100%;font-size:12.5px;">
       <thead><tr style="background:#FFFF00;">
         <th style="${cs}">Abbr</th><th style="${cs}">Course Type</th><th style="${cs}">Eval Type</th>
-        <th style="${cs}">Components</th><th style="${cs}">Exam Marks</th><th style="${cs}">Marks - Weights</th>
+        <th style="${cs}">Components</th><th style="${cs}">Exam Marks</th><th style="${cs}">Marks - Weights</th>${actions ? `<th style="${cs}">Marks Entry</th>` : ''}
       </tr></thead>
       <tbody>
         ${rows}
-        <tr style="background:#00B0F0;"><td colspan="4" style="${cs}text-align:center;font-weight:700;">Total Marks</td><td style="${cs}"></td><td style="${cs}text-align:center;font-weight:700;">${grand}</td></tr>
+        <tr style="background:#00B0F0;"><td colspan="4" style="${cs}text-align:center;font-weight:700;">Total Marks</td><td style="${cs}"></td><td style="${cs}text-align:center;font-weight:700;">${grand}</td>${actionCell(actions ? actions.grandTotal() : '')}</tr>
       </tbody>
     </table>
   </div>`;
@@ -5369,27 +5431,22 @@ function renderCISubjectDetail(params){
   if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Subject not found','')}`; return wrap; }
   const enterMode = course.status==='draft' || course.editUnlocked;
   const template = course.evalType ? getCourseTemplate(course) : null;
-  let marksButtonsHtml = `<p class="section-meta">Fix an Evaluation Type first — marks-entry buttons appear here once your Coordinator sets one.</p>`;
+  let actions = null;
   if(template){
     const tt1Key = termTestComponentKey(template, 'TT1');
     const tt2Key = termTestComponentKey(template, 'TT2');
-    const cieButtons = template.cie.map(comp=>{
-      if(comp.key===tt1Key) return `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})">Enter Term Test 1</button>`;
-      if(comp.key===tt2Key) return `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})">Enter Term Test 2</button>`;
-      return `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-component-entry',{courseId:'${course.id}', section:'cie', compKey:'${comp.key}'})">Enter ${escapeHtml(comp.label)}</button>`;
-    }).join('');
-    const seeComps = seeDisplayComponents(template);
-    const seeButtons = seeComps.map(comp=>`<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-component-entry',{courseId:'${course.id}', section:'see', compKey:'${comp.key}'})">Enter ${escapeHtml(comp.label)}</button>`).join('');
-    marksButtonsHtml = `
-      <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Enter CIE marks — one component at a time</div>
-      ${cieButtons}
-      <button class="btn btn-outline btn-sm" style="border-color:var(--seal-red);color:var(--seal-red);margin-top:2px;" onclick="App.navigate('ci-section-view',{courseId:'${course.id}', section:'cie'})">View CIE Marks</button>
-      ${seeButtons ? `
-      <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;margin-top:10px;">Enter SEE marks</div>
-      ${seeButtons}
-      <button class="btn btn-outline btn-sm" style="border-color:var(--seal-red);color:var(--seal-red);margin-top:2px;" onclick="App.navigate('ci-section-view',{courseId:'${course.id}', section:'see'})">View SEE Marks</button>
-      ` : ''}
-    `;
+    const enterBtn = (label, onclick) => `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" style="white-space:nowrap;" onclick="${onclick}">${label}</button>`;
+    const viewBtn = (label, onclick) => `<button class="btn btn-outline btn-sm" style="white-space:nowrap;border-color:var(--seal-red);color:var(--seal-red);" onclick="${onclick}">${label}</button>`;
+    actions = {
+      component(comp, section){
+        if(comp.key===tt1Key) return enterBtn('Enter Term Test 1', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`);
+        if(comp.key===tt2Key) return enterBtn('Enter Term Test 2', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`);
+        return enterBtn(`Enter ${escapeHtml(comp.label)}`, `App.navigate('ci-component-entry',{courseId:'${course.id}', section:'${section}', compKey:'${comp.key}'})`);
+      },
+      cieTotal(){ return viewBtn('View CIE Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'cie'})`); },
+      seeTotal(){ return viewBtn('View SEE Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'see'})`); },
+      grandTotal(){ return viewBtn('View Total Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'total'})`); },
+    };
   }
   wrap.innerHTML = `
     <div class="page-head">
@@ -5406,12 +5463,7 @@ function renderCISubjectDetail(params){
       ${deadlineBadge(course)}
     </div>
     ${sentBackBanner(course)}
-    <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">
-      <div style="flex:2;min-width:340px;">${evalTypeTableHtml(course)}</div>
-      <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px;">
-        ${marksButtonsHtml}
-      </div>
-    </div>
+    ${evalTypeTableHtml(course, actions)}
   `;
   return wrap;
 }
@@ -5631,19 +5683,16 @@ function renderCITermTestEntry(params){
     </tr>`;
   }).join('');
 
-  const shortHead = TT_SHORT_KEYS.map(k=>{
+  const shortItems = TT_SHORT_KEYS.map(k=>{
     const cfg = getQuestionConfig(course, cycle, k);
-    const unitLabel = cfg.unit || 'Unit not set';
-    return `<th>${escapeHtml(unitLabel)}<br><span style="text-transform:none;">${k.toUpperCase()} — /${TT_SHORT_EACH_MAX}</span></th>`;
-  }).join('');
-  const longHead = TT_LONG_PAIRS.map(({a,b,max})=>{
-    const headFor = qKey => {
-      const cfg = getQuestionConfig(course, cycle, qKey);
-      const unitLabel = cfg.unit || 'Unit not set';
-      return `<th>${escapeHtml(unitLabel)}<br><span style="text-transform:none;">${qKey.toUpperCase()} — /${max} (${cfg.split===cfg.fullValue?'single':cfg.halfValue})</span></th>`;
-    };
-    return headFor(a) + headFor(b);
-  }).join('');
+    return { unit: cfg.unit, sub: `${k.toUpperCase()} — /${TT_SHORT_EACH_MAX}` };
+  });
+  const longItems = TT_LONG_PAIRS.flatMap(({a,b,max})=>[a,b].map(qKey=>{
+    const cfg = getQuestionConfig(course, cycle, qKey);
+    return { unit: cfg.unit, sub: `${qKey.toUpperCase()} — /${max} (${cfg.split===cfg.fullValue?'single':cfg.halfValue})` };
+  }));
+  const shortHeadGrp = groupedHeaderRows(shortItems);
+  const longHeadGrp = groupedHeaderRows(longItems);
 
   wrap.innerHTML = `
     <div class="page-head">
@@ -5672,9 +5721,18 @@ function renderCITermTestEntry(params){
       <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks (half a unit — the 5-unit syllabus splits half for TT1, half for TT2). The 3 pairs total 40 raw with no further scaling needed. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
       <div class="table-scroll">
 
-        <table class="data-table" style="min-width:1400px;">
+        <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
           <thead>
-            <tr><th rowspan="2">Student</th>${shortHead}<th rowspan="2">Short<br>Total</th>${longHead}<th rowspan="2">Long<br>Raw</th><th rowspan="2">Term Test<br>Total</th><th rowspan="2">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th></tr>
+            <tr>
+              <th rowspan="2" style="vertical-align:middle;">Student</th>
+              ${shortHeadGrp.top}
+              <th rowspan="2" style="vertical-align:middle;">Short<br>Total</th>
+              ${longHeadGrp.top}
+              <th rowspan="2" style="vertical-align:middle;">Long<br>Raw</th>
+              <th rowspan="2" style="vertical-align:middle;">Term Test<br>Total</th>
+              <th rowspan="2" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
+            </tr>
+            <tr>${shortHeadGrp.sub}${longHeadGrp.sub}</tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -5850,39 +5908,44 @@ function renderCIComponentEntry(params){
   `;
   return wrap;
 }
-/* ---------- CI: read-only roll-up of one section (CIE or SEE) — reached
-   via "View CIE Marks" / "View SEE Marks". Marks entry itself never
-   happens here; it's split across the per-component pages above, this is
-   only for seeing every component side by side once they're all in. ---------- */
+/* ---------- CI: read-only roll-up of one section (CIE, SEE, or the
+   combined Total) — reached via "View CIE Marks" / "View SEE Marks" /
+   "View Total Marks". Marks entry itself never happens here; it's split
+   across the per-component pages above, this is only for seeing every
+   component side by side once they're all in. ---------- */
 function renderCISectionView(params){
   const course = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
-  const template = getCourseTemplate(course);
-  const section = params.section==='see' ? 'see' : 'cie';
-  const comps = section==='cie' ? template.cie : seeDisplayComponents(template);
-  const sectionMax = section==='cie' ? CIE_MAX : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
-  const rows = course.students.map(s=>{
-    const calc = computeCIE(s, comps);
-    const cells = comps.map(comp=>{
-      const v = s.marks[comp.key];
-      const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
-      return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+  const section = params.section==='see' ? 'see' : params.section==='total' ? 'total' : 'cie';
+  const pageTitle = section==='cie' ? 'CIE Marks — view only' : section==='see' ? 'SEE Marks — view only' : 'Total Marks — view only';
+  const bodyHtml = section==='total' ? marksViewTable(course) : (()=>{
+    const template = getCourseTemplate(course);
+    const comps = section==='cie' ? template.cie : seeDisplayComponents(template);
+    const sectionMax = section==='cie' ? CIE_MAX : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
+    const rows = course.students.map(s=>{
+      const calc = computeCIE(s, comps);
+      const cells = comps.map(comp=>{
+        const v = s.marks[comp.key];
+        const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
+        return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+      }).join('');
+      return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td></tr>`;
     }).join('');
-    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td></tr>`;
-  }).join('');
-  const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+    const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+    return comps.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}<th>${section==='cie'?'CIE':'SEE'} Total</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'CIE':'SEE'} components on this Evaluation Type.</p>`;
+  })();
   wrap.innerHTML = `
     <div class="page-head">
       ${backBtn}
-      <div class="page-eyebrow">${section==='cie'?'CIE':'SEE'} Marks — view only</div>
+      <div class="page-eyebrow">${pageTitle}</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     <div class="card">
       <p class="section-meta" style="margin-bottom:10px;">Every component here is entered on its own page — this is a read-only roll-up. Use the buttons on the subject page to enter or change marks.</p>
-      ${comps.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}<th>${section==='cie'?'CIE':'SEE'} Total</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'CIE':'SEE'} components on this Evaluation Type.</p>`}
+      ${bodyHtml}
     </div>
   `;
   return wrap;
