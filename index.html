@@ -505,7 +505,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
 
-const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.', CSD:'CSD — CS & Data Science', CSC:'CSC — CS & Cyber Security' };
+const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.', CSD:'CSD — CS & Design', CSC:'CSC — CS & Cyber Security' };
 /* Whether the assigned Course Instructor is teaching the Lecture or the
    Practical component of this section — the CC picks this at assignment
    time (a subject can have separate L and P instructors), and it's shown
@@ -3228,7 +3228,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -3255,6 +3255,8 @@ function renderContent(){
     'ci-sections': renderCISections,
     'ci-subject-detail': renderCISubjectDetail,
     'ci-entry': renderCIEntry,
+    'ci-component-entry': renderCIComponentEntry,
+    'ci-section-view': renderCISectionView,
     'ci-termtest': renderCITermTestSections,
     'ci-termtest-entry': renderCITermTestEntry,
     'ci-labint': renderCILabInternalSections,
@@ -5366,6 +5368,29 @@ function renderCISubjectDetail(params){
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
   if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Subject not found','')}`; return wrap; }
   const enterMode = course.status==='draft' || course.editUnlocked;
+  const template = course.evalType ? getCourseTemplate(course) : null;
+  let marksButtonsHtml = `<p class="section-meta">Fix an Evaluation Type first — marks-entry buttons appear here once your Coordinator sets one.</p>`;
+  if(template){
+    const tt1Key = termTestComponentKey(template, 'TT1');
+    const tt2Key = termTestComponentKey(template, 'TT2');
+    const cieButtons = template.cie.map(comp=>{
+      if(comp.key===tt1Key) return `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})">Enter Term Test 1</button>`;
+      if(comp.key===tt2Key) return `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})">Enter Term Test 2</button>`;
+      return `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-component-entry',{courseId:'${course.id}', section:'cie', compKey:'${comp.key}'})">Enter ${escapeHtml(comp.label)}</button>`;
+    }).join('');
+    const seeComps = seeDisplayComponents(template);
+    const seeButtons = seeComps.map(comp=>`<button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-component-entry',{courseId:'${course.id}', section:'see', compKey:'${comp.key}'})">Enter ${escapeHtml(comp.label)}</button>`).join('');
+    marksButtonsHtml = `
+      <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Enter CIE marks — one component at a time</div>
+      ${cieButtons}
+      <button class="btn btn-outline btn-sm" style="border-color:var(--seal-red);color:var(--seal-red);margin-top:2px;" onclick="App.navigate('ci-section-view',{courseId:'${course.id}', section:'cie'})">View CIE Marks</button>
+      ${seeButtons ? `
+      <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;margin-top:10px;">Enter SEE marks</div>
+      ${seeButtons}
+      <button class="btn btn-outline btn-sm" style="border-color:var(--seal-red);color:var(--seal-red);margin-top:2px;" onclick="App.navigate('ci-section-view',{courseId:'${course.id}', section:'see'})">View SEE Marks</button>
+      ` : ''}
+    `;
+  }
   wrap.innerHTML = `
     <div class="page-head">
       ${backBtn}
@@ -5384,12 +5409,7 @@ function renderCISubjectDetail(params){
     <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">
       <div style="flex:2;min-width:340px;">${evalTypeTableHtml(course)}</div>
       <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px;">
-        <div class="section-meta" style="text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;">Enter marks</div>
-        <button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})">Enter Term Test 1</button>
-        <button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})">Enter Term Test 2</button>
-        <button class="btn ${enterMode?'':'btn-outline'} btn-sm" onclick="App.navigate('ci-entry',{courseId:'${course.id}'})">
-          ${enterMode ? 'Enter Other CIE / SEE Marks' : 'View CIE / SEE Record'}
-        </button>
+        ${marksButtonsHtml}
       </div>
     </div>
   `;
@@ -5750,6 +5770,123 @@ function renderCILabExternalSections(){
   return wrap;
 }
 
+/* ---------- CI: single-component marks entry. One page per row of the
+   Evaluation Type table (SIA, Practical Internal Test, Lab Performance,
+   Project Assessment, SEE Practical, etc.) — deliberately NOT mixed
+   together, so entering one component never touches another's marks. Term
+   Test 1/2 have their own dedicated page (renderCITermTestEntry) and are
+   not routed here. ---------- */
+function renderCIComponentEntry(params){
+  const course = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
+  if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
+  const template = getCourseTemplate(course);
+  const section = params.section==='see' ? 'see' : 'cie';
+  const list = section==='cie' ? template.cie : seeDisplayComponents(template);
+  const comp = list.find(c=>c.key===params.compKey);
+  if(!comp){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Component not found','')}`; return wrap; }
+
+  // Which HOD-approval group (if any) this component belongs to, per the
+  // fixed institutional rule: Term Test 1/2 + Lab Internal submit together
+  // ("ttlab"); Lab External submits on its own ("labext"); everything else
+  // needs no approval and stays editable straight through.
+  const ttlabKeys = new Set(ttLabApprovalComponents(template).map(c=>c.key));
+  const labextKeys = new Set(labExternalApprovalComponents(template).map(c=>c.key));
+  const group = ttlabKeys.has(comp.key) ? 'ttlab' : labextKeys.has(comp.key) ? 'labext' : null;
+  const statusField = group==='ttlab' ? 'ttLabApproval' : group==='labext' ? 'labExternalApproval' : null;
+  const groupStatus = statusField ? course[statusField] : null;
+  const locked = groupStatus === 'approved';
+  const correctionMode = course.status==='approved' && course.editUnlocked;
+  const editable = (course.status==='draft' || correctionMode) && !locked;
+
+  const badge = group ? (
+    locked ? `<span class="status-pill status-approved">Approved by HOD — locked</span>`
+    : groupStatus==='pending' ? `<span class="status-pill status-submitted">Pending HOD approval</span>`
+    : `<span class="status-pill status-draft">Not yet submitted</span>`
+  ) : '';
+  const groupNote = group==='ttlab'
+    ? `Part of the "Term Test &amp; Lab Internal" group submitted together to the HOD — Term Test 1/2 are entered on their own pages; this is the Lab Internal piece.`
+    : group==='labext'
+    ? `Submitted to the HOD on its own, separately from the rest of CIE.`
+    : `No HOD approval needed here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
+  const submitBtn = (group && editable && groupStatus!=='pending')
+    ? `<button class="btn btn-sm" style="margin-top:14px;" onclick="App.submitApprovalGroup('${course.id}','${group}')">Submit ${group==='ttlab'?'Term Test &amp; Lab Internal':'Lab External'} for HOD Approval</button>`
+    : '';
+
+  const bodyHtml = comp.key==='sia' ? siaEntryHtml(course, comp, editable) : (()=>{
+    const rows = course.students.map(s=>{
+      const val = s.marks[comp.key];
+      const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
+      const scaled = typeof val==='number' ? round1((Math.min(val,comp.rawMax)/comp.rawMax)*comp.scaledMax) : '—';
+      return `<tr>
+        <td>${escapeHtml(s.name)}</td>
+        <td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+          class="${overMax?'invalid':''}"
+          data-markkey="${course.id}|${s.id}|${comp.key}"
+          value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
+          ${editable?'':'disabled'}
+          onchange="onMarkChange(this)"></td>
+        <td class="total-cell">${scaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
+      </tr>`;
+    }).join('');
+    return `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th><th>${escapeHtml(comp.label)}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th><th>Scaled<br><span style="text-transform:none;">max ${comp.scaledMax}</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  })();
+
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">${section==='cie'?'CIE':'SEE'} · ${escapeHtml(comp.label)}</div>
+      <h2>${escapeHtml(course.name)}</h2>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        ${escapeHtml(comp.label)} — raw /${comp.rawMax} scaled to /${comp.scaledMax}. ${groupNote} ${badge}
+      </p>
+      ${bodyHtml}
+      ${submitBtn}
+    </div>
+  `;
+  return wrap;
+}
+/* ---------- CI: read-only roll-up of one section (CIE or SEE) — reached
+   via "View CIE Marks" / "View SEE Marks". Marks entry itself never
+   happens here; it's split across the per-component pages above, this is
+   only for seeing every component side by side once they're all in. ---------- */
+function renderCISectionView(params){
+  const course = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
+  if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
+  const template = getCourseTemplate(course);
+  const section = params.section==='see' ? 'see' : 'cie';
+  const comps = section==='cie' ? template.cie : seeDisplayComponents(template);
+  const sectionMax = section==='cie' ? CIE_MAX : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
+  const rows = course.students.map(s=>{
+    const calc = computeCIE(s, comps);
+    const cells = comps.map(comp=>{
+      const v = s.marks[comp.key];
+      const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
+      return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+    }).join('');
+    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td></tr>`;
+  }).join('');
+  const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">${section==='cie'?'CIE':'SEE'} Marks — view only</div>
+      <h2>${escapeHtml(course.name)}</h2>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:10px;">Every component here is entered on its own page — this is a read-only roll-up. Use the buttons on the subject page to enter or change marks.</p>
+      ${comps.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}<th>${section==='cie'?'CIE':'SEE'} Total</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'CIE':'SEE'} components on this Evaluation Type.</p>`}
+    </div>
+  `;
+  return wrap;
+}
 function renderCIEntry(params){
   const course = App.getCourse(params.courseId);
   const correctionMode = course.status==='approved' && course.editUnlocked;
@@ -5791,7 +5928,8 @@ function renderCIEntry(params){
         <button class="btn btn-outline btn-sm" onclick="exportCSV('${course.id}')">Export CSV</button>
         <button class="btn btn-sm btn-outline" onclick="exportPrint('${course.id}')">Export / Print PDF</button>
       </div>
-      ${editable ? marksEntryTabs(course) : marksViewTable(course)}
+      ${editable ? `<p class="section-meta" style="margin-bottom:10px;">Marks are entered on their own pages now (one per component) — go back to the subject page to enter or change them. This table is a read-only roll-up so you can check everything's filled in before submitting.</p>` : ''}
+      ${marksViewTable(course)}
       ${editable ? `
         <div style="display:flex;gap:10px;margin-top:18px;align-items:center;flex-wrap:wrap;">
           ${correctionMode ? `
