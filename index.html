@@ -521,7 +521,19 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
 
-const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.', CSD:'CSD — CS & Design', CSC:'CSC — CS & Cyber Security' };
+const BRANCH_LABELS = { CSE:'CSE — Computer Science', AIML:'AIML — AI & Machine Learning', SAP:'SAP — Systems & Applications', ECE:'ECE — Electronics & Comm.', CSD:'CSD — CS & Data Science', CSC:'CSC — CS & Cyber Security', ERP:'ERP — CSE (ERP)' };
+/* Which branches each Regulation is actually offered to. R24 predates the
+   3 newer CSE specializations, so it's CSE/AIML only. R25 added Cyber
+   Security, Data Science and ERP alongside CSE/AIML — 5 branches total.
+   A Regulation not listed here (e.g. R26, until this is confirmed) has no
+   restriction — every branch stays selectable. */
+const REGULATION_BRANCHES = {
+  R24: ['CSE','AIML'],
+  R25: ['CSE','AIML','CSC','CSD','ERP'],
+};
+function branchesForRegulation(regulation){
+  return REGULATION_BRANCHES[regulation] || Object.keys(BRANCH_LABELS);
+}
 /* Whether the assigned Course Instructor is teaching the Lecture or the
    Practical component of this section — the CC picks this at assignment
    time (a subject can have separate L and P instructors), and it's shown
@@ -1172,9 +1184,21 @@ function resolveSemesterForCode(code){
 /* Subjects available for a given Regulation + Branch + Semester — powers
    the CC's "Add Section & Assign Instructor" subject dropdown, narrowed
    down instead of showing every subject in Courses Applicable at once. */
+/* R25's 3 newer branches (Cyber Security / Data Science / ERP) don't have
+   their own Subject Catalog rows yet — until real per-branch subjects are
+   added, they share the R25 CSE+AIML subject list (deduped by code), since
+   the early-semester syllabus is identical across all 5 R25 branches. */
+const R25_SHARED_FALLBACK_BRANCHES = ['CSC','CSD','ERP'];
 function catalogSubjectsFor(regulation, branch, semester){
   if(!regulation || !branch || !semester) return [];
-  return SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)===regulation && r.branch===branch && r.sem===semester);
+  const direct = SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)===regulation && r.branch===branch && r.sem===semester);
+  if(direct.length) return direct;
+  if(regulation==='R25' && R25_SHARED_FALLBACK_BRANCHES.includes(branch)){
+    const seen = new Set();
+    return SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)==='R25' && (r.branch==='CSE'||r.branch==='AIML') && r.sem===semester)
+      .filter(r=>{ if(seen.has(r.code)) return false; seen.add(r.code); return true; });
+  }
+  return direct;
 }
 function ccSubjectDropdownOptionsHtml(regulation, branch, semester){
   const list = catalogSubjectsFor(regulation, branch, semester);
@@ -1965,10 +1989,11 @@ const App = {
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this subject\'s Course Coordinator can add a section.', 'err'); return; }
     if(!REGULATION_OPTIONS.includes(regulation)){ toast('Choose a Regulation.', 'err'); return; }
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
+    if(!branchesForRegulation(regulation).includes(branch)){ toast(`${branch} isn't offered under ${regulation}.`, 'err'); return; }
     if(!SEMESTER_NUMBERS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
     const code = (subjectCode||'').trim().toUpperCase();
     if(!code){ toast('Choose a Subject.', 'err'); return; }
-    const catalogEntry = SUBJECT_CATALOG.find(s=>regulationFromCode(s.code)===regulation && s.branch===branch && s.sem===semester && s.code===code);
+    const catalogEntry = catalogSubjectsFor(regulation, branch, semester).find(s=>s.code===code);
     if(!catalogEntry){ toast('That subject isn\'t in the catalog for this Regulation/Branch/Semester — pick one from the list.', 'err'); return; }
     const sec = (section||'').trim().toUpperCase();
     if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
@@ -3613,27 +3638,46 @@ function fbStorage(){
   if(!_fbApp) _fbApp = firebase.initializeApp(FIREBASE_CONFIG);
   return firebase.storage();
 }
-const SCRIPT_KINDS = { best:'Best Performance Script', average:'Average Performance Script', lowest:'Lowest Performance Script' };
-async function uploadAnswerScript(courseId, kind, inputEl){
+const SCRIPT_KINDS = { best:'Best', average:'Average', lowest:'Lowest' };
+/* Per Term Test cycle, exactly 3 scanned scripts can be uploaded — one
+   each for the Best / Average / Lowest performing student, picked by the
+   CI (not auto-detected, since ties or judgement calls are common). Stored
+   as course.scriptUploads[cycle][kind] = {url, name, uploadedAt,
+   uploadedBy, studentId, studentName}. Older records may still have the
+   pre-cycle flat shape (course.scriptUploads.best etc, no cycle) — that's
+   read back as a "General" set for backward compatibility, but all new
+   uploads go through the cycle-scoped path below. */
+function scriptUploadsForCycle(course, cycle){
+  return (course.scriptUploads && course.scriptUploads[cycle]) || {};
+}
+function legacyScriptUploads(course){
+  const su = course.scriptUploads || {};
+  const flat = {};
+  Object.keys(SCRIPT_KINDS).forEach(k=>{ if(su[k]) flat[k] = su[k]; });
+  return flat;
+}
+async function uploadAnswerScriptForStudent(courseId, cycle, kind, studentId, inputEl){
   const file = inputEl && inputEl.files && inputEl.files[0];
   if(!file) return;
   const course = App.getCourse(courseId);
   if(!course) return;
-  const statusEl = document.getElementById(`script-status-${courseId}-${kind}`);
+  const student = (course.students||[]).find(s=>s.id===studentId);
+  const statusEl = document.getElementById(`script-status-${courseId}-${cycle}-${studentId}`);
   if(statusEl) statusEl.textContent = 'Uploading…';
   try{
     const storage = fbStorage();
     if(!storage) return;
-    const path = `answer-scripts/${course.id}/${kind}-${Date.now()}-${file.name}`;
+    const path = `answer-scripts/${course.id}/${cycle}-${kind}-${Date.now()}-${file.name}`;
     const ref = storage.ref().child(path);
     await ref.put(file);
     const url = await ref.getDownloadURL();
     course.scriptUploads = course.scriptUploads || {};
-    course.scriptUploads[kind] = { url, name:file.name, uploadedAt:Date.now(), uploadedBy:App.currentUser().name };
+    course.scriptUploads[cycle] = course.scriptUploads[cycle] || {};
+    course.scriptUploads[cycle][kind] = { url, name:file.name, uploadedAt:Date.now(), uploadedBy:App.currentUser().name, studentId, studentName: student ? student.name : '' };
     await syncCourse(course);
-    App.logHistory(course, `Uploaded ${SCRIPT_KINDS[kind]}: ${file.name}`);
+    App.logHistory(course, `Uploaded ${cycle} ${SCRIPT_KINDS[kind]} script (${student ? student.name : studentId}): ${file.name}`);
     if(statusEl) statusEl.textContent = 'Uploaded.';
-    toast(`${SCRIPT_KINDS[kind]} uploaded.`, 'ok');
+    toast(`${SCRIPT_KINDS[kind]} script uploaded.`, 'ok');
     renderContent();
   }catch(err){
     console.error(err);
@@ -3641,37 +3685,75 @@ async function uploadAnswerScript(courseId, kind, inputEl){
     toast('Upload failed — check your Firebase Storage config and rules.', 'err');
   }
 }
-window.uploadAnswerScript = uploadAnswerScript;
+window.uploadAnswerScriptForStudent = uploadAnswerScriptForStudent;
+/* Per-student-row cell for the Term Test table: if this student already
+   has an uploaded script for this cycle, show it (with a Replace option
+   while still editable); otherwise, as long as fewer than all 3 kinds have
+   been used for this cycle, show a compact kind-picker + file input so the
+   CI can tag this row as Best/Average/Lowest. Once all 3 are used, the
+   picker disappears for every remaining student — exactly 3 scripts per
+   cycle, no more. */
+function ttScriptUploadCell(course, cycle, student, editable){
+  const uploads = scriptUploadsForCycle(course, cycle);
+  const mine = Object.keys(SCRIPT_KINDS).find(k=>uploads[k] && uploads[k].studentId===student.id);
+  if(mine){
+    const u = uploads[mine];
+    return `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+      <a href="${u.url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="white-space:nowrap;">${SCRIPT_KINDS[mine]} script</a>
+      ${editable ? `<label class="file-input-label" style="font-size:11px;">Replace<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="uploadAnswerScriptForStudent('${course.id}','${cycle}','${mine}','${student.id}', this)"></label>` : ''}
+    </div>`;
+  }
+  const usedKinds = Object.keys(SCRIPT_KINDS).filter(k=>uploads[k]);
+  if(!editable || usedKinds.length>=3) return '';
+  const remaining = Object.keys(SCRIPT_KINDS).filter(k=>!usedKinds.includes(k));
+  const selectId = `script-kind-${course.id}-${cycle}-${student.id}`;
+  return `<div style="display:flex;flex-direction:column;gap:4px;">
+    <select id="${selectId}" style="font-size:11px;padding:3px 4px;">
+      ${remaining.map(k=>`<option value="${k}">${SCRIPT_KINDS[k]}</option>`).join('')}
+    </select>
+    <label class="file-input-label" style="font-size:11px;">Upload PDF<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="uploadAnswerScriptForStudent('${course.id}','${cycle}', document.getElementById('${selectId}').value, '${student.id}', this)"></label>
+    <span id="script-status-${course.id}-${cycle}-${student.id}" class="section-meta" style="font-size:10.5px;"></span>
+  </div>`;
+}
 /* Editable widget — shown to the Course Instructor while the record is
-   still theirs to work on (draft, or unlocked for correction). */
+   still theirs to work on (draft, or unlocked for correction). Only
+   surfaces the OLD flat (pre-cycle) uploads if a record still has any, for
+   backward compatibility — new uploads always happen from the Term Test
+   page itself now, tagged to a specific student. */
 function scriptUploadsEditHtml(course){
-  const uploads = course.scriptUploads || {};
+  const legacy = legacyScriptUploads(course);
+  if(!Object.keys(legacy).length) return '';
   return `<div class="card">
-    <div class="section-title" style="font-size:14px;">Evaluated Answer Scripts — Best / Average / Lowest</div>
-    <p class="section-meta" style="margin-top:4px;">Upload a scanned copy of each. You can re-upload to replace one until this record is forwarded to the Course Coordinator.</p>
-    ${Object.keys(SCRIPT_KINDS).map(kind=>`
-      <div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <label style="min-width:210px;font-size:13px;">${SCRIPT_KINDS[kind]}</label>
-        <input type="file" accept="image/*,application/pdf" onchange="uploadAnswerScript('${course.id}','${kind}', this)">
-        <span id="script-status-${course.id}-${kind}" class="section-meta"></span>
-        ${uploads[kind] ? `<a href="${uploads[kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">View current: ${escapeHtml(uploads[kind].name)}</a>` : ''}
-      </div>`).join('')}
+    <div class="section-title" style="font-size:14px;">Evaluated Answer Scripts — General (legacy)</div>
+    <p class="section-meta" style="margin-top:4px;">Uploaded before per-Term-Test tracking existed. New uploads happen from the Term Test 1 / Term Test 2 page, tagged to a specific student.</p>
+    ${Object.keys(SCRIPT_KINDS).map(kind=>legacy[kind] ? `
+      <div style="margin-top:8px;">
+        <a href="${legacy[kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${SCRIPT_KINDS[kind]}: ${escapeHtml(legacy[kind].name)}</a>
+      </div>` : '').join('')}
   </div>`;
 }
 /* Read-only view — shown to CC / EA / HOD / Examination Branch. */
 function scriptUploadsViewHtml(course){
-  const uploads = course.scriptUploads || {};
-  const any = Object.keys(SCRIPT_KINDS).some(k=>uploads[k]);
-  if(!any) return `<div class="card"><div class="section-title" style="font-size:14px;">Evaluated Answer Scripts</div><p style="margin:8px 0 0;color:var(--text-soft);">No Best/Average/Lowest scripts uploaded yet.</p></div>`;
+  const legacy = legacyScriptUploads(course);
+  const su = course.scriptUploads || {};
+  const cycles = ['TT1','TT2'].filter(c=>su[c] && Object.keys(su[c]).length);
+  if(!cycles.length && !Object.keys(legacy).length) return `<div class="card"><div class="section-title" style="font-size:14px;">Evaluated Answer Scripts</div><p style="margin:8px 0 0;color:var(--text-soft);">No Best/Average/Lowest scripts uploaded yet.</p></div>`;
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">Evaluated Answer Scripts — Best / Average / Lowest</div>
-    <div style="margin-top:8px;">
-      ${Object.keys(SCRIPT_KINDS).map(kind=>uploads[kind] ? `
-        <div style="margin-top:6px;">
-          <a href="${uploads[kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${SCRIPT_KINDS[kind]}: ${escapeHtml(uploads[kind].name)}</a>
-          <span class="section-meta">uploaded by ${escapeHtml(uploads[kind].uploadedBy||'')} · ${fmtDate(uploads[kind].uploadedAt)}</span>
-        </div>` : `<p style="margin:6px 0 0;color:var(--text-soft);font-size:12.5px;">${SCRIPT_KINDS[kind]}: not uploaded yet.</p>`).join('')}
-    </div>
+    ${cycles.map(cycle=>`
+      <div style="margin-top:10px;">
+        <div class="section-meta" style="font-weight:600;">${escapeHtml(TERM_TEST_LABELS[cycle]||cycle)}</div>
+        ${Object.keys(SCRIPT_KINDS).map(kind=>su[cycle][kind] ? `
+          <div style="margin-top:6px;">
+            <a href="${su[cycle][kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${SCRIPT_KINDS[kind]} — ${escapeHtml(su[cycle][kind].studentName||'')}: ${escapeHtml(su[cycle][kind].name)}</a>
+            <span class="section-meta">uploaded by ${escapeHtml(su[cycle][kind].uploadedBy||'')} · ${fmtDate(su[cycle][kind].uploadedAt)}</span>
+          </div>` : `<p style="margin:6px 0 0;color:var(--text-soft);font-size:12.5px;">${SCRIPT_KINDS[kind]}: not uploaded yet.</p>`).join('')}
+      </div>`).join('')}
+    ${Object.keys(legacy).length ? `
+      <div style="margin-top:10px;">
+        <div class="section-meta" style="font-weight:600;">General (legacy)</div>
+        ${Object.keys(SCRIPT_KINDS).map(kind=>legacy[kind] ? `<div style="margin-top:6px;"><a href="${legacy[kind].url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${SCRIPT_KINDS[kind]}: ${escapeHtml(legacy[kind].name)}</a></div>` : '').join('')}
+      </div>` : ''}
   </div>`;
 }
 
@@ -5680,8 +5762,42 @@ function renderCITermTestEntry(params){
       <td class="total-cell">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
       <td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
       <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
+      <td>${ttScriptUploadCell(course, cycle, s, editable)}</td>
     </tr>`;
   }).join('');
+
+  // Class performance stats — highest / average / lowest, computed off the
+  // raw Term Test Total (/50) so it reads the same for every Evaluation
+  // Type regardless of how few or many marks that cycle is scaled to.
+  const scored = (course.students||[]).map(s=>{
+    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
+    return { student: s, total: computeTermTestRaw(detail).total };
+  }).filter(x=>x.total>0);
+  let statsHtml = `<p class="section-meta">No marks entered yet for ${escapeHtml(cycleLabel)} — class stats will appear once at least one student has a score.</p>`;
+  if(scored.length){
+    const max = Math.max(...scored.map(x=>x.total));
+    const min = Math.min(...scored.map(x=>x.total));
+    const avg = round1(scored.reduce((a,x)=>a+x.total,0)/scored.length);
+    const topStudents = scored.filter(x=>x.total===max).map(x=>x.student.name).join(', ');
+    const lowStudents = scored.filter(x=>x.total===min).map(x=>x.student.name).join(', ');
+    statsHtml = `<div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:180px;background:#EAF3EA;border:1px solid var(--rule);border-radius:8px;padding:10px 14px;">
+        <div class="section-meta" style="font-weight:600;">Highest (Best)</div>
+        <div style="font-size:20px;font-weight:700;font-family:'IBM Plex Mono',monospace;">${max}<span style="font-size:12px;font-weight:400;color:var(--text-soft);">/${TT_TOTAL_MAX}</span></div>
+        <div class="section-meta" style="font-size:11.5px;">${escapeHtml(topStudents)}</div>
+      </div>
+      <div style="flex:1;min-width:180px;background:#F3EEDD;border:1px solid var(--rule);border-radius:8px;padding:10px 14px;">
+        <div class="section-meta" style="font-weight:600;">Average</div>
+        <div style="font-size:20px;font-weight:700;font-family:'IBM Plex Mono',monospace;">${avg}<span style="font-size:12px;font-weight:400;color:var(--text-soft);">/${TT_TOTAL_MAX}</span></div>
+        <div class="section-meta" style="font-size:11.5px;">across ${scored.length} student${scored.length===1?'':'s'} scored so far</div>
+      </div>
+      <div style="flex:1;min-width:180px;background:#FBEFEF;border:1px solid var(--rule);border-radius:8px;padding:10px 14px;">
+        <div class="section-meta" style="font-weight:600;">Lowest</div>
+        <div style="font-size:20px;font-weight:700;font-family:'IBM Plex Mono',monospace;">${min}<span style="font-size:12px;font-weight:400;color:var(--text-soft);">/${TT_TOTAL_MAX}</span></div>
+        <div class="section-meta" style="font-size:11.5px;">${escapeHtml(lowStudents)}</div>
+      </div>
+    </div>`;
+  }
 
   const shortItems = TT_SHORT_KEYS.map(k=>{
     const cfg = getQuestionConfig(course, cycle, k);
@@ -5718,7 +5834,11 @@ function renderCITermTestEntry(params){
     </div>
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     <div class="card">
-      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks (half a unit — the 5-unit syllabus splits half for TT1, half for TT2). The 3 pairs total 40 raw with no further scaling needed. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}).</p>
+      <div class="section-title" style="font-size:14px;">Class Performance — ${escapeHtml(cycleLabel)}</div>
+      <div style="margin-top:8px;">${statsHtml}</div>
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks (half a unit — the 5-unit syllabus splits half for TT1, half for TT2). The 3 pairs total 40 raw with no further scaling needed. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}). Upload the scanned, evaluated answer script for whichever student you consider Best / Average / Lowest performing — exactly 3 total per cycle; once all 3 are tagged, the upload option disappears for everyone else.</p>
       <div class="table-scroll">
 
         <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
@@ -5731,6 +5851,7 @@ function renderCITermTestEntry(params){
               <th rowspan="2" style="vertical-align:middle;">Long<br>Raw</th>
               <th rowspan="2" style="vertical-align:middle;">Term Test<br>Total</th>
               <th rowspan="2" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
+              <th rowspan="2" style="vertical-align:middle;">Evaluated<br>Script</th>
             </tr>
             <tr>${shortHeadGrp.sub}${longHeadGrp.sub}</tr>
           </thead>
@@ -6040,6 +6161,20 @@ function ccCoordinationOptionsHtml(ccCourses){
    Subject Catalog rows matching all three, per Regulation/Branch/Semester,
    which is what fixes the Evaluation Type (via Supabase Courses Applicable)
    once a Subject is picked. No HOD approval step anywhere in this flow. */
+/* Re-populates the Branch dropdown to only the branches the chosen
+   Regulation actually offers (R24 = CSE/AIML only; R25 = 5 branches) —
+   then re-narrows the Subject list same as before. */
+function refreshCCBranchOptions(){
+  const regEl = document.getElementById('cc-assign-regulation');
+  const branchEl = document.getElementById('cc-assign-branch');
+  if(!regEl || !branchEl) return;
+  const allowed = branchesForRegulation(regEl.value);
+  const prev = branchEl.value;
+  branchEl.innerHTML = allowed.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('');
+  if(allowed.includes(prev)) branchEl.value = prev;
+  refreshCCSubjectOptions();
+}
+window.refreshCCBranchOptions = refreshCCBranchOptions;
 function refreshCCSubjectOptions(){
   const regEl = document.getElementById('cc-assign-regulation');
   const branchEl = document.getElementById('cc-assign-branch');
@@ -6099,7 +6234,7 @@ function renderCCList(){
           </div>
           <div class="config-field">
             <label>Regulation</label>
-            <select id="cc-assign-regulation" onchange="refreshCCSubjectOptions()">
+            <select id="cc-assign-regulation" onchange="refreshCCBranchOptions()">
               <option value="">— Select —</option>
               ${REGULATION_OPTIONS.map(r=>`<option value="${r}">${r}</option>`).join('')}
             </select>
