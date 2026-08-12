@@ -1240,9 +1240,9 @@ function groupedHeaderRows(items){
     const span = j-i+1;
     const color = unitBandColor(items[i].unit);
     const unitText = items[i].unit ? escapeHtml(items[i].unit) : `<span style="color:var(--seal-red);">Unit not set</span>`;
-    top += `<th colspan="${span}" style="background:${color};border-bottom:2px solid var(--rule);color:var(--ink);">${unitText}</th>`;
+    top += `<th colspan="${span}" style="background:${color};border-bottom:2px solid var(--rule);color:var(--ink);text-align:center;">${unitText}</th>`;
     for(let k=i; k<=j; k++){
-      sub += `<th style="background:${color};font-weight:500;color:var(--ink);">${items[k].sub}</th>`;
+      sub += `<th style="background:${color};font-weight:500;color:var(--ink);text-align:center;">${items[k].sub}</th>`;
     }
     i = j+1;
   }
@@ -3300,7 +3300,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -3329,6 +3329,7 @@ function renderContent(){
     'ci-entry': renderCIEntry,
     'ci-component-entry': renderCIComponentEntry,
     'ci-section-view': renderCISectionView,
+    'ci-analytics': renderCIAnalytics,
     'ci-termtest': renderCITermTestSections,
     'ci-termtest-entry': renderCITermTestEntry,
     'ci-labint': renderCILabInternalSections,
@@ -5546,6 +5547,7 @@ function renderCISubjectDetail(params){
     </div>
     ${sentBackBanner(course)}
     ${evalTypeTableHtml(course, actions)}
+    ${actions ? `<div style="margin-top:12px;"><button class="btn btn-outline btn-sm" onclick="App.navigate('ci-analytics',{courseId:'${course.id}'})">📊 Analytics — Term Test 1 / Term Test 2 / CIE Total</button></div>` : ''}
   `;
   return wrap;
 }
@@ -5817,29 +5819,14 @@ function renderCITermTestEntry(params){
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
-    <div class="card">
-      <div class="card-row">
-        <div class="section-title" style="font-size:15px;">Question Paper Setup</div>
-        ${forwarded
-          ? `<span class="status-pill status-approved">Set by your Course Coordinator</span>`
-          : `<span class="status-pill status-submitted">Not yet forwarded by your Course Coordinator</span>`}
-      </div>
-      <p class="section-meta" style="margin-top:4px;">${forwarded
-        ? `Your Course Coordinator set the Unit for every question and forwarded it — you can enter marks below.`
-        : `Your Course Coordinator sets the Unit (and marks-split for Q6–Q11) when they make the question paper, then forwards it here. Marks entry for ${escapeHtml(cycleLabel)} stays locked until they do.`}</p>
-      <div class="section-meta" style="margin-top:12px;font-weight:600;">Short answers</div>
-      ${shortQuestionSetupSummaryHtml}
-      <div class="section-meta" style="margin-top:8px;font-weight:600;">Long answers</div>
-      ${questionSetupSummaryHtml}
-    </div>
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     <div class="card">
       <div class="section-title" style="font-size:14px;">Class Performance — ${escapeHtml(cycleLabel)}</div>
       <div style="margin-top:8px;">${statsHtml}</div>
     </div>
     <div class="card">
-      <p class="section-meta" style="margin-bottom:8px;">Q1–Q5: short answers, 2 marks each (10 total, compulsory). Q6–Q11: long answers, in 3 choice pairs (Q6/Q7, Q8/Q9, Q10/Q11) — you can enter marks for both sides of a pair while deciding; whichever is higher counts, and that cell is highlighted. Q6/Q7 and Q8/Q9 are 16 marks each (full units); Q10/Q11 is 8 marks (half a unit — the 5-unit syllabus splits half for TT1, half for TT2). The 3 pairs total 40 raw with no further scaling needed. Term Test total = 10 + 40 = ${TT_TOTAL_MAX}, written automatically into "${escapeHtml(comp.label)}" (raw /${comp.rawMax} → scaled /${comp.scaledMax}). Upload the scanned, evaluated answer script for whichever student you consider Best / Average / Lowest performing — exactly 3 total per cycle; once all 3 are tagged, the upload option disappears for everyone else.</p>
-      <div class="table-scroll">
+      <div class="section-title" style="font-size:16px;">Enter ${escapeHtml(cycleLabel)} Marks</div>
+      <div class="table-scroll" style="margin-top:10px;">
 
         <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
           <thead>
@@ -6034,6 +6021,112 @@ function renderCIComponentEntry(params){
    "View Total Marks". Marks entry itself never happens here; it's split
    across the per-component pages above, this is only for seeing every
    component side by side once they're all in. ---------- */
+/* ---------- CI: Analytics — Term Test 1, Term Test 2 & CIE Total side by
+   side for the whole class, with per-column sorting and a quick numeric
+   filter (">40", "<20", "35", ">=30" all work) on each column. Purely a
+   read-only lens over marks entered elsewhere; nothing here writes back. ---------- */
+let analyticsState = {};
+function getAnalyticsState(courseId){
+  return analyticsState[courseId] || (analyticsState[courseId] = { sortKey:null, sortDir:'asc', filters:{} });
+}
+function setAnalyticsSort(courseId, key){
+  const st = getAnalyticsState(courseId);
+  if(st.sortKey===key) st.sortDir = st.sortDir==='asc' ? 'desc' : 'asc';
+  else { st.sortKey = key; st.sortDir = 'asc'; }
+  renderContent();
+}
+window.setAnalyticsSort = setAnalyticsSort;
+function setAnalyticsFilter(courseId, key, value){
+  getAnalyticsState(courseId).filters[key] = value;
+  renderContent();
+}
+window.setAnalyticsFilter = setAnalyticsFilter;
+/* Parses a quick numeric filter expression: ">40", "<20", ">=30", "<=15",
+   "=45", or a bare number (treated as exact match). Blank or unparseable
+   input means "no filter" — everything passes. */
+function passesAnalyticsFilter(expr, value){
+  const e = (expr||'').trim();
+  if(!e) return true;
+  const m = e.match(/^(>=|<=|>|<|=)?\s*(-?\d+(\.\d+)?)$/);
+  if(!m) return true;
+  if(value===null || value===undefined || isNaN(value)) return false;
+  const op = m[1] || '=', num = parseFloat(m[2]);
+  if(op==='>') return value>num;
+  if(op==='<') return value<num;
+  if(op==='>=') return value>=num;
+  if(op==='<=') return value<=num;
+  return value===num;
+}
+function renderCIAnalytics(params){
+  const course = App.getCourse(params.courseId);
+  const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
+  if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
+  const template = getCourseTemplate(course);
+  const tt1Key = termTestComponentKey(template, 'TT1');
+  const tt2Key = termTestComponentKey(template, 'TT2');
+  const comp1 = tt1Key ? template.cie.find(c=>c.key===tt1Key) : null;
+  const comp2 = tt2Key ? template.cie.find(c=>c.key===tt2Key) : null;
+  const scaledOf = (raw, comp) => (typeof raw==='number' && comp) ? round1((Math.min(raw,comp.rawMax)/comp.rawMax)*comp.scaledMax) : null;
+
+  const st = getAnalyticsState(course.id);
+  let rows = (course.students||[]).map(s=>({
+    student: s,
+    tt1: comp1 ? scaledOf(s.marks[comp1.key], comp1) : null,
+    tt2: comp2 ? scaledOf(s.marks[comp2.key], comp2) : null,
+    cie: round1(computeCIE(s, template.cie).total),
+  }));
+  rows = rows.filter(r=>
+    passesAnalyticsFilter(st.filters.tt1, r.tt1) &&
+    passesAnalyticsFilter(st.filters.tt2, r.tt2) &&
+    passesAnalyticsFilter(st.filters.cie, r.cie));
+  if(st.sortKey){
+    const dir = st.sortDir==='asc' ? 1 : -1;
+    rows.sort((a,b)=>{
+      if(st.sortKey==='name') return a.student.name.localeCompare(b.student.name)*dir;
+      const av = a[st.sortKey], bv = b[st.sortKey];
+      if(av===null && bv===null) return 0;
+      if(av===null) return 1; // blanks sort last regardless of direction
+      if(bv===null) return -1;
+      return (av-bv)*dir;
+    });
+  }
+  const arrow = key => st.sortKey===key ? (st.sortDir==='asc' ? ' ▲' : ' ▼') : '';
+  const filterInput = (key, placeholder) => `<input type="text" value="${escapeHtml(st.filters[key]||'')}" placeholder="${placeholder}" style="width:64px;font-size:11px;padding:3px 5px;margin-top:4px;" onchange="setAnalyticsFilter('${course.id}','${key}', this.value)">`;
+  const th = (key, label, comp) => `<th style="cursor:pointer;user-select:none;" onclick="setAnalyticsSort('${course.id}','${key}')">${label}${comp?` (/${comp.scaledMax})`:''}${arrow(key)}<br>${key==='name'?'':filterInput(key, '>40')}</th>`;
+
+  const bodyRows = rows.map(r=>`<tr>
+    <td>${escapeHtml(r.student.name)}</td>
+    <td class="total-cell">${r.tt1===null?'—':r.tt1}</td>
+    <td class="total-cell">${r.tt2===null?'—':r.tt2}</td>
+    <td class="total-cell" style="font-weight:700;">${r.cie}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
+  </tr>`).join('');
+
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">Analytics</div>
+      <h2>${escapeHtml(course.name)}</h2>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:10px;">Click a column heading to sort by it (click again to reverse). Type a filter under any column — <span class="mono">&gt;40</span>, <span class="mono">&lt;20</span>, <span class="mono">&gt;=30</span>, or a bare number for an exact match — to narrow the list to matching students. Filters combine across columns.</p>
+      ${rows.length===0 ? emptyStateHtml('No students match', 'Loosen or clear a filter above to see students again.') : `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr>
+            ${th('name','Student')}
+            ${th('tt1','Term Test 1', comp1)}
+            ${th('tt2','Term Test 2', comp2)}
+            ${th('cie','CIE Total')}
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>`}
+    </div>
+  `;
+  return wrap;
+}
 function renderCISectionView(params){
   const course = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
