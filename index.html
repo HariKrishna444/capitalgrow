@@ -883,6 +883,159 @@ const STATUS_LABEL = { draft:'InProgress', submitted:'Submitted', coordinated:'C
 // so those sentences don't read as one run-together word.
 function statusSentenceLabel(status){ return status==='draft' ? 'in progress' : (STATUS_LABEL[status]||'').toLowerCase(); }
 const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coordinated:'status-coordinated', verified:'status-verified', approved:'status-approved' };
+/* The 4 components with their own independent CI -> CC -> EA -> HOD
+   approval chain (see App.forwardItem / App.sendBackItem), separate from
+   the Overall record's own submission pipeline. SEE Theory is deliberately
+   excluded — it's the Examination Branch's own record. */
+const ITEM_FLOW_KEYS = ['tt1','tt2','pracInternal','seePractical'];
+const ITEM_FLOW_LABELS = { tt1:'Term Test 1', tt2:'Term Test 2', pracInternal:'Practical Internal Test', seePractical:'SEE Practical' };
+const ITEM_STAGE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator', ea:'Executive Assistant', hod:'HOD', done:'Approved' };
+const ITEM_NEXT_STAGE = { ci:'cc', cc:'ea', ea:'hod', hod:'done' };
+/* Overall record (CIE Total/SEE Total/Grand Total) mapped onto the same
+   5-stage shape as the item flows, for the Verification Status tab —
+   course.status + ebPublished collapsed into one "whose turn is it" value. */
+const OVERALL_STAGE_LABELS = { ci:'CI', cc:'CC', ea:'EA', hod:'HOD', eb:'EB' };
+function overallStageFor(course){
+  if(course.status==='draft') return 'ci';
+  if(course.status==='submitted') return 'cc';
+  if(course.status==='coordinated') return 'ea';
+  if(course.status==='verified') return 'hod';
+  if(course.status==='approved') return course.ebPublished ? 'done' : 'eb';
+  return 'ci';
+}
+/* Compact icon+label row for the Verification Status table — a denser
+   sibling of itemStageDotsHtml, meant to fit several per row. */
+function compactStageDots(stage, order, labelMap){
+  const idx = order.indexOf(stage);
+  return order.map((s,i)=>{
+    const state = stage==='done' ? 'done' : i<idx ? 'done' : stage===s ? 'current' : 'pending';
+    const icon = state==='done' ? '✓' : state==='current' ? '…' : '✗';
+    const color = state==='done' ? '#2f7a3f' : state==='current' ? 'var(--brass)' : 'var(--seal-red)';
+    return `<span style="display:inline-block;margin-right:7px;font-size:11.5px;white-space:nowrap;"><b style="color:${color};">${icon}</b> ${escapeHtml(labelMap[s]||s)}</span>`;
+  }).join('');
+}
+/* ---------- Verification Status tab — visible to Course Instructor,
+   Course Coordinator and HOD. One row per section, showing exactly where
+   each of the 4 independent item chains and the Overall record currently
+   sit, at a glance. ---------- */
+function renderVerificationStatus(){
+  const user = App.currentUser();
+  const wrap = el('<div></div>');
+  let courses;
+  if(user.systemRole==='HOD' || user.systemRole==='ADMIN'){
+    courses = App.state.courses.slice();
+  } else {
+    const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+    const map = new Map();
+    [...ccCourses, ...ciCourses].forEach(c=>map.set(c.id, c));
+    courses = Array.from(map.values());
+  }
+  courses = courses.filter(c=>c.evalType);
+  const rows = courses.map(c=>{
+    const template = getCourseTemplate(c);
+    const itemCell = key => {
+      if(!itemFlowApplicable(template, key)) return `<td class="section-meta">— n/a —</td>`;
+      const ia = App.itemApproval(c.id, key) || { stage:'ci' };
+      let onclick;
+      if(key==='tt1' || key==='tt2') onclick = `App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'${key==='tt1'?'TT1':'TT2'}'})`;
+      else {
+        const section = key==='pracInternal' ? 'cie' : 'see';
+        const list = section==='cie' ? template.cie : seeDisplayComponents(template);
+        const comp = key==='pracInternal' ? list.find(x=>x.key==='pracInternal') : list.find(x=>x.key==='seePractical'||x.key==='seePracticalProject');
+        onclick = comp ? `App.navigate('ci-component-entry',{courseId:'${c.id}', section:'${section}', compKey:'${comp.key}'})` : '';
+      }
+      return `<td style="cursor:pointer;" onclick="${onclick}">${compactStageDots(ia.stage, ['ci','cc','ea','hod'], ITEM_STAGE_LABELS)}</td>`;
+    };
+    return `<tr>
+      <td>${escapeHtml(c.name)}<div class="section-meta">${courseMeta(c)}</div></td>
+      ${itemCell('tt1')}
+      ${itemCell('tt2')}
+      ${itemCell('pracInternal')}
+      ${itemCell('seePractical')}
+      <td>${compactStageDots(overallStageFor(c), ['ci','cc','ea','hod','eb'], OVERALL_STAGE_LABELS)}</td>
+    </tr>`;  }).join('');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Verification Status</div>
+      <h2>Marks Verification — at a glance</h2>
+      <p class="section-meta">✓ = done at that stage · … = sitting there right now · ✗ = not reached yet. Term Test 1/2, Practical Internal Test and SEE Practical each move independently through CI → CC → EA → HOD. Overall (CIE Total/SEE Total/Grand Total) moves through CI → CC → EA → HOD → EB (Examination Branch). SEE Theory isn't shown — it's the Examination Branch's own record, outside this flow.</p>
+    </div>
+    <div class="card">
+      ${courses.length===0 ? emptyStateHtml('Nothing to show yet','Sections appear here once a Course Coordinator has fixed an Evaluation Type.') : `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Subject</th><th>Term Test 1</th><th>Term Test 2</th><th>Practical Internal</th><th>SEE Practical</th><th>Overall</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`}
+    </div>
+  `;
+  return wrap;
+}
+/* Which of the 4 flow items actually exist on a given course's Evaluation
+   Type template (ET1/ET2/ET3 have no practicals; ES/ESS1/ESS2/EAC have no
+   Term Test; etc) — used to decide which chains/buttons to show at all. */
+function itemFlowApplicable(template, itemKey){
+  if(!template) return false;
+  if(itemKey==='tt1') return !!termTestComponentKey(template,'TT1');
+  if(itemKey==='tt2') return !!termTestComponentKey(template,'TT2');
+  if(itemKey==='pracInternal') return template.cie.some(c=>c.key==='pracInternal');
+  if(itemKey==='seePractical') return seeDisplayComponents(template).some(c=>c.key==='seePractical'||c.key==='seePracticalProject');
+  return false;
+}
+/* Small pipeline visual: CI -> CC -> EA -> HOD, each dot ticked once past,
+   "…" at whichever stage currently owns it, crossed for stages still
+   ahead — the "tick / in-progress / X" look asked for, reused for every
+   one of the 4 flow items and (with a 5th EB dot) for the Overall record. */
+function itemStageDotsHtml(stage, stageOrder){
+  const order = stageOrder || ['ci','cc','ea','hod'];
+  const idx = order.indexOf(stage);
+  const dot = (label, state) => {
+    const icon = state==='done' ? '✓' : state==='current' ? '…' : '✗';
+    const color = state==='done' ? '#2f7a3f' : state==='current' ? 'var(--brass)' : 'var(--seal-red)';
+    return `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px;margin-bottom:4px;">
+      <span style="font-weight:700;color:${color};font-size:14px;">${icon}</span>
+      <span style="font-size:11.5px;color:var(--text-soft);">${escapeHtml(label)}</span>
+    </span>`;
+  };
+  return order.map((s,i)=>dot(ITEM_STAGE_LABELS[s]||s, stage==='done'||i<idx ? 'done' : stage===s ? 'current' : 'pending')).join('')
+    + dot('Approved', stage==='done' ? 'done' : 'pending');
+}
+/* Status card for one of the 4 independently-flowed items (Term Test 1/2,
+   Practical Internal Test, SEE Practical) — the pipeline dots, any
+   send-back remark, and (only if it's currently this viewer's turn to act)
+   the Forward / Send Back buttons for CC, EA or HOD. The Course
+   Instructor's own Save Progress / Forward controls live separately, at
+   the bottom of the marks table itself (see itemActionBarHtml). */
+function itemApprovalStatusHtml(course, itemKey){
+  const ia = App.itemApproval(course.id, itemKey);
+  if(!ia) return '';
+  const actor = App.currentUser();
+  const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
+  const canAct =
+    (ia.stage==='cc' && (getCourseCCUser(course.id)?.id===actor.id || actor.systemRole==='ADMIN')) ||
+    (ia.stage==='ea' && (actor.systemRole==='EA' || actor.systemRole==='ADMIN')) ||
+    (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN'));
+  const actionHtml = canAct ? `<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+      <button class="btn btn-red btn-sm" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${course.id}','${itemKey}', r);">Send Back to CI</button>
+      <button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${ia.stage==='hod' ? 'Approve' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>
+    </div>` : '';
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">${escapeHtml(label)} — Verification Status</div>
+    <div style="margin-top:10px;">${itemStageDotsHtml(ia.stage)}</div>
+    ${ia.remark ? `<p class="section-meta" style="margin-top:6px;color:var(--seal-red);">Sent back: ${escapeHtml(ia.remark)}</p>` : ''}
+    ${actionHtml}
+  </div>`;
+}
+/* CI's own action bar at the bottom of a flow item's marks table — only
+   rendered while it's still theirs to work on. */
+function itemActionBarHtml(course, itemKey, editable){
+  if(!editable) return '';
+  return `<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+    <button class="btn btn-outline btn-sm" onclick="App.saveItemProgress('${course.id}')">Save Progress</button>
+    <button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>
+  </div>`;
+}
 
 
 const STUDENT_POOL = ['Aarav Sharma','Diya Kulkarni','Rohan Gupta','Sneha Reddy','Kabir Malhotra','Isha Bansal','Arjun Nair','Meera Pillai','Karthik Iyer','Ananya Joshi'];
@@ -1499,7 +1652,7 @@ async function fetchStateFromSupabase(){
     return {
       id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, semester:c.semester||'', regulation:c.regulation||'',
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
-      evalType:c.eval_type || null, ciLoadType:c.ci_load_type || null,
+      evalType:c.eval_type || null, ciLoadType:c.ci_load_type || null, itemApprovals:c.item_approvals || {}, ebPublished:!!c.eb_published, ebPublishedAt:c.eb_published_at ? new Date(c.eb_published_at).getTime() : null, ebPublishedBy:c.eb_published_by || '',
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
       etRequests: c.et_requests || [], ttPaperConfig: c.tt_paper_config || {},
@@ -1578,7 +1731,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, item_approvals:c.itemApprovals||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -2360,11 +2513,10 @@ const App = {
     const cieCheck = this.validateCIEComplete(course);
     if(!cieCheck.ok) return cieCheck;
     const template = getCourseTemplate(course);
-    if(ttLabApprovalComponents(template).length && course.ttLabApproval!=='approved'){
-      return { ok:false, msg:'Term Test 1/2 & Lab Internal marks still need HOD approval before this record can be submitted.' };
-    }
-    if(labExternalApprovalComponents(template).length && course.labExternalApproval!=='approved'){
-      return { ok:false, msg:'Lab External marks still need HOD approval before this record can be submitted.' };
+    for(const key of ITEM_FLOW_KEYS){
+      if(!itemFlowApplicable(template, key)) continue;
+      const ia = this.itemApproval(course.id, key);
+      if(!ia || ia.stage!=='done') return { ok:false, msg:`${ITEM_FLOW_LABELS[key]} still needs to finish its own CI → CC → EA → HOD verification before this record can be submitted.` };
     }
     return { ok:true };
   },
@@ -2449,6 +2601,12 @@ const App = {
     this.navigate('ea-list');
   },
 
+  saveItemProgress(courseId){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    syncCourse(course);
+    toast('Progress saved.', 'ok');
+  },
   hodApprove(courseId){
     const course = this.getCourse(courseId);
     const actor = this.currentUser();
@@ -2465,6 +2623,98 @@ const App = {
     toast(`${course.code} approved and frozen.`, 'ok');
     closeModal();
     this.navigate('hod-list');
+  },
+  /* ---------- Examination Branch: final confirmation, layered ON TOP of an
+     already HOD-approved (frozen) record — the flow is
+     CI -> CC -> EA -> HOD -> EB for the Overall CIE/SEE/Grand Total. This
+     is deliberately a separate boolean rather than a new course.status
+     value, so it doesn't disturb the many existing "approved = locked"
+     checks elsewhere; it's a checkpoint layered after freezing, not a
+     replacement for it. */
+  ebPublish(courseId){
+    const course = this.getCourse(courseId);
+    const actor = this.currentUser();
+    if(actor.systemRole!=='EXAM' && actor.systemRole!=='ADMIN'){ toast('Only the Examination Branch can confirm this.', 'err'); return; }
+    if(course.status!=='approved'){ toast('This record must be HOD-approved first.', 'err'); return; }
+    course.ebPublished = true;
+    course.ebPublishedAt = Date.now();
+    course.ebPublishedBy = actor.name;
+    syncCourse(course);
+    this.logHistory(course, `Confirmed and published by the Examination Branch`);
+    toast(`${course.code} confirmed by the Examination Branch.`, 'ok');
+    this.navigate('exam-list');
+  },
+
+  /* ================= Per-item approval chain =================
+     TT1, TT2, Practical Internal Test and SEE Practical each carry their
+     OWN independent CI -> CC -> EA -> HOD chain (separate from the Overall
+     record's own CI -> CC -> EA -> HOD -> EB submission). A component sits
+     at whichever stage currently owns it; that role forwards it on, or
+     sends it back to the CI with a remark, which restarts the chain for
+     that one component only — every other component and the Overall
+     record are unaffected. SEE Theory never enters this at all; it's the
+     Examination Branch's own record, outside this app's marks flow. */
+  itemApproval(courseId, itemKey){
+    const course = this.getCourse(courseId);
+    if(!course) return null;
+    course.itemApprovals = course.itemApprovals || {};
+    return course.itemApprovals[itemKey] || (course.itemApprovals[itemKey] = { stage:'ci', remark:'', history:[] });
+  },
+  forwardItem(courseId, itemKey){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    const actor = this.currentUser();
+    const ia = this.itemApproval(courseId, itemKey);
+    const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
+    if(ia.stage==='done'){ toast(`${label} is already approved.`, 'err'); return; }
+    if(ia.stage==='ci'){
+      const ciUser = getCourseCIUser(courseId);
+      if(ciUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can forward this.', 'err'); return; }
+      ia.stage = 'cc';
+      const ccAssignee = getActiveAssignment(courseId,'CC');
+      if(ccAssignee) this.notifyUser(ccAssignee.userId, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Instructor.`, true);
+    } else if(ia.stage==='cc'){
+      const ccUser = getCourseCCUser(courseId);
+      if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can forward this.', 'err'); return; }
+      ia.stage = 'ea';
+      this.state.users.filter(u=>u.systemRole==='EA').forEach(u=>this.notifyUser(u.id, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Coordinator.`, true));
+    } else if(ia.stage==='ea'){
+      if(actor.systemRole!=='EA' && actor.systemRole!=='ADMIN'){ toast('Only the Executive Assistant can forward this.', 'err'); return; }
+      ia.stage = 'hod';
+      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} ready for approval`, `${course.code} — ${label} has been forwarded by the Executive Assistant.`, true));
+    } else if(ia.stage==='hod'){
+      if(actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can approve this.', 'err'); return; }
+      ia.stage = 'done';
+      const ciUser = getCourseCIUser(courseId);
+      if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by the HOD.`, true);
+    }
+    ia.remark = '';
+    ia.history.push({ by:actor.name, role:actor.systemRole, action: ia.stage==='done' ? 'approved' : `forwarded to ${ITEM_STAGE_LABELS[ia.stage]}`, ts:Date.now() });
+    syncCourse(course);
+    toast(ia.stage==='done' ? `${label} approved.` : `${label} forwarded to ${ITEM_STAGE_LABELS[ia.stage]}.`, 'ok');
+    renderContent();
+  },
+  sendBackItem(courseId, itemKey, remark){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    const actor = this.currentUser();
+    const ia = this.itemApproval(courseId, itemKey);
+    const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
+    if(ia.stage==='ci' || ia.stage==='done'){ toast('Nothing to send back from here.', 'err'); return; }
+    if(ia.stage==='cc'){
+      const ccUser = getCourseCCUser(courseId);
+      if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can send this back.', 'err'); return; }
+    } else if(ia.stage==='ea' && actor.systemRole!=='EA' && actor.systemRole!=='ADMIN'){ toast('Only the Executive Assistant can send this back.', 'err'); return; }
+    else if(ia.stage==='hod' && actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can send this back.', 'err'); return; }
+    if(!remark || !remark.trim()){ toast('A remark is required so the Course Instructor knows what to fix.', 'err'); return; }
+    ia.stage = 'ci';
+    ia.remark = remark.trim();
+    ia.history.push({ by:actor.name, role:actor.systemRole, action:`sent back to CI: ${remark.trim()}`, ts:Date.now() });
+    syncCourse(course);
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, `${course.code} — ${label} was sent back: ${remark.trim()}`, true);
+    toast(`${label} sent back to the Course Instructor.`, 'err');
+    renderContent();
   },
   /* ---------- CI: acknowledge a frozen (approved) record — completes the
      audit trail's "faculty acknowledgement" checkpoint. Purely a log entry;
@@ -3264,9 +3514,7 @@ function getNavForUser(user){
   ];
   if(user.systemRole==='HOD') return [
     {v:'hod-list', label:'Pending Approval'},
-    {v:'hod-termtest-overview', label:'Term Test'},
-    {v:'hod-labint-overview', label:'Lab Internals'},
-    {v:'hod-labext-overview', label:'Lab Externals'},
+    {v:'verification-status', label:'Verification Status'},
     {v:'hod-faculty', label:'Faculty Directory'},
     {v:'hod-audit', label:'Audit Log'},
   ];
@@ -3287,6 +3535,7 @@ function getNavForUser(user){
   if(ciCourses.length) nav.push({v:'ci-pending', label:'Pending Approval'});
   if(ciCourses.length) nav.push({v:'ci-audit', label:'Audit Log'});
   if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
+  if(ciCourses.length || ccCourses.length) nav.push({v:'verification-status', label:'Verification Status'});
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
 }
@@ -3324,6 +3573,7 @@ function renderContent(){
     'ea-list': renderEAList,
     'ea-review': renderEAReview,
     'exam-list': renderExamList,
+    'verification-status': renderVerificationStatus,
     'ci-sections': renderCISections,
     'ci-subject-detail': renderCISubjectDetail,
     'ci-entry': renderCIEntry,
@@ -5000,21 +5250,17 @@ function renderEAReview(params){
 /* ================= EXAM BRANCH VIEWS ================= */
 function renderExamList(){
   const approved = App.state.courses.filter(c=>c.status==='approved');
+  const pending = approved.filter(c=>!c.ebPublished);
+  const published = approved.filter(c=>c.ebPublished);
   const wrap = el('<div></div>');
-  wrap.innerHTML = `
-    <div class="page-head">
-      <div class="page-eyebrow">Examination Branch</div>
-      <h2>Approved Records</h2>
-      <p>Read-only, finalized results only. InProgress and other unapproved submissions never appear here. Full marks are loaded on demand per record, not all at once, to keep this page fast as records accumulate.</p>
-    </div>
-    ${approved.length===0 ? emptyStateHtml('No finalized records yet','Approved course-sections will appear here once the HOD locks them.') :
-      approved.map(c=>`
+  const cardHtml = c => `
       <div class="card">
         <div class="card-row">
           <div>
             <div class="section-title">${escapeHtml(c.name)}</div>
             ${courseMetaBlock(c)}
             <div class="section-meta" style="margin-top:4px;">${c.studentCount} student${c.studentCount===1?'':'s'} · CIE ${c.cieComplete?'complete':'incomplete'} · SEE ${c.seeComplete?'complete':'incomplete'}</div>
+            ${c.ebPublished ? `<div class="section-meta" style="margin-top:4px;color:#2f7a3f;">✓ Confirmed by ${escapeHtml(c.ebPublishedBy||'Examination Branch')} · ${fmtDate(c.ebPublishedAt)}</div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
             ${statusPill(c)}
@@ -5022,10 +5268,21 @@ function renderExamList(){
             <button class="btn btn-outline btn-sm" onclick="exportCSV('${c.id}')">Export CSV</button>
             <button class="btn btn-sm" onclick="exportPrint('${c.id}')">Export / Print PDF</button>
             <button class="btn btn-outline btn-sm" id="exam-toggle-${c.id}" onclick="toggleExamMarks('${c.id}')">View Full Marks</button>
+            ${!c.ebPublished ? `<button class="btn btn-green btn-sm" onclick="App.ebPublish('${c.id}')">Confirm &amp; Publish</button>` : ''}
           </div>
         </div>
         <div id="exam-marks-${c.id}" style="margin-top:14px;"></div>
-      </div>`).join('')}
+      </div>`;
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Examination Branch</div>
+      <h2>Approved Records</h2>
+      <p>Read-only, finalized results only. InProgress and other unapproved submissions never appear here. Full marks are loaded on demand per record, not all at once, to keep this page fast as records accumulate. This is the final step in the Overall flow — CI → CC → EA → HOD → EB — confirming closes out that record.</p>
+    </div>
+    ${approved.length===0 ? emptyStateHtml('No finalized records yet','Approved course-sections will appear here once the HOD locks them.') : `
+    ${pending.length ? `<div class="section-title" style="font-size:14px;margin:6px 0;">Awaiting Confirmation (${pending.length})</div>${pending.map(cardHtml).join('')}` : ''}
+    ${published.length ? `<div class="section-title" style="font-size:14px;margin:18px 0 6px;">Published (${published.length})</div>${published.map(cardHtml).join('')}` : ''}
+    `}
   `;
   return wrap;
 }
@@ -5547,7 +5804,20 @@ function renderCISubjectDetail(params){
     </div>
     ${sentBackBanner(course)}
     ${evalTypeTableHtml(course, actions)}
-    ${actions ? `<div style="margin-top:12px;"><button class="btn btn-outline btn-sm" onclick="App.navigate('ci-analytics',{courseId:'${course.id}'})">📊 Analytics — Term Test 1 / Term Test 2 / CIE Total</button></div>` : ''}
+    ${actions ? (()=>{
+      const t = getCourseTemplate(course);
+      const has = k => k==='pracInternal' ? t.cie.some(c=>c.key==='pracInternal')
+        : k==='seePractical' ? seeDisplayComponents(t).some(c=>c.key==='seePractical'||c.key==='seePracticalProject')
+        : k==='tt1' ? !!termTestComponentKey(t,'TT1') : !!termTestComponentKey(t,'TT2');
+      const link = (itemKey, label) => `<button class="btn btn-outline btn-sm" onclick="App.navigate('ci-analytics',{courseId:'${course.id}', itemKey:'${itemKey}'})">📊 ${label}</button>`;
+      return `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+        ${has('tt1') ? link('tt1','TT1 Analytics') : ''}
+        ${has('tt2') ? link('tt2','TT2 Analytics') : ''}
+        ${has('pracInternal') ? link('pracInternal','Practical Internal Analytics') : ''}
+        ${has('seePractical') ? link('seePractical','SEE Practical Analytics') : ''}
+        ${link('overall','Overall Analytics')}
+      </div>`;
+    })() : ''}
   `;
   return wrap;
 }
@@ -5686,7 +5956,9 @@ function renderCITermTestEntry(params){
   }
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const forwarded = isTTForwarded(course, cycle);
-  const editable = (course.status==='draft' || correctionMode) && forwarded;
+  const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
+  const ia = App.itemApproval(course.id, itemKey) || { stage:'ci', remark:'' };
+  const editable = (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci';
   const comp = template.cie.find(c=>c.key===compKey);
 
   // Unit/split are the Course Coordinator's call now — this page only shows
@@ -5820,6 +6092,7 @@ function renderCITermTestEntry(params){
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
+    ${itemApprovalStatusHtml(course, itemKey)}
     <div class="card">
       <div class="section-title" style="font-size:14px;">Class Performance — ${escapeHtml(cycleLabel)}</div>
       <div style="margin-top:8px;">${statsHtml}</div>
@@ -5845,6 +6118,7 @@ function renderCITermTestEntry(params){
           <tbody>${rows}</tbody>
         </table>
       </div>
+      ${itemActionBarHtml(course, itemKey, editable)}
     </div>`}
   `;
   return wrap;
@@ -5953,32 +6227,17 @@ function renderCIComponentEntry(params){
   const comp = list.find(c=>c.key===params.compKey);
   if(!comp){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Component not found','')}`; return wrap; }
 
-  // Which HOD-approval group (if any) this component belongs to, per the
-  // fixed institutional rule: Term Test 1/2 + Lab Internal submit together
-  // ("ttlab"); Lab External submits on its own ("labext"); everything else
-  // needs no approval and stays editable straight through.
-  const ttlabKeys = new Set(ttLabApprovalComponents(template).map(c=>c.key));
-  const labextKeys = new Set(labExternalApprovalComponents(template).map(c=>c.key));
-  const group = ttlabKeys.has(comp.key) ? 'ttlab' : labextKeys.has(comp.key) ? 'labext' : null;
-  const statusField = group==='ttlab' ? 'ttLabApproval' : group==='labext' ? 'labExternalApproval' : null;
-  const groupStatus = statusField ? course[statusField] : null;
-  const locked = groupStatus === 'approved';
+  // Practical Internal Test and SEE Practical each carry their own
+  // independent CI -> CC -> EA -> HOD chain (see ITEM_FLOW_KEYS); every
+  // other CIE/SEE component here has no approval chain at all and stays
+  // editable for as long as the Overall record itself is InProgress.
+  const itemKey = comp.key==='pracInternal' ? 'pracInternal' : (comp.key==='seePractical'||comp.key==='seePracticalProject') ? 'seePractical' : null;
+  const ia = itemKey ? App.itemApproval(course.id, itemKey) : null;
   const correctionMode = course.status==='approved' && course.editUnlocked;
-  const editable = (course.status==='draft' || correctionMode) && !locked;
-
-  const badge = group ? (
-    locked ? `<span class="status-pill status-approved">Approved by HOD — locked</span>`
-    : groupStatus==='pending' ? `<span class="status-pill status-submitted">Pending HOD approval</span>`
-    : `<span class="status-pill status-draft">Not yet submitted</span>`
-  ) : '';
-  const groupNote = group==='ttlab'
-    ? `Part of the "Term Test &amp; Lab Internal" group submitted together to the HOD — Term Test 1/2 are entered on their own pages; this is the Lab Internal piece.`
-    : group==='labext'
-    ? `Submitted to the HOD on its own, separately from the rest of CIE.`
-    : `No HOD approval needed here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
-  const submitBtn = (group && editable && groupStatus!=='pending')
-    ? `<button class="btn btn-sm" style="margin-top:14px;" onclick="App.submitApprovalGroup('${course.id}','${group}')">Submit ${group==='ttlab'?'Term Test &amp; Lab Internal':'Lab External'} for HOD Approval</button>`
-    : '';
+  const editable = (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci');
+  const note = itemKey
+    ? `Has its own CI → CC → EA → HOD verification chain — see the status card below.`
+    : `No approval chain here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
 
   const bodyHtml = comp.key==='sia' ? siaEntryHtml(course, comp, editable) : (()=>{
     const rows = course.students.map(s=>{
@@ -6006,12 +6265,13 @@ function renderCIComponentEntry(params){
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
     </div>
+    ${itemKey ? itemApprovalStatusHtml(course, itemKey) : ''}
     <div class="card">
-      <p class="section-meta" style="margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        ${escapeHtml(comp.label)} — raw /${comp.rawMax} scaled to /${comp.scaledMax}. ${groupNote} ${badge}
+      <p class="section-meta" style="margin-bottom:10px;">
+        ${escapeHtml(comp.label)} — raw /${comp.rawMax} scaled to /${comp.scaledMax}. ${note}
       </p>
       ${bodyHtml}
-      ${submitBtn}
+      ${itemKey ? itemActionBarHtml(course, itemKey, editable) : ''}
     </div>
   `;
   return wrap;
@@ -6021,23 +6281,25 @@ function renderCIComponentEntry(params){
    "View Total Marks". Marks entry itself never happens here; it's split
    across the per-component pages above, this is only for seeing every
    component side by side once they're all in. ---------- */
-/* ---------- CI: Analytics — Term Test 1, Term Test 2 & CIE Total side by
-   side for the whole class, with per-column sorting and a quick numeric
-   filter (">40", "<20", "35", ">=30" all work) on each column. Purely a
-   read-only lens over marks entered elsewhere; nothing here writes back. ---------- */
+/* ---------- CI: Analytics — one page per item (Term Test 1, Term Test 2,
+   Practical Internal Test, SEE Practical, or the Overall CIE/SEE/Grand
+   Total), each with sortable, filterable columns. Kept as separate pages
+   rather than one merged table, per component, so each reads cleanly on
+   its own. Purely a read-only lens; nothing here writes back. ---------- */
 let analyticsState = {};
-function getAnalyticsState(courseId){
-  return analyticsState[courseId] || (analyticsState[courseId] = { sortKey:null, sortDir:'asc', filters:{} });
+function getAnalyticsState(courseId, itemKey){
+  const k = courseId+'|'+itemKey;
+  return analyticsState[k] || (analyticsState[k] = { sortKey:null, sortDir:'asc', filters:{} });
 }
-function setAnalyticsSort(courseId, key){
-  const st = getAnalyticsState(courseId);
+function setAnalyticsSort(courseId, itemKey, key){
+  const st = getAnalyticsState(courseId, itemKey);
   if(st.sortKey===key) st.sortDir = st.sortDir==='asc' ? 'desc' : 'asc';
   else { st.sortKey = key; st.sortDir = 'asc'; }
   renderContent();
 }
 window.setAnalyticsSort = setAnalyticsSort;
-function setAnalyticsFilter(courseId, key, value){
-  getAnalyticsState(courseId).filters[key] = value;
+function setAnalyticsFilter(courseId, itemKey, key, value){
+  getAnalyticsState(courseId, itemKey).filters[key] = value;
   renderContent();
 }
 window.setAnalyticsFilter = setAnalyticsFilter;
@@ -6057,29 +6319,54 @@ function passesAnalyticsFilter(expr, value){
   if(op==='<=') return value<=num;
   return value===num;
 }
+/* itemKey: 'tt1' | 'tt2' | 'pracInternal' | 'seePractical' | 'overall' */
 function renderCIAnalytics(params){
   const course = App.getCourse(params.courseId);
+  const itemKey = params.itemKey || 'overall';
   const wrap = el('<div></div>');
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
   const template = getCourseTemplate(course);
-  const tt1Key = termTestComponentKey(template, 'TT1');
-  const tt2Key = termTestComponentKey(template, 'TT2');
-  const comp1 = tt1Key ? template.cie.find(c=>c.key===tt1Key) : null;
-  const comp2 = tt2Key ? template.cie.find(c=>c.key===tt2Key) : null;
   const scaledOf = (raw, comp) => (typeof raw==='number' && comp) ? round1((Math.min(raw,comp.rawMax)/comp.rawMax)*comp.scaledMax) : null;
 
-  const st = getAnalyticsState(course.id);
-  let rows = (course.students||[]).map(s=>({
-    student: s,
-    tt1: comp1 ? scaledOf(s.marks[comp1.key], comp1) : null,
-    tt2: comp2 ? scaledOf(s.marks[comp2.key], comp2) : null,
-    cie: round1(computeCIE(s, template.cie).total),
-  }));
-  rows = rows.filter(r=>
-    passesAnalyticsFilter(st.filters.tt1, r.tt1) &&
-    passesAnalyticsFilter(st.filters.tt2, r.tt2) &&
-    passesAnalyticsFilter(st.filters.cie, r.cie));
+  // Which value column(s) this page shows, keyed the same way as the filter/sort state.
+  let pageTitle = 'Analytics', columns = [];
+  if(itemKey==='tt1' || itemKey==='tt2'){
+    const cycle = itemKey==='tt1' ? 'TT1' : 'TT2';
+    const key = termTestComponentKey(template, cycle);
+    const comp = key ? template.cie.find(c=>c.key===key) : null;
+    pageTitle = `Analytics — ${TERM_TEST_LABELS[cycle]}`;
+    columns = [{ key:'val', label:TERM_TEST_LABELS[cycle], max: comp ? comp.scaledMax : null,
+      value: s => comp ? scaledOf(s.marks[comp.key], comp) : null }];
+  } else if(itemKey==='pracInternal' || itemKey==='seePractical'){
+    const section = itemKey==='pracInternal' ? 'cie' : 'see';
+    const list = section==='cie' ? template.cie : seeDisplayComponents(template);
+    const comp = itemKey==='pracInternal' ? list.find(c=>c.key==='pracInternal') : list.find(c=>c.key==='seePractical'||c.key==='seePracticalProject');
+    pageTitle = `Analytics — ${comp ? comp.label : (itemKey==='pracInternal'?'Practical Internal Test':'SEE Practical')}`;
+    columns = [{ key:'val', label: comp ? comp.label : '—', max: comp ? comp.scaledMax : null,
+      value: s => comp ? scaledOf(s.marks[comp.key], comp) : null }];
+  } else {
+    pageTitle = 'Analytics — Overall';
+    const seeComps = seeDisplayComponents(template);
+    const seeMax = round1(seeComps.reduce((a,c)=>a+c.scaledMax,0));
+    columns = [
+      { key:'cie', label:'CIE Total', max: CIE_MAX, value: s => round1(computeCIE(s, template.cie).total) },
+      { key:'see', label:'SEE Total', max: seeMax, value: s => seeComps.length ? round1(computeCIE(s, seeComps).total) : null },
+      { key:'grand', label:'Grand Total', max: round1(CIE_MAX+seeMax), value: s => {
+          const cie = round1(computeCIE(s, template.cie).total);
+          const see = seeComps.length ? round1(computeCIE(s, seeComps).total) : 0;
+          return round1(cie+see);
+        } },
+    ];
+  }
+
+  const st = getAnalyticsState(course.id, itemKey);
+  let rows = (course.students||[]).map(s=>{
+    const r = { student: s };
+    columns.forEach(c=>{ r[c.key] = c.value(s); });
+    return r;
+  });
+  rows = rows.filter(r=>columns.every(c=>passesAnalyticsFilter(st.filters[c.key], r[c.key])));
   if(st.sortKey){
     const dir = st.sortDir==='asc' ? 1 : -1;
     rows.sort((a,b)=>{
@@ -6092,20 +6379,28 @@ function renderCIAnalytics(params){
     });
   }
   const arrow = key => st.sortKey===key ? (st.sortDir==='asc' ? ' ▲' : ' ▼') : '';
-  const filterInput = (key, placeholder) => `<input type="text" value="${escapeHtml(st.filters[key]||'')}" placeholder="${placeholder}" style="width:64px;font-size:11px;padding:3px 5px;margin-top:4px;" onchange="setAnalyticsFilter('${course.id}','${key}', this.value)">`;
-  const th = (key, label, comp) => `<th style="cursor:pointer;user-select:none;" onclick="setAnalyticsSort('${course.id}','${key}')">${label}${comp?` (/${comp.scaledMax})`:''}${arrow(key)}<br>${key==='name'?'':filterInput(key, '>40')}</th>`;
+  // Sort-label and filter-input are deliberately separate clickable targets
+  // — the filter <input> stops the click from bubbling up to the header's
+  // sort handler, otherwise focusing the box immediately re-triggers a
+  // sort/re-render and you can never actually type into it.
+  const filterInput = (colKey, placeholder) => `<input type="text" value="${escapeHtml(st.filters[colKey]||'')}" placeholder="${placeholder}"
+    style="width:64px;font-size:11px;padding:3px 5px;margin-top:4px;"
+    onclick="event.stopPropagation()"
+    onchange="setAnalyticsFilter('${course.id}','${itemKey}','${colKey}', this.value)">`;
+  const th = (colKey, label, max) => `<th>
+    <span style="cursor:pointer;user-select:none;" onclick="setAnalyticsSort('${course.id}','${itemKey}','${colKey}')">${escapeHtml(label)}${max!=null?` (/${max})`:''}${arrow(colKey)}</span>
+    ${colKey==='name' ? '' : `<br>${filterInput(colKey, '>40')}`}
+  </th>`;
 
   const bodyRows = rows.map(r=>`<tr>
     <td>${escapeHtml(r.student.name)}</td>
-    <td class="total-cell">${r.tt1===null?'—':r.tt1}</td>
-    <td class="total-cell">${r.tt2===null?'—':r.tt2}</td>
-    <td class="total-cell" style="font-weight:700;">${r.cie}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
+    ${columns.map(c=>`<td class="total-cell">${r[c.key]===null||r[c.key]===undefined?'—':r[c.key]}${c.max!=null && r[c.key]!==null?`<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${c.max}</span>`:''}</td>`).join('')}
   </tr>`).join('');
 
   wrap.innerHTML = `
     <div class="page-head">
       ${backBtn}
-      <div class="page-eyebrow">Analytics</div>
+      <div class="page-eyebrow">${escapeHtml(pageTitle)}</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
     </div>
@@ -6116,9 +6411,7 @@ function renderCIAnalytics(params){
         <table class="data-table">
           <thead><tr>
             ${th('name','Student')}
-            ${th('tt1','Term Test 1', comp1)}
-            ${th('tt2','Term Test 2', comp2)}
-            ${th('cie','CIE Total')}
+            ${columns.map(c=>th(c.key, c.label, c.max)).join('')}
           </tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
