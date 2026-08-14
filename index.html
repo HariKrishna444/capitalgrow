@@ -534,6 +534,43 @@ const REGULATION_BRANCHES = {
 function branchesForRegulation(regulation){
   return REGULATION_BRANCHES[regulation] || Object.keys(BRANCH_LABELS);
 }
+/* Section numbering is fixed per Regulation and branch-group — not free
+   text. R24 (CSE or AIML, taught separately): sections C1-C8. R25's 5
+   branches split into 3 groups that each get their own section range:
+   CSE & CSC (Cyber Security) share the same subjects, sections B1-B3;
+   AIML & CSD (Data Science) share the same subjects, sections B5-B11;
+   ERP is its own thing — different subjects entirely, assigned directly by
+   the Timetable Incharge rather than through the Course Coordinator's
+   Subject Catalog flow, and only ever has one section, B4. */
+function rangeOf(prefix, start, end){ const out=[]; for(let i=start;i<=end;i++) out.push(prefix+i); return out; }
+const SECTION_RANGES = {
+  R24: { CSE: rangeOf('C',1,8), AIML: rangeOf('C',1,8) },
+  R25: { CSE: rangeOf('B',1,3), CSC: rangeOf('B',1,3), ERP: ['B4'], AIML: rangeOf('B',5,11), CSD: rangeOf('B',5,11) },
+};
+function sectionOptionsFor(regulation, branch){
+  return (SECTION_RANGES[regulation] && SECTION_RANGES[regulation][branch]) || [];
+}
+/* Which branches share a Subject Catalog entry with each other under R25 —
+   a Course Coordinator whose subject is catalogued under CSE can also open
+   sections of it for CSC (same subjects), and likewise AIML <-> CSD. ERP
+   is deliberately excluded here: its subjects come from the Timetable
+   Incharge directly, not from this Coordinator flow. */
+const R25_SHARED_BRANCH_GROUPS = { CSE:['CSE','CSC'], CSC:['CSE','CSC'], AIML:['AIML','CSD'], CSD:['AIML','CSD'] };
+/* The Subject Catalog only ever stores a subject under its ORIGINAL branch
+   (CSE or AIML) — never under CSC/CSD/ERP — so this looks up that original
+   branch for a given subject code, regardless of which branch's section
+   record happens to be passed around the app. */
+function catalogBranchForCode(code){
+  const entry = SUBJECT_CATALOG.find(r=>normalizeCode(r.code)===normalizeCode(code));
+  return entry ? entry.branch : null;
+}
+/* Which branches a Course Coordinator can open a NEW section of THIS
+   subject for. */
+function ccCreatableBranches(regulation, catalogBranch){
+  if(regulation==='R25' && catalogBranch && R25_SHARED_BRANCH_GROUPS[catalogBranch]) return R25_SHARED_BRANCH_GROUPS[catalogBranch];
+  if(catalogBranch) return [catalogBranch];
+  return branchesForRegulation(regulation).filter(b=>b!=='ERP');
+}
 /* Whether the assigned Course Instructor is teaching the Lecture or the
    Practical component of this section — the CC picks this at assignment
    time (a subject can have separate L and P instructors), and it's shown
@@ -1337,20 +1374,19 @@ function resolveSemesterForCode(code){
 /* Subjects available for a given Regulation + Branch + Semester — powers
    the CC's "Add Section & Assign Instructor" subject dropdown, narrowed
    down instead of showing every subject in Courses Applicable at once. */
-/* R25's 3 newer branches (Cyber Security / Data Science / ERP) don't have
-   their own Subject Catalog rows yet — until real per-branch subjects are
-   added, they share the R25 CSE+AIML subject list (deduped by code), since
-   the early-semester syllabus is identical across all 5 R25 branches. */
-const R25_SHARED_FALLBACK_BRANCHES = ['CSC','CSD','ERP'];
+/* R25's CSC (Cyber Security) mirrors CSE's subjects exactly, and CSD (Data
+   Science) mirrors AIML's exactly — the Subject Catalog only ever stores
+   entries under CSE/AIML themselves, so CSC/CSD fall back to their mirror
+   branch's list. ERP is deliberately NOT included here: its subjects come
+   directly from the Timetable Incharge, not this Subject Catalog, so an
+   empty list for ERP is correct, not a gap to fill. */
+const R25_BRANCH_MIRROR = { CSC:'CSE', CSD:'AIML' };
 function catalogSubjectsFor(regulation, branch, semester){
   if(!regulation || !branch || !semester) return [];
   const direct = SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)===regulation && r.branch===branch && r.sem===semester);
   if(direct.length) return direct;
-  if(regulation==='R25' && R25_SHARED_FALLBACK_BRANCHES.includes(branch)){
-    const seen = new Set();
-    return SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)==='R25' && (r.branch==='CSE'||r.branch==='AIML') && r.sem===semester)
-      .filter(r=>{ if(seen.has(r.code)) return false; seen.add(r.code); return true; });
-  }
+  const mirror = regulation==='R25' ? R25_BRANCH_MIRROR[branch] : null;
+  if(mirror) return SUBJECT_CATALOG.filter(r=>regulationFromCode(r.code)==='R25' && r.branch===mirror && r.sem===semester);
   return direct;
 }
 function ccSubjectDropdownOptionsHtml(regulation, branch, semester){
@@ -2133,39 +2169,50 @@ const App = {
      it — same graceful fallback as the rest of the app already uses. Can be
      called repeatedly to allocate several instructors/sections under the
      same coordination. */
-  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, subjectCode, regulation, semester, instructorName, loadType){
+  /* ---------- CC: split a subject coordination into a real branch/section
+     and assign its Course Instructor, all in one step. The Subject, its
+     Regulation and Evaluation Type all come straight from the chosen
+     Coordination itself (the base course record already carries them) —
+     there's no separate Regulation/Subject re-pick here anymore, since
+     that was redundant with (and could disagree with) the Coordination
+     you already selected. Branch is restricted to whichever branches
+     actually share this subject (R25: CSE<->CSC, AIML<->CSD; R24: none
+     shared; ERP excluded — its subjects come from the Timetable Incharge,
+     not this flow), and Section is restricted to that Regulation/branch's
+     fixed numbering range. Can be called repeatedly to allocate several
+     instructors/sections under the same coordination. */
+  async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, semester, instructorName){
     const actor = this.currentUser();
     const base = this.getCourse(baseCourseId);
     if(!base){ toast('Choose a coordination to add a section to.', 'err'); return; }
     const ccUser = getCourseCCUser(baseCourseId);
     const isOwner = ccUser?.id === actor.id;
     if(!isOwner && actor.systemRole!=='ADMIN'){ toast('Only this subject\'s Course Coordinator can add a section.', 'err'); return; }
-    if(!REGULATION_OPTIONS.includes(regulation)){ toast('Choose a Regulation.', 'err'); return; }
+    const code = (base.code||'').trim().toUpperCase();
+    const regulation = regulationFromCode(code);
+    if(!regulation){ toast('Could not work out this subject\'s Regulation from its code.', 'err'); return; }
     if(!BRANCH_LABELS[branch]){ toast('Choose a branch.', 'err'); return; }
-    if(!branchesForRegulation(regulation).includes(branch)){ toast(`${branch} isn't offered under ${regulation}.`, 'err'); return; }
+    const catalogBranch = catalogBranchForCode(code);
+    const allowedBranches = ccCreatableBranches(regulation, catalogBranch);
+    if(!allowedBranches.includes(branch)){ toast(`${branchLabel(branch)} doesn't offer ${code} — choose ${allowedBranches.map(branchLabel).join(' or ')}.`, 'err'); return; }
     if(!SEMESTER_NUMBERS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
-    const code = (subjectCode||'').trim().toUpperCase();
-    if(!code){ toast('Choose a Subject.', 'err'); return; }
-    const catalogEntry = catalogSubjectsFor(regulation, branch, semester).find(s=>s.code===code);
-    if(!catalogEntry){ toast('That subject isn\'t in the catalog for this Regulation/Branch/Semester — pick one from the list.', 'err'); return; }
     const sec = (section||'').trim().toUpperCase();
-    if(!sec){ toast('Enter a section (e.g. A, B, C).', 'err'); return; }
+    const validSections = sectionOptionsFor(regulation, branch);
+    if(!sec || (validSections.length && !validSections.includes(sec))){ toast(validSections.length ? `Choose a section from ${validSections[0]}\u2013${validSections[validSections.length-1]}.` : 'Enter a section.', 'err'); return; }
     const email = (instructorEmail||'').trim().toLowerCase();
     if(!email){ toast('Choose an Instructor.', 'err'); return; }
-    if(loadType && !LOAD_TYPE_LABELS[loadType]){ toast('Choose Lecture or Practical.', 'err'); return; }
     const dupe = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && c.section===sec && c.branch===branch);
     if(dupe){ toast(`${code} · Section ${sec} · ${branchLabel(branch)} already exists.`, 'err'); return; }
     // Evaluation Type comes straight from Supabase's "Courses Applicable"
     // subjects table (App.state.subjects), matched by this same code — not
     // a manual pick, and no HOD approval needed.
     const subj = masterSubject(code);
-    const evalType = subj ? subj.abbr : null;
-    const displayName = subj ? subj.name : catalogEntry.name;
+    const evalType = subj ? subj.abbr : base.evalType;
+    const displayName = subj ? subj.name : base.name;
     const course = {
       id: bizId('CRS', [code, branch, sec], this.state.courses.map(c=>c.id)), code, name: displayName, section: sec, branch, semester, regulation,
       status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
-      ciLoadType: loadType || null,
       students: [], history: []
     };
     this.state.courses.push(course);
@@ -6542,110 +6589,114 @@ function ccCoordinationOptionsHtml(ccCourses){
   ccCourses.forEach(c=>{ if(!seen[c.code]) seen[c.code] = c; });
   return Object.values(seen).map(c=>`<option value="${c.id}" data-semester="${escapeHtml(c.semester||'')}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
 }
-/* Refreshes the Subject dropdown whenever Regulation, Branch, or Semester
-   changes on the "Add Section & Assign Instructor" form — narrowed to the
-   Subject Catalog rows matching all three, per Regulation/Branch/Semester,
-   which is what fixes the Evaluation Type (via Supabase Courses Applicable)
-   once a Subject is picked. No HOD approval step anywhere in this flow. */
-/* Re-populates the Branch dropdown to only the branches the chosen
-   Regulation actually offers (R24 = CSE/AIML only; R25 = 5 branches) —
-   then re-narrows the Subject list same as before. */
+/* All faculty accounts in the system (every branch), for the quick-pick
+   Instructor dropdown — picking one just fills the email/name fields
+   below; the actual assignment still goes through the same
+   createFacultyIfNeeded path either way, existing account or new. */
+function allFacultyOptionsHtml(){
+  const facultyUsers = App.state.users.filter(u=>u.systemRole==='FACULTY').slice().sort((a,b)=>a.name.localeCompare(b.name));
+  return facultyUsers.map(u=>`<option value="${escapeHtml(u.email)}" data-name="${escapeHtml(u.name)}">${escapeHtml(u.name)} — ${escapeHtml(u.email)}${u.homeBranch?` (${escapeHtml(u.homeBranch)})`:''}</option>`).join('');
+}
+function onCCInstructorPick(sel){
+  if(!sel.value) return;
+  const opt = sel.options[sel.selectedIndex];
+  const emailEl = document.getElementById('cc-assign-instructor');
+  const nameEl = document.getElementById('cc-assign-instructor-name');
+  if(emailEl) emailEl.value = sel.value;
+  if(nameEl) nameEl.value = opt.dataset.name || '';
+}
+window.onCCInstructorPick = onCCInstructorPick;
+/* Re-populates Branch (to whichever branches can actually open a NEW
+   section of THIS subject — see ccCreatableBranches) and then Section (to
+   that Regulation+Branch's fixed range — see sectionOptionsFor). Both are
+   now fully derived from the chosen Coordination; nothing left to
+   manually mismatch. */
 function refreshCCBranchOptions(){
-  const regEl = document.getElementById('cc-assign-regulation');
+  const baseEl = document.getElementById('cc-assign-base');
   const branchEl = document.getElementById('cc-assign-branch');
-  if(!regEl || !branchEl) return;
-  const allowed = branchesForRegulation(regEl.value);
-  const prev = branchEl.value;
-  branchEl.innerHTML = allowed.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('');
-  if(allowed.includes(prev)) branchEl.value = prev;
-  refreshCCSubjectOptions();
+  if(!baseEl || !branchEl) return;
+  const base = App.getCourse(baseEl.value);
+  const code = base ? (base.code||'').trim().toUpperCase() : '';
+  const regulation = regulationFromCode(code);
+  const catalogBranch = catalogBranchForCode(code);
+  const allowed = regulation ? ccCreatableBranches(regulation, catalogBranch) : [];
+  branchEl.innerHTML = allowed.length ? allowed.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('') : `<option value="">— Coordination's Regulation not recognized —</option>`;
+  refreshCCSectionOptions();
 }
 window.refreshCCBranchOptions = refreshCCBranchOptions;
-function refreshCCSubjectOptions(){
-  const regEl = document.getElementById('cc-assign-regulation');
+function refreshCCSectionOptions(){
+  const baseEl = document.getElementById('cc-assign-base');
   const branchEl = document.getElementById('cc-assign-branch');
-  const semEl = document.getElementById('cc-assign-semester');
-  const subjEl = document.getElementById('cc-assign-subject');
-  if(!regEl || !branchEl || !semEl || !subjEl) return;
-  subjEl.innerHTML = ccSubjectDropdownOptionsHtml(regEl.value, branchEl.value, semEl.value);
-  onCCSubjectChange();
+  const sectionEl = document.getElementById('cc-assign-section');
+  if(!baseEl || !branchEl || !sectionEl) return;
+  const base = App.getCourse(baseEl.value);
+  const code = base ? (base.code||'').trim().toUpperCase() : '';
+  const regulation = regulationFromCode(code);
+  const options = (regulation && branchEl.value) ? sectionOptionsFor(regulation, branchEl.value) : [];
+  sectionEl.innerHTML = options.length ? options.map(s=>`<option value="${s}">${s}</option>`).join('') : `<option value="">— No section range for this Branch —</option>`;
 }
-function onCCSubjectChange(){
-  const noteEl = document.getElementById('cc-assign-subject-note');
-  const subjEl = document.getElementById('cc-assign-subject');
-  if(!noteEl || !subjEl) return;
-  noteEl.innerHTML = subjectNoteHtml(subjEl.value);
-}
-/* When the Coordination dropdown changes, prefill Semester from that
-   coordination's own semester (set by the Timetable Incharge on the shell)
-   — still freely overridable — then re-narrow the Subject list. */
+window.refreshCCSectionOptions = refreshCCSectionOptions;
+/* When the Coordination dropdown changes: prefill Semester from that
+   coordination's own semester (set by the Timetable Incharge on the
+   shell) — still freely overridable — then re-derive Branch and Section. */
 function onCCBaseChange(baseId){
   const semEl = document.getElementById('cc-assign-semester');
   const base = App.getCourse(baseId);
   if(semEl && base && base.semester) semEl.value = base.semester;
-  refreshCCSubjectOptions();
+  refreshCCBranchOptions();
 }
-window.refreshCCSubjectOptions = refreshCCSubjectOptions;
-window.onCCSubjectChange = onCCSubjectChange;
 window.onCCBaseChange = onCCBaseChange;
 
 function renderCCList(){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
   const wrap = el('<div></div>');
-  const firstBranch = Object.keys(BRANCH_LABELS)[0];
   const seenCodes = {};
   const baseList = [];
   ccCourses.forEach(c=>{ if(!seenCodes[c.code]){ seenCodes[c.code]=true; baseList.push(c); } });
   const initialBase = baseList[0] || null;
-  const academicYear = App.state.currentTermTest?.academicYear || '';
+  const initialCode = initialBase ? (initialBase.code||'').trim().toUpperCase() : '';
+  const initialRegulation = initialCode ? regulationFromCode(initialCode) : null;
+  const initialCatalogBranch = initialCode ? catalogBranchForCode(initialCode) : null;
+  const initialAllowedBranches = initialRegulation ? ccCreatableBranches(initialRegulation, initialCatalogBranch) : [];
+  const initialBranch = initialAllowedBranches[0] || '';
+  const initialSections = (initialRegulation && initialBranch) ? sectionOptionsFor(initialRegulation, initialBranch) : [];
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Pick Regulation, Branch &amp; Semester to narrow down to a real Subject (Courses Applicable) — its Evaluation Type is fixed automatically from Supabase, no approval needed — then add a Section and assign its Course Instructor by email and name. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
+      <p>Pick which coordination a new section is for — its Regulation, Subject and Evaluation Type all come from that automatically (via Supabase Courses Applicable, no approval needed). Choose a Branch and Section, assign a Course Instructor. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
     </div>
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one), then narrow down to the real Subject and fill in the Instructor.</p>
+        <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one) — Regulation, Subject and Evaluation Type all come from that automatically. Choose a Branch and Section, then an Instructor.</p>
         <div class="config-grid">
           <div class="config-field">
             <label>Coordination</label>
             <select id="cc-assign-base" onchange="onCCBaseChange(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select>
           </div>
           <div class="config-field">
-            <label>Academic Year <span style="text-transform:none;">(fixed by Admin/HOD)</span></label>
-            <input type="text" value="${academicYear ? escapeHtml(academicYear) : 'Not set yet'}" disabled>
-          </div>
-          <div class="config-field">
-            <label>Regulation</label>
-            <select id="cc-assign-regulation" onchange="refreshCCBranchOptions()">
-              <option value="">— Select —</option>
-              ${REGULATION_OPTIONS.map(r=>`<option value="${r}">${r}</option>`).join('')}
-            </select>
-          </div>
-          <div class="config-field">
             <label>Branch</label>
-            <select id="cc-assign-branch" onchange="refreshCCSubjectOptions();">
-              ${Object.keys(BRANCH_LABELS).map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('')}
-            </select>
+            <select id="cc-assign-branch" onchange="refreshCCSectionOptions()">${initialAllowedBranches.length ? initialAllowedBranches.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('') : `<option value="">— Pick a Coordination first —</option>`}</select>
           </div>
           <div class="config-field">
             <label>Semester <span style="text-transform:none;">(prefilled from the coordination's own mapping)</span></label>
-            <select id="cc-assign-semester" onchange="refreshCCSubjectOptions()">
+            <select id="cc-assign-semester">
               <option value="">— Select —</option>
               ${SEMESTER_NUMBERS.map(n=>`<option value="${n}" ${initialBase && initialBase.semester===n?'selected':''}>Semester ${n}</option>`).join('')}
             </select>
           </div>
           <div class="config-field">
-            <label>Subject <span style="text-transform:none;">(Courses Applicable, narrowed to the above)</span></label>
-            <select id="cc-assign-subject" onchange="onCCSubjectChange()">${ccSubjectDropdownOptionsHtml('', firstBranch, initialBase?.semester||'')}</select>
-            <div id="cc-assign-subject-note"></div>
+            <label>Section</label>
+            <select id="cc-assign-section">${initialSections.length ? initialSections.map(s=>`<option value="${s}">${s}</option>`).join('') : `<option value="">— Pick a Branch first —</option>`}</select>
           </div>
           <div class="config-field">
-            <label>Section</label>
-            <input id="cc-assign-section" type="text" placeholder="A, B, C…" maxlength="2" style="text-transform:uppercase;">
+            <label>Instructor <span style="text-transform:none;">(pick existing, or type a new email below)</span></label>
+            <select id="cc-assign-instructor-pick" onchange="onCCInstructorPick(this)">
+              <option value="">— Pick existing faculty (optional) —</option>
+              ${allFacultyOptionsHtml()}
+            </select>
           </div>
           <div class="config-field">
             <label>Instructor email</label>
@@ -6655,16 +6706,8 @@ function renderCCList(){
             <label>Instructor name <span style="text-transform:none;">(only needed for a new account)</span></label>
             <input id="cc-assign-instructor-name" type="text" placeholder="Dr. Jane Doe">
           </div>
-          <div class="config-field">
-            <label>Teaching component</label>
-            <select id="cc-assign-loadtype">
-              <option value="">— Select —</option>
-              <option value="L">Lecture (L)</option>
-              <option value="P">Practical (P)</option>
-            </select>
-          </div>
         </div>
-        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-subject').value, document.getElementById('cc-assign-regulation').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value, document.getElementById('cc-assign-loadtype').value)">Add Section &amp; Assign Instructor</button>
+        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value)">Add Section &amp; Assign Instructor</button>
       </div>
 
       <div class="card">
