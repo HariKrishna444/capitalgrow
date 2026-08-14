@@ -288,19 +288,26 @@ input,select,textarea{font-family:inherit;}
 
 table.data-table{
   width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px;margin-top:6px;
-  border:1px solid var(--rule);border-radius:8px;overflow:hidden;
-  box-shadow:0 1px 3px rgba(43,30,16,0.06);
+  border:2px solid var(--brass);border-radius:8px;overflow:hidden;
+  box-shadow:0 2px 6px rgba(43,30,16,0.10), 0 0 0 4px rgba(168,131,47,0.08);
 }
 .data-table thead th{
   font-family:'IBM Plex Mono', monospace;font-size:10.5px;
   letter-spacing:0.06em;text-transform:uppercase;color:#FBF7EC;
   text-align:left;padding:11px 12px;background:var(--brass);
-  border-bottom:2px solid var(--brass-dark, var(--ink));white-space:nowrap;
+  border-bottom:2px solid var(--ink);border-right:1px solid rgba(251,247,236,0.28);white-space:nowrap;
 }
-.data-table tbody td{padding:9px 12px;border-bottom:1px solid var(--rule-light);vertical-align:middle;}
+.data-table thead th:last-child{border-right:none;}
+.data-table tbody td{padding:9px 12px;border-bottom:1px solid var(--rule-light);border-right:1px solid var(--rule-light);vertical-align:middle;}
+.data-table tbody td:last-child{border-right:none;}
 .data-table tbody tr:last-child td{border-bottom:none;}
 .data-table tbody tr:nth-child(even){background:var(--parchment-2);}
 .data-table tbody tr:hover{background:#F1EAD6;}
+/* Group-header row (e.g. UNIT 1 / UNIT 2 spans on Term Test & SIA tables)
+   gets its own slightly darker rule beneath it so the two header rows read
+   as a clear, bordered block rather than blending together. */
+.data-table thead tr:first-child th{border-bottom:1px solid rgba(251,247,236,0.35);}
+.data-table thead tr:last-child th{border-bottom:2px solid var(--ink);}
 /* Student-name column stays put while scrolling horizontally through a wide
    marks table (many question/unit columns) — the same trick as a frozen
    Excel pane, so you always know whose row you're editing. */
@@ -1044,6 +1051,120 @@ function itemStageDotsHtml(stage, stageOrder){
    the Forward / Send Back buttons for CC, EA or HOD. The Course
    Instructor's own Save Progress / Forward controls live separately, at
    the bottom of the marks table itself (see itemActionBarHtml). */
+/* ---------- Lightweight inline charts (no external chart library) ----------
+   A handful of small, dependency-free SVG chart builders used to give the
+   Course Instructor's marks-entry pages (Term Test, and anywhere else that
+   wants it) an at-a-glance visual on top of the plain stats cards. Colors
+   are drawn from the existing brass/parchment/seal palette so charts feel
+   native to the rest of the document rather than bolted on. ---------- */
+function polarToCartesian(cx, cy, r, angleDeg){
+  const rad = (angleDeg-90) * Math.PI/180;
+  return { x: cx + r*Math.cos(rad), y: cy + r*Math.sin(rad) };
+}
+function pieSlicePath(cx, cy, r, startAngle, endAngle){
+  const start = polarToCartesian(cx, cy, r, startAngle);
+  const end = polarToCartesian(cx, cy, r, endAngle);
+  const largeArcFlag = (endAngle-startAngle) <= 180 ? '0' : '1';
+  return `M ${cx} ${cy} L ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)} Z`;
+}
+/* Bar chart / histogram — buckets: [{label, count, color}] */
+function svgBarChart(buckets, opts={}){
+  const w = opts.width || 380, h = opts.height || 190;
+  const padL = 30, padR = 10, padT = 22, padB = 30;
+  const chartW = w-padL-padR, chartH = h-padT-padB;
+  const maxCount = Math.max(1, ...buckets.map(b=>b.count));
+  const gap = 10;
+  const barW = Math.max(8, (chartW - gap*(buckets.length-1)) / buckets.length);
+  let bars = '', labels = '';
+  buckets.forEach((b,i)=>{
+    const bh = maxCount ? (b.count/maxCount)*chartH : 0;
+    const x = padL + i*(barW+gap);
+    const y = padT + (chartH-bh);
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" style="fill:${b.color||'var(--brass)'};"><title>${escapeHtml(b.label)}: ${b.count} student${b.count===1?'':'s'}</title></rect>`;
+    if(b.count>0) bars += `<text x="${(x+barW/2).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" style="font-size:10.5px;font-family:'IBM Plex Mono',monospace;fill:var(--ink);">${b.count}</text>`;
+    labels += `<text x="${(x+barW/2).toFixed(1)}" y="${h-10}" text-anchor="middle" style="font-size:9.5px;font-family:'IBM Plex Mono',monospace;fill:var(--text-soft);">${escapeHtml(b.label)}</text>`;
+  });
+  const axis = `<line x1="${padL}" y1="${padT+chartH}" x2="${padL+chartW}" y2="${padT+chartH}" style="stroke:var(--rule);stroke-width:1;"/>`;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="max-width:100%;height:auto;">${axis}${bars}${labels}</svg>`;
+}
+/* Pie / donut chart with a side legend — segments: [{label, count, color}] */
+function svgPieChart(segments, opts={}){
+  const size = opts.size || 160;
+  const r = size/2 - 6, cx = size/2, cy = size/2;
+  const total = segments.reduce((a,s)=>a+s.count,0);
+  let angle = 0, paths = '';
+  if(total===0){
+    paths = `<circle cx="${cx}" cy="${cy}" r="${r}" style="fill:var(--rule-light);stroke:var(--rule);stroke-width:1;"/>`;
+  } else {
+    segments.filter(s=>s.count>0).forEach(s=>{
+      const sweep = (s.count/total)*360;
+      const d = sweep>=359.99
+        ? `M ${cx-r} ${cy} A ${r} ${r} 0 1 1 ${cx+r} ${cy} A ${r} ${r} 0 1 1 ${cx-r} ${cy} Z`
+        : pieSlicePath(cx, cy, r, angle, angle+sweep);
+      paths += `<path d="${d}" style="fill:${s.color};" stroke="var(--card)" stroke-width="1.5"><title>${escapeHtml(s.label)}: ${s.count} student${s.count===1?'':'s'}</title></path>`;
+      angle += sweep;
+    });
+  }
+  const legend = segments.map(s=>`<div style="display:flex;align-items:center;gap:7px;font-size:11.5px;margin:4px 0;">
+    <span style="width:10px;height:10px;border-radius:2px;background:${s.color};display:inline-block;flex-shrink:0;"></span>
+    <span>${escapeHtml(s.label)} — <strong>${s.count}</strong>${total?` (${round1(s.count/total*100)}%)`:''}</span>
+  </div>`).join('');
+  return `<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">${paths}</svg>
+    <div>${legend}</div>
+  </div>`;
+}
+/* Builds the histogram + performance-band pie for a set of {student,total}
+   scores against a fixed maxScore. Used on the Term Test entry page (and
+   reusable anywhere a raw-mark distribution needs a quick visual). */
+function buildScoreAnalyticsCharts(scored, maxScore){
+  if(!scored.length){
+    return `<p class="section-meta">No marks entered yet — charts will appear once at least one student has a score.</p>`;
+  }
+  const bucketCount = 5;
+  const bucketSize = maxScore/bucketCount;
+  const rangeColors = ['var(--seal-red)','var(--brass-light)','var(--brass)','var(--brass)','var(--seal-green)'];
+  const buckets = Array.from({length:bucketCount}, (_,i)=>{
+    const lo = round1(i*bucketSize), hi = round1((i+1)*bucketSize);
+    return { label:`${lo}–${hi}`, count:0, color: rangeColors[i] };
+  });
+  scored.forEach(x=>{
+    let idx = Math.floor(x.total/bucketSize);
+    if(idx>=bucketCount) idx = bucketCount-1;
+    if(idx<0) idx = 0;
+    buckets[idx].count++;
+  });
+  const bands = [
+    { label:'Excellent (≥80%)', min:0.8, color:'var(--seal-green)', count:0 },
+    { label:'Good (60–79%)', min:0.6, color:'var(--brass)', count:0 },
+    { label:'Average (40–59%)', min:0.4, color:'var(--brass-light)', count:0 },
+    { label:'Below Average (<40%)', min:0, color:'var(--seal-red)', count:0 },
+  ];
+  scored.forEach(x=>{
+    const pct = maxScore>0 ? x.total/maxScore : 0;
+    (bands.find(b=>pct>=b.min) || bands[bands.length-1]).count++;
+  });
+  return `<div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:10px;">
+    <div style="flex:1;min-width:300px;">
+      <div class="section-meta" style="font-weight:600;margin-bottom:2px;">Score Distribution</div>
+      ${svgBarChart(buckets, {width:380, height:190})}
+    </div>
+    <div style="flex:1;min-width:260px;">
+      <div class="section-meta" style="font-weight:600;margin-bottom:2px;">Performance Bands</div>
+      ${svgPieChart(bands, {size:150})}
+    </div>
+  </div>`;
+}
+/* Show/hide state for the inline analytics-with-charts panel on the Term
+   Test entry page — keyed per course+cycle, open by default. */
+let inlineAnalyticsOpen = {};
+function isInlineAnalyticsOpen(key){ return inlineAnalyticsOpen[key] !== false; }
+function toggleInlineAnalytics(key){
+  inlineAnalyticsOpen[key] = !isInlineAnalyticsOpen(key);
+  renderContent();
+}
+window.toggleInlineAnalytics = toggleInlineAnalytics;
+
 function itemApprovalStatusHtml(course, itemKey){
   const ia = App.itemApproval(course.id, itemKey);
   if(!ia) return '';
@@ -6140,6 +6261,13 @@ function renderCITermTestEntry(params){
     </div>
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     ${itemApprovalStatusHtml(course, itemKey)}
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <button class="btn btn-outline btn-sm" style="pointer-events:none;">📊 ${escapeHtml(cycleLabel)} Analytics</button>
+        <button class="btn btn-outline btn-sm no-print" onclick="toggleInlineAnalytics('${course.id}|${cycle}')">${isInlineAnalyticsOpen(course.id+'|'+cycle) ? 'Hide charts ▲' : 'Show charts ▼'}</button>
+      </div>
+      ${isInlineAnalyticsOpen(course.id+'|'+cycle) ? buildScoreAnalyticsCharts(scored, TT_TOTAL_MAX) : ''}
+    </div>
     <div class="card">
       <div class="section-title" style="font-size:14px;">Class Performance — ${escapeHtml(cycleLabel)}</div>
       <div style="margin-top:8px;">${statsHtml}</div>
