@@ -200,6 +200,8 @@ input,select,textarea{font-family:inherit;}
 .notif-item:last-child{border-bottom:none;}
 .notif-item .n-title{font-weight:600;color:var(--seal-red);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;}
 .notif-item .n-body{margin-top:4px;color:var(--text-soft);white-space:pre-line;}
+.notif-link-btn{display:inline-block;margin-top:8px;padding:7px 16px;background:var(--brass);color:#FBF7EC !important;font-weight:600;font-size:12px;border-radius:6px;text-decoration:none !important;letter-spacing:0.02em;}
+.notif-link-btn:hover{background:var(--ink);}
 .notif-item .n-time{margin-top:6px;font-size:10.5px;color:#8a8267;font-family:'IBM Plex Mono',monospace;}
 .notif-empty{padding:20px;text-align:center;color:var(--text-soft);font-size:13px;}
 .user-chip{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
@@ -2122,9 +2124,15 @@ function groupEntryLink(course){
 }
 /* Escapes a notification body, then turns any http(s) URL in it (i.e. the
    deep link notifyUser() appends) into a real clickable in-app link. */
+/* Escapes a notification body, then turns the "Login here: <url>" line
+   notifyUser() appends into a real styled button — reads as a clear
+   call-to-action instead of a raw pasted link. Any other bare URL that
+   might appear in a body (there shouldn't normally be one) still gets
+   linkified, just without the button treatment. */
 function linkifyNotifBody(body){
   const escaped = escapeHtml(body||'');
-  return escaped.replace(/(https?:\/\/[^\s]+)/g, url => `<a href="${url}" style="color:var(--brass);font-weight:600;text-decoration:underline;" onclick="closeNotifPanel()">${url}</a>`);
+  const withButton = escaped.replace(/Login here:\s*(https?:\/\/[^\s]+)/g, (_, url) => `<a href="${url}" class="notif-link-btn" onclick="closeNotifPanel()">Login here →</a>`);
+  return withButton.replace(/(^|[^"])(https?:\/\/[^\s]+)/g, (m, pre, url) => `${pre}<a href="${url}" style="color:var(--brass);font-weight:600;text-decoration:underline;" onclick="closeNotifPanel()">${url}</a>`);
 }
 // Clicking a #/view?params deep link (from an email or the bell dropdown)
 // while already signed in should navigate in place, not just move the
@@ -2135,6 +2143,41 @@ window.addEventListener('hashchange', ()=>{
   const r = parseHashRoute();
   if(r) App.navigate(r.view, r.params);
 });
+
+/* ---------------- access control for deep links ----------------
+   Sidebar buttons only ever pass views appropriate to the signed-in
+   user's role, so this was never a problem before — but a #/view?params
+   link (from an email notification, or just pasted/bookmarked) can name
+   ANY view, for ANY role. This whitelist is checked before a deep link is
+   honoured, in both App.navigate() and the post-login hash restore, so
+   e.g. an Exam Branch account opening a CI's Term Test entry link falls
+   back to their own dashboard instead of erroring or landing somewhere
+   they have no business being. */
+const ROLE_ALLOWED_VIEWS = {
+  ADMIN: ['admin-users','admin-course-reg','hod-coordinators','hod-termtest','hod-cc-detail'],
+  HOD: ['hod-list','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview'],
+  TTI: ['hod-coordinators','hod-termtest','hod-cc-detail','hod-faculty'],
+  EA: ['ea-list','ea-faculty','ea-students','ea-review'],
+  EXAM: ['exam-list'],
+  FACULTY: ['ci-sections','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
+};
+function isViewAllowedForRole(role, view){
+  const allowed = ROLE_ALLOWED_VIEWS[role];
+  return !!allowed && allowed.includes(view);
+}
+/* For the CI-only marks-entry pages specifically: being FACULTY isn't
+   enough — you must be the actual assigned Course Instructor for THAT
+   course. Without this, any faculty account could open another
+   instructor's marks-entry link (from a forwarded/leaked email, a
+   bookmark, etc.) just by knowing the courseId. */
+function isCourseOwnerCI(course){
+  if(!course) return false;
+  const actor = App.currentUser();
+  return !!actor && getCourseCIUser(course.id)?.id === actor.id;
+}
+function notYourSubjectHtml(){
+  return emptyStateHtml("Not your subject", "You're not the Course Instructor assigned to this section, so this page isn't available to you.");
+}
 
 const App = {
   state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
@@ -2180,9 +2223,8 @@ const App = {
     document.getElementById('user-role').textContent = u.systemRole==='FACULTY' ? (facultyBadgeShort(u) || 'FACULTY') : `${u.systemRole} · ${ROLE_LABELS[u.systemRole]}`;
     const nav = getNavForUser(u);
     const pending = parseHashRoute();
-    this.ui = pending ? { view: pending.view, params: pending.params } : { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
-    renderSidebar();
-    renderContent();
+    const target = pending || { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
+    this.navigate(target.view, target.params);
     renderBell();
   },
   async logout(){
@@ -2198,6 +2240,13 @@ const App = {
     closeNotifPanel();
   },
   navigate(view, params={}){
+    const user = this.currentUser();
+    if(user && !isViewAllowedForRole(user.systemRole, view)){
+      toast("That page isn't available for your role — showing your dashboard instead.", 'err');
+      const fallback = getNavForUser(user)[0];
+      view = fallback ? fallback.v : 'faculty-empty';
+      params = {};
+    }
     this.ui = { view, params };
     try{ history.replaceState(null, '', buildHashFragment(view, params)); }catch(e){ /* hash update is best-effort */ }
     renderSidebar();
@@ -2235,7 +2284,7 @@ const App = {
   },
   notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null, link=null){
     const resolvedLink = link || this.defaultNotificationLink(userId, course);
-    const fullBody = resolvedLink ? `${body}\n\nOpen it in DVS: ${buildAppLink(resolvedLink.view, resolvedLink.params)}` : body;
+    const fullBody = resolvedLink ? `${body}\n\nLogin here: ${buildAppLink(resolvedLink.view, resolvedLink.params)}` : body;
     const n = { id:bizId('NOTE', [course ? course.code : 'GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:userId, courseId:course.id, title, body: fullBody, ts:Date.now(), read:false, notifyEmail, fromEmail };
     this.state.notifications.unshift(n);
     syncNotification(n);
@@ -6096,6 +6145,7 @@ function renderCISubjectDetail(params){
   const wrap = el('<div></div>');
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
   if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Subject not found','')}`; return wrap; }
+  if(!isCourseOwnerCI(course)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
   const enterMode = course.status==='draft' || course.editUnlocked;
   const template = course.evalType ? getCourseTemplate(course) : null;
   let actions = null;
@@ -6264,6 +6314,12 @@ function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
 function renderCITermTestEntry(params){
   const course = App.getCourse(params.courseId);
   if(!course) return el('<div></div>');
+  const backBtnEarly = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
+  if(!isCourseOwnerCI(course)){
+    const wrapDenied = el('<div></div>');
+    wrapDenied.innerHTML = `<div class="page-head">${backBtnEarly}<h2>Term Test</h2></div>${notYourSubjectHtml()}`;
+    return wrapDenied;
+  }
   const tt = App.state.currentTermTest;
   const cycle = params.cycle || tt?.cycle || 'TT1';
   const cycleLabel = TERM_TEST_LABELS[cycle];
@@ -6567,6 +6623,7 @@ function renderCIComponentEntry(params){
   const course = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
+  if(course && !isCourseOwnerCI(course)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
   const template = getCourseTemplate(course);
   const section = params.section==='see' ? 'see' : 'cie';
@@ -6806,6 +6863,11 @@ function renderCISectionView(params){
 }
 function renderCIEntry(params){
   const course = App.getCourse(params.courseId);
+  if(course && !isCourseOwnerCI(course)){
+    const wrapDenied = el('<div></div>');
+    wrapDenied.innerHTML = `<div class="page-head"><button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button></div>${notYourSubjectHtml()}`;
+    return wrapDenied;
+  }
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const editable = course.status === 'draft' || correctionMode;
   const complete = App.validateComplete(course).ok;
@@ -7220,10 +7282,16 @@ window.handleCCRosterExcelImport = handleCCRosterExcelImport;
    Evaluation Type actually has a Term Test slot for) — then forward to the
    Course Instructor, who can only start entering marks once forwarded. ---------- */
 function renderCCTermTestSetup(params){
+  const user = App.currentUser();
   const course = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>`;
   if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Course not found','')}`; return wrap; }
+  const ccUser = getCourseCCUser(course.id);
+  if(ccUser?.id !== user.id && user.systemRole!=='ADMIN'){
+    wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not your section', "Only this section's Course Coordinator can set up its question paper.")}`;
+    return wrap;
+  }
   const template = course.evalType ? getCourseTemplate(course) : null;
   if(!template){
     wrap.innerHTML = `<div class="page-head">${backBtn}<h2>${escapeHtml(course.name)}</h2></div>${emptyStateHtml('Evaluation Type not yet fixed','Fix an Evaluation Type for this section first — Question Paper Setup needs it to know which cycles apply.')}`;
@@ -7335,9 +7403,17 @@ function renderCCTermTestSetup(params){
 }
 
 function renderCCReview(params){
+  const user = App.currentUser();
   const course = App.getCourse(params.courseId);
-  const actionable = course.status === 'submitted';
   const wrap = el('<div></div>');
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>`;
+  if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Course not found','')}`; return wrap; }
+  const ccUser = getCourseCCUser(course.id);
+  if(ccUser?.id !== user.id && user.systemRole!=='ADMIN'){
+    wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not your section', "Only this section's Course Coordinator can review it.")}`;
+    return wrap;
+  }
+  const actionable = course.status === 'submitted';
   wrap.innerHTML = `
     <div class="page-head">
       <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('cc-list')">← Back to my coordination</button>
