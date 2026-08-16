@@ -199,7 +199,7 @@ input,select,textarea{font-family:inherit;}
 }
 .notif-item:last-child{border-bottom:none;}
 .notif-item .n-title{font-weight:600;color:var(--seal-red);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;}
-.notif-item .n-body{margin-top:4px;color:var(--text-soft);}
+.notif-item .n-body{margin-top:4px;color:var(--text-soft);white-space:pre-line;}
 .notif-item .n-time{margin-top:6px;font-size:10.5px;color:#8a8267;font-family:'IBM Plex Mono',monospace;}
 .notif-empty{padding:20px;text-align:center;color:var(--text-soft);font-size:13px;}
 .user-chip{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
@@ -2069,6 +2069,73 @@ function parseRegistrationCell(raw){
 }
 
 /* ---------------- app state ---------------- */
+/* ---------------- deep links ----------------
+   The app is a single-page client with no server-side routing, but email
+   notifications need a real clickable URL that lands the reader on the
+   exact page for their role (e.g. a CI's "enter marks" link, a CC's
+   "review" link). We encode the current view+params into location.hash on
+   every navigate() call, and on sign-in check for a pending hash route
+   before falling back to that role's default landing page — so a link
+   like https://yourapp/#/ci-termtest-entry?courseId=...&cycle=TT1 opens
+   straight into that page once the recipient signs in. */
+function buildHashFragment(view, params={}){
+  const entries = Object.entries(params||{}).filter(([,v])=>v!==undefined && v!==null && v!=='');
+  const query = entries.length ? '?' + new URLSearchParams(entries).toString() : '';
+  return `#/${view}${query}`;
+}
+function buildAppLink(view, params={}){
+  const base = window.location.origin + window.location.pathname;
+  return `${base}${buildHashFragment(view, params)}`;
+}
+function parseHashRoute(){
+  const h = window.location.hash || '';
+  const m = h.match(/^#\/([a-zA-Z0-9_-]+)(?:\?(.*))?$/);
+  if(!m) return null;
+  const params = {};
+  if(m[2]) new URLSearchParams(m[2]).forEach((v,k)=>{ params[k]=v; });
+  return { view:m[1], params };
+}
+/* Exact CI marks-entry page for one of the 4 independently-flowed items
+   (tt1, tt2, pracInternal, seePractical) — used so "sent back"/"approved"
+   notifications for that item link straight to where the CI fixes/sees it,
+   rather than the generic subject page. */
+function itemEntryLink(course, itemKey){
+  if(itemKey==='tt1' || itemKey==='tt2'){
+    return { view:'ci-termtest-entry', params:{ courseId: course.id, cycle: itemKey==='tt1' ? 'TT1' : 'TT2' } };
+  }
+  if(itemKey==='pracInternal' || itemKey==='seePractical'){
+    const template = course.evalType ? getCourseTemplate(course) : null;
+    if(template){
+      const section = itemKey==='pracInternal' ? 'cie' : 'see';
+      const list = section==='cie' ? template.cie : seeDisplayComponents(template);
+      const comp = itemKey==='pracInternal' ? list.find(c=>c.key==='pracInternal') : list.find(c=>c.key==='seePractical'||c.key==='seePracticalProject');
+      if(comp) return { view:'ci-component-entry', params:{ courseId: course.id, section, compKey: comp.key } };
+    }
+  }
+  return { view:'ci-subject-detail', params:{ courseId: course.id } };
+}
+/* Same idea for the shared-approval-group notifications (Term Test 1/2 &
+   Lab Internal vs. Lab External) — both land on the same "My Subjects"
+   entry page for that course, which opens on the matching tab. */
+function groupEntryLink(course){
+  return { view:'ci-entry', params:{ courseId: course.id } };
+}
+/* Escapes a notification body, then turns any http(s) URL in it (i.e. the
+   deep link notifyUser() appends) into a real clickable in-app link. */
+function linkifyNotifBody(body){
+  const escaped = escapeHtml(body||'');
+  return escaped.replace(/(https?:\/\/[^\s]+)/g, url => `<a href="${url}" style="color:var(--brass);font-weight:600;text-decoration:underline;" onclick="closeNotifPanel()">${url}</a>`);
+}
+// Clicking a #/view?params deep link (from an email or the bell dropdown)
+// while already signed in should navigate in place, not just move the
+// address bar — the initial "signed out, pending link" case is handled
+// separately by completeLogin() reading the hash once at sign-in time.
+window.addEventListener('hashchange', ()=>{
+  if(!App.state.currentUserId) return;
+  const r = parseHashRoute();
+  if(r) App.navigate(r.view, r.params);
+});
+
 const App = {
   state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
   ui: { view:'', params:{} },
@@ -2112,7 +2179,8 @@ const App = {
     document.getElementById('user-name').textContent = u.name;
     document.getElementById('user-role').textContent = u.systemRole==='FACULTY' ? (facultyBadgeShort(u) || 'FACULTY') : `${u.systemRole} · ${ROLE_LABELS[u.systemRole]}`;
     const nav = getNavForUser(u);
-    this.ui = { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
+    const pending = parseHashRoute();
+    this.ui = pending ? { view: pending.view, params: pending.params } : { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
     renderSidebar();
     renderContent();
     renderBell();
@@ -2131,6 +2199,7 @@ const App = {
   },
   navigate(view, params={}){
     this.ui = { view, params };
+    try{ history.replaceState(null, '', buildHashFragment(view, params)); }catch(e){ /* hash update is best-effort */ }
     renderSidebar();
     renderContent();
     window.scrollTo({top:0, behavior:'smooth'});
@@ -2143,8 +2212,31 @@ const App = {
     course.history.unshift(entry);
     syncHistory(course.id, entry);
   },
-  notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null){
-    const n = { id:bizId('NOTE', [course ? course.code : 'GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:userId, courseId:course.id, title, body, ts:Date.now(), read:false, notifyEmail, fromEmail };
+  /* Picks a sensible page for the notified user to land on when they click
+     the link in the (emailed) notification — mirrors the nav item/action
+     button they'd normally reach for this course, per role. Used as the
+     default whenever notifyUser() isn't given an explicit link. */
+  defaultNotificationLink(userId, course){
+    const u = this.getUserById(userId);
+    if(!u) return null;
+    if(u.systemRole==='FACULTY'){
+      if(course){
+        if(getCourseCIUser(course.id)?.id===userId) return { view:'ci-subject-detail', params:{ courseId: course.id } };
+        if(getCourseCCUser(course.id)?.id===userId) return { view:'cc-review', params:{ courseId: course.id } };
+      }
+      return { view:'ci-sections', params:{} };
+    }
+    if(u.systemRole==='EA') return course ? { view:'ea-review', params:{ courseId: course.id } } : { view:'ea-list', params:{} };
+    if(u.systemRole==='HOD') return course ? { view:'hod-review', params:{ courseId: course.id } } : { view:'hod-list', params:{} };
+    if(u.systemRole==='EXAM') return { view:'exam-list', params:{} };
+    if(u.systemRole==='TTI') return { view:'hod-coordinators', params:{} };
+    if(u.systemRole==='ADMIN') return { view:'admin-users', params:{} };
+    return null;
+  },
+  notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null, link=null){
+    const resolvedLink = link || this.defaultNotificationLink(userId, course);
+    const fullBody = resolvedLink ? `${body}\n\nOpen it in DVS: ${buildAppLink(resolvedLink.view, resolvedLink.params)}` : body;
+    const n = { id:bizId('NOTE', [course ? course.code : 'GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:userId, courseId:course.id, title, body: fullBody, ts:Date.now(), read:false, notifyEmail, fromEmail };
     this.state.notifications.unshift(n);
     syncNotification(n);
     renderBell();
@@ -2854,7 +2946,7 @@ const App = {
       if(actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can approve this.', 'err'); return; }
       ia.stage = 'done';
       const ciUser = getCourseCIUser(courseId);
-      if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by the HOD.`, true);
+      if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by the HOD.`, true, null, itemEntryLink(course, itemKey));
     }
     ia.remark = '';
     ia.history.push({ by:actor.name, role:actor.systemRole, action: ia.stage==='done' ? 'approved' : `forwarded to ${ITEM_STAGE_LABELS[ia.stage]}`, ts:Date.now() });
@@ -2880,7 +2972,7 @@ const App = {
     ia.history.push({ by:actor.name, role:actor.systemRole, action:`sent back to CI: ${remark.trim()}`, ts:Date.now() });
     syncCourse(course);
     const ciUser = getCourseCIUser(courseId);
-    if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, `${course.code} — ${label} was sent back: ${remark.trim()}`, true);
+    if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, `${course.code} — ${label} was sent back: ${remark.trim()}`, true, null, itemEntryLink(course, itemKey));
     toast(`${label} sent back to the Course Instructor.`, 'err');
     renderContent();
   },
@@ -3012,7 +3104,7 @@ const App = {
     const groupLabel = group==='ttlab' ? 'Term Test 1/2 & Lab Internal' : 'Lab External';
     this.logHistory(course, `Approved "${groupLabel}" marks`);
     const ciUser = getCourseCIUser(courseId);
-    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} approved`, `${actor.name} approved the "${groupLabel}" marks for ${course.code} — ${course.name}. This group is now locked.`, true);
+    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} approved`, `${actor.name} approved the "${groupLabel}" marks for ${course.code} — ${course.name}. This group is now locked.`, true, null, groupEntryLink(course));
     toast(`"${groupLabel}" approved for ${course.code}.`, 'ok');
     renderContent();
   },
@@ -3029,7 +3121,7 @@ const App = {
     const rmk = (remark||'').trim();
     this.logHistory(course, `Sent back "${groupLabel}" marks for correction`, rmk);
     const ciUser = getCourseCIUser(courseId);
-    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} sent back`, `${actor.name} sent the "${groupLabel}" marks for ${course.code} — ${course.name} back for correction.${rmk?` Remark: "${rmk}"`:''}`, true);
+    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} sent back`, `${actor.name} sent the "${groupLabel}" marks for ${course.code} — ${course.name} back for correction.${rmk?` Remark: "${rmk}"`:''}`, true, null, groupEntryLink(course));
     toast(`"${groupLabel}" sent back for correction.`, 'err');
     renderContent();
   },
@@ -3053,27 +3145,36 @@ const App = {
     this.navigate('hod-list');
   },
 
-  /* ---------- Admin: fix the active Academic Year + Semester + Term Test
-     cycle, visible to every role. ---------- */
-  setTermTest(academicYear, semester, cycle){
+  /* ---------- Timetable Incharge/Admin: fix the active Academic Year +
+     Semester + examination cycle (Term Test 1/2/3), visible to every role.
+     Only one cycle can be active at a time — fixing a new one automatically
+     supersedes whatever was active before, so e.g. enabling TT2 disables
+     TT1 (its marks-entry table drops to read-only everywhere it's open).
+     startDate/endDate (both optional) fence the cycle to a time window —
+     once "now" is past endDate, entry locks automatically even if nobody
+     explicitly closes the cycle. ---------- */
+  setTermTest(academicYear, semester, cycle, startDate=null, endDate=null){
+    const actor = this.currentUser();
+    if(!['ADMIN','TTI'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can fix the examination cycle.', 'err'); return; }
     if(!ACADEMIC_YEARS.includes(academicYear)){ toast('Choose an Academic Year.', 'err'); return; }
     if(!SEMESTER_LABELS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
     if(!TERM_TEST_LABELS[cycle]){ toast('Choose a valid term test.', 'err'); return; }
-    const actor = this.currentUser();
-    const value = { academicYear, semester, cycle };
+    if(startDate && endDate && new Date(startDate).getTime() > new Date(endDate).getTime()){ toast('The end date/time must be after the start date/time.', 'err'); return; }
+    const value = { academicYear, semester, cycle, startDate: startDate||null, endDate: endDate||null };
     this.state.currentTermTest = value;
     syncAppSetting('current_term_test', value);
     this.state.termTestHistory = this.state.termTestHistory || [];
-    const ttEntry = { id:bizId('TT', [cycle, this.state.termTestHistory.length+1], this.state.termTestHistory.map(t=>t.id)), ts:Date.now(), by:actor.name, value:cycle, academicYear, semester, cycle };
+    const ttEntry = { id:bizId('TT', [cycle, this.state.termTestHistory.length+1], this.state.termTestHistory.map(t=>t.id)), ts:Date.now(), by:actor.name, value:cycle, academicYear, semester, cycle, startDate: startDate||null, endDate: endDate||null };
     this.state.termTestHistory.unshift(ttEntry);
     syncTermTest(ttEntry);
+    const windowLabel = startDate || endDate ? ` Open ${startDate?fmtDate(new Date(startDate).getTime()):'now'} through ${endDate?fmtDate(new Date(endDate).getTime()):'further notice'}.` : '';
     const fullLabel = `${academicYear} · ${semester} · ${TERM_TEST_LABELS[cycle]}`;
     const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
     ccUserIds.forEach(uidTarget=>{
       const n = {
         id:bizId('NOTE', ['GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:uidTarget, courseId:null,
         title:`${fullLabel} is now the active cycle`,
-        body:`${actor.name} (Admin) fixed ${fullLabel} as the current examination cycle. This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.`,
+        body:`${actor.name} (${ROLE_LABELS[actor.systemRole]||actor.systemRole}) fixed ${fullLabel} as the current examination cycle — any other cycle (e.g. ${cycle==='TT1'?'TT2':'TT1'}) is now locked for marks entry.${windowLabel} This is now visible to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.\n\nOpen it in DVS: ${buildAppLink('cc-list',{})}`,
         ts:Date.now(), read:false
       };
       this.state.notifications.unshift(n);
@@ -3083,6 +3184,34 @@ const App = {
     renderContent();
     renderBell();
   },
+  /* Manually shuts off the active cycle (sets it back to "not set") so
+     nobody can enter marks against any Term Test until the Timetable
+     Incharge fixes the next one — the explicit "we're done, lock it"
+     action, separate from letting the time window simply expire. */
+  closeTermTestCycle(){
+    const actor = this.currentUser();
+    if(!['ADMIN','TTI'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can close the examination cycle.', 'err'); return; }
+    const cur = this.state.currentTermTest;
+    if(!cur){ toast('No cycle is currently active.', 'err'); return; }
+    const label = `${cur.academicYear} · ${cur.semester} · ${TERM_TEST_LABELS[cur.cycle]}`;
+    this.state.currentTermTest = null;
+    syncAppSetting('current_term_test', null);
+    this.state.termTestHistory = this.state.termTestHistory || [];
+    const ttEntry = { id:bizId('TT', ['CLOSE', this.state.termTestHistory.length+1], this.state.termTestHistory.map(t=>t.id)), ts:Date.now(), by:actor.name, value:'CLOSED', academicYear:cur.academicYear, semester:cur.semester, cycle:null, closedCycle:cur.cycle };
+    this.state.termTestHistory.unshift(ttEntry);
+    syncTermTest(ttEntry);
+    const ccUserIds = new Set(this.state.assignments.filter(a=>a.type==='CC' && a.status==='active').map(a=>a.userId));
+    ccUserIds.forEach(uidTarget=>{
+      const n = { id:bizId('NOTE', ['GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:uidTarget, courseId:null,
+        title:`${label} closed`, body:`${actor.name} (${ROLE_LABELS[actor.systemRole]||actor.systemRole}) closed ${label} — marks entry for it is now locked everywhere until the next cycle is fixed.\n\nOpen it in DVS: ${buildAppLink('cc-list',{})}`, ts:Date.now(), read:false };
+      this.state.notifications.unshift(n);
+      syncNotification(n);
+    });
+    toast(`${label} closed — marks entry is locked.`, 'ok');
+    renderContent();
+    renderBell();
+  },
+
 
   /* ---------- CI: save one answer-cell of the structured Term Test entry
      form (short Q1-5, or long Q6-11 part a/b) and re-derive the raw /50
@@ -3136,7 +3265,7 @@ const App = {
     syncCourse(course);
     this.logHistory(course, `Question Paper Setup for ${TERM_TEST_LABELS[cycle]||cycle} forwarded to the Course Instructor`);
     const ciUser = getCourseCIUser(courseId);
-    if(ciUser) this.notifyUser(ciUser.id, course, `Question paper set up for ${TERM_TEST_LABELS[cycle]||cycle}`, `${actor.name} finished the Question Paper Setup for ${course.code} — ${course.name} (${TERM_TEST_LABELS[cycle]||cycle}). You can now enter marks against it.`, true);
+    if(ciUser) this.notifyUser(ciUser.id, course, `Question paper set up for ${TERM_TEST_LABELS[cycle]||cycle}`, `${actor.name} finished the Question Paper Setup for ${course.code} — ${course.name} (${TERM_TEST_LABELS[cycle]||cycle}). You can now enter marks against it.`, true, null, { view:'ci-termtest-entry', params:{ courseId: course.id, cycle } });
     toast('Forwarded to the Course Instructor — marks entry is now open for this cycle.', 'ok');
     renderContent();
   },
@@ -3660,7 +3789,7 @@ function toggleNotifPanel(){
     panel.innerHTML = items.length ? items.map(n=>`
       <div class="notif-item">
         <div class="n-title">${escapeHtml(n.title)}</div>
-        <div class="n-body">${escapeHtml(n.body)}</div>
+        <div class="n-body">${linkifyNotifBody(n.body)}</div>
         <div class="n-time">${fmtDate(n.ts)}</div>
       </div>`).join('') : `<div class="notif-empty">No notifications yet.</div>`;
     panel.classList.remove('hidden');
@@ -3688,6 +3817,7 @@ function getNavForUser(user){
   ];
   if(user.systemRole==='TTI') return [
     {v:'hod-coordinators', label:'Manage Coordinators'},
+    {v:'hod-termtest', label:'Term Test Cycle'},
     {v:'hod-faculty', label:'Faculty Directory'},
   ];
   if(user.systemRole==='EA') return [
@@ -5242,21 +5372,38 @@ function renderHODCCDetail(params){
 }
 
 function renderHODTermTest(){
+  const actor = App.currentUser();
+  const eyebrow = actor.systemRole==='TTI' ? 'Timetable Incharge' : 'Administrator';
   const current = App.state.currentTermTest;
   const history = App.state.termTestHistory || [];
   const wrap = el('<div></div>');
   const curAY = current?.academicYear || ACADEMIC_YEARS[2] || ACADEMIC_YEARS[0];
   const curSem = current?.semester || SEMESTER_LABELS[0];
   const curCycle = current?.cycle || null;
+  const toLocalInputValue = iso => { if(!iso) return ''; const d = new Date(iso); const pad = n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const curStart = toLocalInputValue(current?.startDate);
+  const curEnd = toLocalInputValue(current?.endDate);
+  const now = Date.now();
+  let statusBadge = '';
+  if(current && curCycle){
+    const startTs = current.startDate ? new Date(current.startDate).getTime() : null;
+    const endTs = current.endDate ? new Date(current.endDate).getTime() : null;
+    if(startTs && now < startTs) statusBadge = `<span class="status-pill status-draft">Upcoming — opens ${fmtDate(startTs)}</span>`;
+    else if(endTs && now > endTs) statusBadge = `<span class="status-pill status-rejected">Closed — window ended ${fmtDate(endTs)}</span>`;
+    else statusBadge = `<span class="status-pill status-approved">Active${endTs ? ` — until ${fmtDate(endTs)}` : ''}</span>`;
+  }
   wrap.innerHTML = `
     <div class="page-head">
-      <div class="page-eyebrow">Administrator</div>
+      <div class="page-eyebrow">${eyebrow}</div>
       <h2>Term Test Cycle</h2>
-      <p>Fix the Academic Year, Semester, and which examination cycle is currently active. Once set, it's sent to every Course Coordinator and shown as a banner to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.</p>
+      <p>Fix the Academic Year, Semester, which examination cycle is currently active, and (optionally) the time window it's open for. Only one cycle can be active at a time — fixing a new one immediately disables every other cycle (e.g. enabling TT2 locks TT1) for marks entry everywhere, and once the window's end time passes, entry locks automatically even without touching this page. This is sent to every Course Coordinator and shown to Course Coordinators, Course Instructors, the Executive Assistant, the Examination Branch, and the HOD.</p>
     </div>
     <div class="card">
-      <div class="section-title" style="font-size:15px;">Current cycle: ${current && curCycle ? `${escapeHtml(current.academicYear||'')} · ${escapeHtml(current.semester||'')} · ${TERM_TEST_LABELS[curCycle]}` : 'Not set yet'}</div>
-      <div class="config-grid" style="max-width:640px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div class="section-title" style="font-size:15px;">Current cycle: ${current && curCycle ? `${escapeHtml(current.academicYear||'')} · ${escapeHtml(current.semester||'')} · ${TERM_TEST_LABELS[curCycle]}` : 'Not set yet'}</div>
+        ${statusBadge}
+      </div>
+      <div class="config-grid" style="max-width:640px;margin-top:10px;">
         <div class="config-field">
           <label>Academic Year</label>
           <select id="tt-ay-select">
@@ -5270,20 +5417,32 @@ function renderHODTermTest(){
           </select>
         </div>
         <div class="config-field">
-          <label>Term test</label>
+          <label>Term test <span style="text-transform:none;">(enabling one disables the others)</span></label>
           <select id="tt-select">
             ${Object.entries(TERM_TEST_LABELS).map(([k,v])=>`<option value="${k}" ${curCycle===k?'selected':''}>${v}</option>`).join('')}
           </select>
         </div>
+        <div class="config-field">
+          <label>Opens <span style="text-transform:none;">(optional)</span></label>
+          <input type="datetime-local" id="tt-start-input" value="${curStart}">
+        </div>
+        <div class="config-field">
+          <label>Closes <span style="text-transform:none;">(optional)</span></label>
+          <input type="datetime-local" id="tt-end-input" value="${curEnd}">
+        </div>
       </div>
-      <button class="btn" style="margin-top:14px;" onclick="App.setTermTest(document.getElementById('tt-ay-select').value, document.getElementById('tt-sem-select').value, document.getElementById('tt-select').value)">Fix &amp; Send to CC</button>
+      <p class="section-meta" style="margin-top:8px;">Leave Opens/Closes blank for no time restriction — the cycle then stays open until you switch or close it manually. Once Closes has passed, every Course Instructor's marks-entry table for that cycle turns read-only, no manual step needed.</p>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <button class="btn" onclick="App.setTermTest(document.getElementById('tt-ay-select').value, document.getElementById('tt-sem-select').value, document.getElementById('tt-select').value, document.getElementById('tt-start-input').value||null, document.getElementById('tt-end-input').value||null)">Fix &amp; Send to CC</button>
+        ${current && curCycle ? `<button class="btn btn-red" onclick="if(confirm('Close ${escapeHtml(TERM_TEST_LABELS[curCycle])} now? Marks entry for it will lock immediately everywhere.')) App.closeTermTestCycle()">Close this cycle now</button>` : ''}
+      </div>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Cycle history</div>
       ${history.length===0 ? `<p style="margin-top:10px;color:var(--text-soft);font-size:13.5px;">No cycle has been fixed yet.</p>` : `
         <div style="margin-top:12px;">${history.map(h=>`
           <div class="audit-item">
-            <div class="a-head">${escapeHtml(TERM_TEST_LABELS[h.cycle||h.value])} fixed${h.academicYear?` — ${escapeHtml(h.academicYear)} · ${escapeHtml(h.semester||'')}`:''}</div>
+            <div class="a-head">${h.value==='CLOSED' ? `${escapeHtml(TERM_TEST_LABELS[h.closedCycle]||h.closedCycle||'Cycle')} closed` : `${escapeHtml(TERM_TEST_LABELS[h.cycle||h.value]||h.cycle||h.value)} fixed${h.academicYear?` — ${escapeHtml(h.academicYear)} · ${escapeHtml(h.semester||'')}`:''}${h.startDate||h.endDate ? ` · ${h.startDate?fmtDate(new Date(h.startDate).getTime()):'now'} → ${h.endDate?fmtDate(new Date(h.endDate).getTime()):'until closed'}` : ''}`}</div>
             <div class="a-body">${escapeHtml(h.by)}</div>
             <div class="a-time">${fmtDate(h.ts)}</div>
           </div>`).join('')}</div>`}
@@ -6111,7 +6270,7 @@ function renderCITermTestEntry(params){
   const activeCycleLabel = tt?.cycle && TERM_TEST_LABELS[tt.cycle];
   const fullLabel = activeCycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${activeCycleLabel}` : activeCycleLabel;
   const wrap = el('<div></div>');
-  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-termtest',{cycle:'${cycle}'})">← Back to Term Test</button>`;
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
   if(!tt){
     wrap.innerHTML = `<div class="page-head">${backBtn}<h2>Term Test</h2></div>${emptyStateHtml('No Term Test cycle active','The Administrator hasn\'t fixed a Term Test cycle yet.')}`;
     return wrap;
@@ -6126,7 +6285,19 @@ function renderCITermTestEntry(params){
   const forwarded = isTTForwarded(course, cycle);
   const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
   const ia = App.itemApproval(course.id, itemKey) || { stage:'ci', remark:'' };
-  const editable = (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci';
+  // Mutual exclusivity: only the cycle the Timetable Incharge currently has
+  // fixed is open for entry — if they've since moved on to another cycle
+  // (or closed it outright), this one drops to read-only even mid-way
+  // through, same as if the CI had already forwarded it.
+  const cycleIsActive = tt.cycle === cycle;
+  const startTs = tt.startDate ? new Date(tt.startDate).getTime() : null;
+  const endTs = tt.endDate ? new Date(tt.endDate).getTime() : null;
+  const nowTs = Date.now();
+  const withinWindow = (!startTs || nowTs>=startTs) && (!endTs || nowTs<=endTs);
+  const editable = (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && cycleIsActive && withinWindow;
+  const lockBannerHtml = !cycleIsActive
+    ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">The Timetable Incharge has moved the active cycle to <strong>${escapeHtml(TERM_TEST_LABELS[tt.cycle]||tt.cycle)}</strong> — ${escapeHtml(cycleLabel)} is now read-only here.</p>`
+    : (!withinWindow ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">${startTs && nowTs<startTs ? `The marks-entry window for ${escapeHtml(cycleLabel)} opens ${fmtDate(startTs)}.` : `The marks-entry window for ${escapeHtml(cycleLabel)} closed ${endTs?fmtDate(endTs):''} — no further edits are allowed.`}</p>` : '');
   const comp = template.cie.find(c=>c.key===compKey);
 
   // Unit/split are the Course Coordinator's call now — this page only shows
@@ -6261,6 +6432,7 @@ function renderCITermTestEntry(params){
     </div>
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     ${itemApprovalStatusHtml(course, itemKey)}
+    ${lockBannerHtml}
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <button class="btn btn-outline btn-sm" style="pointer-events:none;">📊 ${escapeHtml(cycleLabel)} Analytics</button>
