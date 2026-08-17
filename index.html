@@ -1466,6 +1466,27 @@ function itemActionBarHtml(course, itemKey, editable){
     <button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>
   </div>`;
 }
+/* Term Test's own action bar — unlike the other flow items, TT1/TT2 have a
+   fixed entry PERIOD (the Timetable Incharge's start/end window). While
+   that period is still open, only Save Progress is offered — the CI isn't
+   meant to forward mid-window, since more marks may still change. Forward
+   to Course Coordinator only appears (and is only enabled) once the period
+   has finished, and stays available even after entry itself has gone
+   read-only, so long as it's still sitting at the CI's stage. */
+function termTestActionBarHtml(course, itemKey, editable, periodFinished, ia){
+  const stillCIsTurn = ia.stage==='ci';
+  const correctionMode = course.status==='approved' && course.editUnlocked;
+  const inCIWindow = course.status==='draft' || correctionMode;
+  if(!stillCIsTurn || !inCIWindow || !(editable || periodFinished)) return '';
+  const saveBtn = editable ? `<button class="btn btn-outline btn-sm" onclick="App.saveItemProgress('${course.id}')">Save Progress</button>` : '';
+  const forwardBtn = periodFinished
+    ? `<button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>`
+    : `<button class="btn btn-sm" style="opacity:.5;cursor:not-allowed;" disabled title="Available once the Term Test entry period finishes">Forward to Course Coordinator</button>`;
+  return `<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;">
+    ${saveBtn}${forwardBtn}
+    ${!periodFinished ? `<span class="section-meta" style="font-size:12px;">Forwarding unlocks once the Term Test entry period finishes.</span>` : ''}
+  </div>`;
+}
 
 
 const STUDENT_POOL = ['Aarav Sharma','Diya Kulkarni','Rohan Gupta','Sneha Reddy','Kabir Malhotra','Isha Bansal','Arjun Nair','Meera Pillai','Karthik Iyer','Ananya Joshi'];
@@ -2469,9 +2490,9 @@ window.addEventListener('hashchange', ()=>{
    they have no business being. */
 const ROLE_ALLOWED_VIEWS = {
   ADMIN: ['admin-users','admin-course-reg','hod-coordinators','hod-termtest','hod-cc-detail','admin-seating-plan'],
-  HOD: ['hod-list','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview'],
+  HOD: ['hod-list','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview','ci-termtest-entry','ci-component-entry'],
   TTI: ['hod-coordinators','hod-termtest','hod-cc-detail','hod-faculty'],
-  EA: ['ea-list','ea-faculty','ea-students','ea-review'],
+  EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
   FACULTY: ['ci-sections','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
 };
@@ -2491,6 +2512,46 @@ function isCourseOwnerCI(course){
 }
 function notYourSubjectHtml(){
   return emptyStateHtml("Not your subject", "You're not the Course Instructor assigned to this section, so this page isn't available to you.");
+}
+/* One flow item (tt1/tt2/pracInternal/seePractical) is entered by the CI
+   but then verified by the CC, EA and HOD in turn — all on this SAME
+   marks-entry page (it just switches to read-only once it's not the CI's
+   turn, via the "editable" flag computed separately). So the page can't be
+   gated to the CI alone, or the CC/EA/HOD would have nowhere to open the
+   "Forward"/"Send Back" controls that itemApprovalStatusHtml renders for
+   them — which is exactly why a verification notification used to lead to
+   a "Not your subject" dead end. Allow: the assigned CI, the assigned CC
+   (needs to see it at every stage, not just their own turn), the EA/HOD
+   only while it's actually sitting at their stage, and ADMIN always. */
+function canViewItemEntry(course, itemKey){
+  if(!course) return false;
+  const actor = App.currentUser();
+  if(!actor) return false;
+  if(actor.systemRole==='ADMIN') return true;
+  if(isCourseOwnerCI(course)) return true;
+  if(getCourseCCUser(course.id)?.id === actor.id) return true;
+  const ia = itemKey ? App.itemApproval(course.id, itemKey) : null;
+  if(ia && ia.stage==='ea' && actor.systemRole==='EA') return true;
+  if(ia && ia.stage==='hod' && actor.systemRole==='HOD') return true;
+  return false;
+}
+/* Where the "← Back" button on a shared item-entry page (Term Test or a
+   single CIE/SEE component) should send the viewer — depends on who's
+   looking, since the CI's own "My Subjects" pages aren't in the EA/HOD
+   route whitelist and App.navigate() would otherwise bounce them to their
+   dashboard with an error toast. ciBack is what a CI (or nobody signed in
+   yet) gets, unchanged from before. */
+function itemViewerBackBtnHtml(course, ciBackView, ciBackParams, ciBackLabel){
+  const actor = App.currentUser();
+  let view = ciBackView, params = ciBackParams, label = ciBackLabel;
+  if(actor && course && !isCourseOwnerCI(course)){
+    if(actor.systemRole==='EA'){ view='ea-list'; params={}; label='← Back to verification queue'; }
+    else if(actor.systemRole==='HOD'){ view='hod-list'; params={}; label='← Back to pending approval'; }
+    else if(actor.systemRole==='ADMIN'){ view='admin-users'; params={}; label='← Back'; }
+    else if(getCourseCCUser(course.id)?.id===actor.id){ view='cc-review'; params={courseId:course.id}; label='← Back to coordinator review'; }
+  }
+  const paramsJson = Object.keys(params||{}).length ? `,${JSON.stringify(params)}` : '';
+  return `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('${view}'${paramsJson})">${escapeHtml(label)}</button>`;
 }
 
 const App = {
@@ -3295,16 +3356,16 @@ const App = {
       if(ciUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can forward this.', 'err'); return; }
       ia.stage = 'cc';
       const ccAssignee = getActiveAssignment(courseId,'CC');
-      if(ccAssignee) this.notifyUser(ccAssignee.userId, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Instructor.`, true);
+      if(ccAssignee) this.notifyUser(ccAssignee.userId, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Instructor.`, true, null, itemEntryLink(course, itemKey));
     } else if(ia.stage==='cc'){
       const ccUser = getCourseCCUser(courseId);
       if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can forward this.', 'err'); return; }
       ia.stage = 'ea';
-      this.state.users.filter(u=>u.systemRole==='EA').forEach(u=>this.notifyUser(u.id, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Coordinator.`, true));
+      this.state.users.filter(u=>u.systemRole==='EA').forEach(u=>this.notifyUser(u.id, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Coordinator.`, true, null, itemEntryLink(course, itemKey)));
     } else if(ia.stage==='ea'){
       if(actor.systemRole!=='EA' && actor.systemRole!=='ADMIN'){ toast('Only the Executive Assistant can forward this.', 'err'); return; }
       ia.stage = 'hod';
-      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} ready for approval`, `${course.code} — ${label} has been forwarded by the Executive Assistant.`, true));
+      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} ready for approval`, `${course.code} — ${label} has been forwarded by the Executive Assistant.`, true, null, itemEntryLink(course, itemKey)));
     } else if(ia.stage==='hod'){
       if(actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can approve this.', 'err'); return; }
       ia.stage = 'done';
@@ -7697,16 +7758,22 @@ function renderCISubjectDetail(params){
   if(!isCourseOwnerCI(course)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
   const enterMode = course.status==='draft' || course.editUnlocked;
   const template = course.evalType ? getCourseTemplate(course) : null;
+  // Only the Term Test cycle the Timetable Incharge currently has fixed as
+  // active is open here — e.g. while TT1 is active, "Enter Term Test 2"
+  // stays disabled (and vice versa), so the CI can't get ahead of the
+  // cycle that's actually been opened for the whole department.
+  const activeCycle = App.state.currentTermTest?.cycle || null;
   let actions = null;
   if(template){
     const tt1Key = termTestComponentKey(template, 'TT1');
     const tt2Key = termTestComponentKey(template, 'TT2');
     const enterBtn = (label, onclick) => `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" style="white-space:nowrap;" onclick="${onclick}">${label}</button>`;
+    const disabledBtn = (label, reason) => `<button class="btn btn-outline btn-sm" style="white-space:nowrap;opacity:.5;cursor:not-allowed;" disabled title="${escapeHtml(reason)}">${label}</button>`;
     const viewBtn = (label, onclick) => `<button class="btn btn-outline btn-sm" style="white-space:nowrap;border-color:var(--seal-red);color:var(--seal-red);" onclick="${onclick}">${label}</button>`;
     actions = {
       component(comp, section){
-        if(comp.key===tt1Key) return enterBtn('Enter Term Test 1', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`);
-        if(comp.key===tt2Key) return enterBtn('Enter Term Test 2', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`);
+        if(comp.key===tt1Key) return activeCycle==='TT1' ? enterBtn('Enter Term Test 1', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`) : disabledBtn('Enter Term Test 1', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
+        if(comp.key===tt2Key) return activeCycle==='TT2' ? enterBtn('Enter Term Test 2', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`) : disabledBtn('Enter Term Test 2', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
         return enterBtn(`Enter ${escapeHtml(comp.label)}`, `App.navigate('ci-component-entry',{courseId:'${course.id}', section:'${section}', compKey:'${comp.key}'})`);
       },
       cieTotal(){ return viewBtn('View CIE Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'cie'})`); },
@@ -7799,10 +7866,10 @@ function renderCITermTestSections(params={}){
   const { ciCourses } = getFacultyCourses(user.id);
   const tt = App.state.currentTermTest;
   const activeCycle = tt?.cycle || null;
-  // The Admin fixes one cycle "active" institution-wide (for the exam-cycle
-  // banner below), but the CI can freely pick any cycle here to view/enter —
-  // marks for every cycle are stored independently per student, so there's
-  // no reason to lock the instructor to only whichever one is "current".
+  // Only the cycle the Timetable Incharge currently has fixed as active is
+  // open for entry — e.g. while TT1 is active, TT2's "Open Answer Sheet"
+  // stays disabled, and vice versa, so the CI can't get ahead of the cycle
+  // that's actually open for the whole department.
   const cycle = params.cycle || activeCycle || 'TT1';
   const cycleLabel = TERM_TEST_LABELS[cycle];
   const activeCycleLabel = activeCycle && TERM_TEST_LABELS[activeCycle];
@@ -7843,8 +7910,9 @@ function renderCITermTestSections(params={}){
               ${statusPill(c)}
               ${etPill(c)}
               ${!c.evalType ? `<span class="status-pill status-draft">Evaluation Type not fixed</span>` :
-                !key ? `<span class="status-pill status-draft">${escapeHtml(cycleLabel)} not applicable to this Evaluation Type</span>` : ''}
-              <button class="btn ${key?'':'btn-outline'} btn-sm" ${key?'':'disabled'} onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'${cycle}'})">Open Answer Sheet</button>
+                !key ? `<span class="status-pill status-draft">${escapeHtml(cycleLabel)} not applicable to this Evaluation Type</span>` :
+                cycle!==activeCycle ? `<span class="status-pill status-draft">${escapeHtml(cycleLabel)} isn't the active cycle</span>` : ''}
+              <button class="btn ${(key && cycle===activeCycle)?'':'btn-outline'} btn-sm" ${(key && cycle===activeCycle)?'':'disabled'} onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'${cycle}'})">Open Answer Sheet</button>
             </div>
           </div>
         </div>`;
@@ -7863,19 +7931,20 @@ function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
 function renderCITermTestEntry(params){
   const course = App.getCourse(params.courseId);
   if(!course) return el('<div></div>');
-  const backBtnEarly = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
-  if(!isCourseOwnerCI(course)){
+  const backBtnEarly = itemViewerBackBtnHtml(course, 'ci-sections', {}, '← Back to my subjects');
+  const tt = App.state.currentTermTest;
+  const cycle = params.cycle || tt?.cycle || 'TT1';
+  const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
+  if(!canViewItemEntry(course, itemKey)){
     const wrapDenied = el('<div></div>');
     wrapDenied.innerHTML = `<div class="page-head">${backBtnEarly}<h2>Term Test</h2></div>${notYourSubjectHtml()}`;
     return wrapDenied;
   }
-  const tt = App.state.currentTermTest;
-  const cycle = params.cycle || tt?.cycle || 'TT1';
   const cycleLabel = TERM_TEST_LABELS[cycle];
   const activeCycleLabel = tt?.cycle && TERM_TEST_LABELS[tt.cycle];
   const fullLabel = activeCycleLabel && tt.academicYear && tt.semester ? `${tt.academicYear} · ${tt.semester} · ${activeCycleLabel}` : activeCycleLabel;
   const wrap = el('<div></div>');
-  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
+  const backBtn = itemViewerBackBtnHtml(course, 'ci-sections', {}, '← Back to my subjects');
   if(!tt){
     wrap.innerHTML = `<div class="page-head">${backBtn}<h2>Term Test</h2></div>${emptyStateHtml('No Term Test cycle active','The Administrator hasn\'t fixed a Term Test cycle yet.')}`;
     return wrap;
@@ -7888,7 +7957,6 @@ function renderCITermTestEntry(params){
   }
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const forwarded = isTTForwarded(course, cycle);
-  const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
   const ia = App.itemApproval(course.id, itemKey) || { stage:'ci', remark:'' };
   // Mutual exclusivity: only the cycle the Timetable Incharge currently has
   // fixed is open for entry — if they've since moved on to another cycle
@@ -7900,6 +7968,13 @@ function renderCITermTestEntry(params){
   const nowTs = Date.now();
   const withinWindow = (!startTs || nowTs>=startTs) && (!endTs || nowTs<=endTs);
   const editable = (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && cycleIsActive && withinWindow;
+  // The marks-entry PERIOD is considered finished once the window has
+  // closed (endDate passed) or the Timetable Incharge has moved the active
+  // cycle on — at that point the CI can no longer edit marks, but (if they
+  // haven't forwarded yet) they can now forward what they have on to the CC.
+  // While the period is still open, only Save Progress is available; the
+  // CI is not meant to forward mid-entry.
+  const periodFinished = !cycleIsActive || !withinWindow;
   const lockBannerHtml = !cycleIsActive
     ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">The Timetable Incharge has moved the active cycle to <strong>${escapeHtml(TERM_TEST_LABELS[tt.cycle]||tt.cycle)}</strong> — ${escapeHtml(cycleLabel)} is now read-only here.</p>`
     : (!withinWindow ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">${startTs && nowTs<startTs ? `The marks-entry window for ${escapeHtml(cycleLabel)} opens ${fmtDate(startTs)}.` : `The marks-entry window for ${escapeHtml(cycleLabel)} closed ${endTs?fmtDate(endTs):''} — no further edits are allowed.`}</p>` : '');
@@ -8070,7 +8145,7 @@ function renderCITermTestEntry(params){
           <tbody>${rows}</tbody>
         </table>
       </div>
-      ${itemActionBarHtml(course, itemKey, editable)}
+      ${termTestActionBarHtml(course, itemKey, editable, periodFinished, ia)}
     </div>`}
   `;
   return wrap;
@@ -8171,8 +8246,14 @@ function renderCILabExternalSections(){
 function renderCIComponentEntry(params){
   const course = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
-  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
-  if(course && !isCourseOwnerCI(course)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
+  const backBtn = itemViewerBackBtnHtml(course, 'ci-subject-detail', {courseId:params.courseId}, `← Back to ${course ? course.name : 'subject'}`);
+  // Same 4-role sharing as the Term Test entry page — Practical Internal
+  // Test / SEE Practical also carry their own CI -> CC -> EA -> HOD chain,
+  // so whoever currently owns that item's stage needs to be able to open
+  // this page too, not just the CI. Guess the item key straight off the
+  // component key in the URL (no need to resolve the full component yet).
+  const itemKeyGuess = params.compKey==='pracInternal' ? 'pracInternal' : (params.compKey==='seePractical'||params.compKey==='seePracticalProject') ? 'seePractical' : null;
+  if(course && !canViewItemEntry(course, itemKeyGuess)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
   const template = getCourseTemplate(course);
   const section = params.section==='see' ? 'see' : 'cie';
