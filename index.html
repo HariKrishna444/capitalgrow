@@ -426,7 +426,7 @@ input,select,textarea{font-family:inherit;}
   letter-spacing:0.14em;text-transform:uppercase;color:var(--brass);
 }
 .page-head h2{font-size:27px;margin-top:7px;}
-.page-head p{color:var(--text-soft);margin-top:9px;max-width:62ch;font-size:15px;}
+.page-head p{color:var(--text-soft);margin-top:9px;max-width:90ch;font-size:15px;white-space:normal;overflow-wrap:break-word;word-break:break-word;}
 
 .card{
   position:relative;
@@ -447,7 +447,7 @@ input,select,textarea{font-family:inherit;}
   gap:16px;flex-wrap:wrap;
 }
 .section-title{font-size:17px;font-family:'Inter', sans-serif;font-weight:600;color:var(--ink);}
-.section-meta{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:var(--text-soft);margin-top:4px;}
+.section-meta{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:var(--text-soft);margin-top:4px;white-space:normal;overflow-wrap:break-word;word-break:break-word;}
 
 .status-pill{
   font-family:'IBM Plex Mono', monospace;font-size:10.5px;
@@ -2550,7 +2550,14 @@ function itemViewerBackBtnHtml(course, ciBackView, ciBackParams, ciBackLabel){
     else if(actor.systemRole==='ADMIN'){ view='admin-users'; params={}; label='← Back'; }
     else if(getCourseCCUser(course.id)?.id===actor.id){ view='cc-review'; params={courseId:course.id}; label='← Back to coordinator review'; }
   }
-  const paramsJson = Object.keys(params||{}).length ? `,${JSON.stringify(params)}` : '';
+  // NOTE: JSON.stringify() always double-quotes keys/values (e.g.
+  // {"courseId":"c1"}), and this whole call sits inside a double-quoted
+  // onclick="..." HTML attribute — embedding it as-is closes the attribute
+  // early at its first `"`, silently truncating the handler so the button
+  // does nothing when clicked. HTML-encoding those quotes as &quot; keeps
+  // the attribute intact; the browser decodes them back to `"` before
+  // running the handler's JS.
+  const paramsJson = Object.keys(params||{}).length ? `,${JSON.stringify(params).replace(/"/g,'&quot;')}` : '';
   return `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('${view}'${paramsJson})">${escapeHtml(label)}</button>`;
 }
 
