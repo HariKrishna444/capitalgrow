@@ -3760,12 +3760,15 @@ const App = {
     if(!s) return;
     s.marks = s.marks || {};
     s.marks.siaDetail = s.marks.siaDetail || {};
-    // Note: no longer clamped to 10 here — an out-of-range entry is kept as
-    // typed and flagged red (see the `invalid` class in siaEntryHtml) so the
-    // faculty member notices and fixes it, instead of it silently being
-    // rewritten to the maximum.
+    // Each unit is out of 10 — clamp here so a mistyped value (e.g. "40"
+    // instead of "4") can never push the Raw Total past the unit's own
+    // max, let alone the component's overall rawMax. Previously this was
+    // left unclamped and only flagged red, which let the Raw Total display
+    // read something like "40/10" — confusing since the /10 there is the
+    // component's max, not that one cell's.
     let val = (rawValue===''||rawValue===null||rawValue===undefined) ? undefined : parseFloat(rawValue);
     if(typeof val==='number' && isNaN(val)) val = undefined;
+    if(typeof val==='number') val = Math.min(Math.max(val, 0), 10);
     if(val===undefined) delete s.marks.siaDetail['unit'+unitIdx]; else s.marks.siaDetail['unit'+unitIdx] = val;
     const sum = Object.values(s.marks.siaDetail).reduce((a,b)=>a+(typeof b==='number'?b:0), 0);
     s.marks[compKey] = Math.round(sum*2)/2;
@@ -8131,15 +8134,16 @@ function renderCITermTestEntry(params){
         <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
           <thead>
             <tr>
-              <th rowspan="2" style="vertical-align:middle;">Student</th>
-              ${shortHeadGrp.top}
-              <th rowspan="2" style="vertical-align:middle;">Short<br>Total</th>
-              ${longHeadGrp.top}
-              <th rowspan="2" style="vertical-align:middle;">Long<br>Raw</th>
-              <th rowspan="2" style="vertical-align:middle;">Term Test<br>Total</th>
-              <th rowspan="2" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
-              <th rowspan="2" style="vertical-align:middle;">Evaluated<br>Script</th>
+              <th rowspan="3" style="vertical-align:middle;">Student</th>
+              <th colspan="${TT_SHORT_KEYS.length}" style="text-align:center;background:var(--brass);color:#fff;">Part A</th>
+              <th rowspan="3" style="vertical-align:middle;">Part A<br>Total</th>
+              <th colspan="${TT_ALL_LONG_QKEYS.length}" style="text-align:center;background:var(--brass);color:#fff;">Part B</th>
+              <th rowspan="3" style="vertical-align:middle;">Part B<br>Total</th>
+              <th rowspan="3" style="vertical-align:middle;">Term Test<br>Total</th>
+              <th rowspan="3" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
+              <th rowspan="3" style="vertical-align:middle;">Evaluated<br>Script</th>
             </tr>
+            <tr>${shortHeadGrp.top}${longHeadGrp.top}</tr>
             <tr>${shortHeadGrp.sub}${longHeadGrp.sub}</tr>
           </thead>
           <tbody>${rows}</tbody>
