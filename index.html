@@ -589,6 +589,36 @@ table.data-table{
 }
 .config-field input:focus,.config-field select:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
 
+/* Table-style form — same field set as .config-grid, laid out as a
+   labelled-row table instead of a wrapping card grid. Used where a form
+   has several related fields (e.g. "Add Section & Assign Instructor")
+   and a compact, scannable table reads better than a loose grid. */
+.form-table{
+  width:100%;border-collapse:separate;border-spacing:0;margin-top:16px;
+  border:1px solid var(--rule);border-radius:var(--radius);overflow:hidden;
+  box-shadow:var(--shadow-sm);
+}
+.form-table tr:not(:last-child) td{border-bottom:1px solid var(--rule-light);}
+.form-table tr:nth-child(even){background:var(--parchment-2);}
+.form-table tr:hover{background:#EEF2FF;}
+.form-table td{padding:13px 16px;vertical-align:middle;}
+.form-table td.ft-label{
+  font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:0.05em;color:var(--text-soft);width:230px;white-space:nowrap;cursor:default;
+}
+.form-table td.ft-input{width:100%;}
+.form-table td.ft-input input,.form-table td.ft-input select{
+  width:100%;padding:9px 12px;border:1px solid var(--rule);background:#fff;font-size:13.5px;
+  border-radius:var(--radius-sm);transition:border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.form-table td.ft-input input:focus,.form-table td.ft-input select:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
+@media (max-width:640px){
+  .form-table, .form-table tbody, .form-table tr, .form-table td{display:block;width:auto;}
+  .form-table tr{padding:10px 16px;}
+  .form-table td.ft-label{width:auto;padding:0 0 6px;}
+  .form-table td.ft-input{padding:0;}
+}
+
 .branch-heading{
   margin-top:22px;margin-bottom:8px;
   font-family:'IBM Plex Mono', monospace;font-size:11px;
@@ -1472,9 +1502,17 @@ function itemActionBarHtml(course, itemKey, editable){
    meant to forward mid-window, since more marks may still change. Forward
    to Course Coordinator only appears (and is only enabled) once the period
    has finished, and stays available even after entry itself has gone
-   read-only, so long as it's still sitting at the CI's stage. */
+   read-only, so long as it's still sitting at the CI's stage.
+   This bar is for the CI only. canViewItemEntry() also lets the assigned
+   CC (and EA/HOD at their own stage) open this same page — so without an
+   explicit ownership check here, a Course Coordinator viewing their own
+   section while it's still sitting at the CI's stage would incorrectly
+   see (and be able to click) the CI's own "Save Progress" / "Forward to
+   Course Coordinator" controls, forwarding to themselves. The CC's own
+   Forward/Send Back controls live separately in itemApprovalStatusHtml,
+   which already checks ownership correctly. */
 function termTestActionBarHtml(course, itemKey, editable, periodFinished, ia){
-  const stillCIsTurn = ia.stage==='ci';
+  const stillCIsTurn = ia.stage==='ci' && isCourseOwnerCI(course);
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const inCIWindow = course.status==='draft' || correctionMode;
   if(!stillCIsTurn || !inCIWindow || !(editable || periodFinished)) return '';
@@ -6979,41 +7017,45 @@ function renderHODCoordinators(){
     <div class="page-head">
       <div class="page-eyebrow">${eyebrow}</div>
       <h2>Manage Course Coordinators</h2>
-      <p>Assign a Course Coordinator to each section using their university email — only the Timetable Incharge or an Administrator can do this. Once assigned, that Coordinator picks the real Subject and assigns their own Course Instructor; you don't need to touch that layer.</p>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Create Section &amp; Assign Coordinator</div>
-      <p class="section-meta" style="margin-top:4px;">Give this coordination a working Course Code &amp; Name, then pick the Coordinator from the existing faculty directory (all branches) or type a new email/name to assign them in the same step. Leave the Coordinator fields blank to just create the coordination shell and assign a Coordinator later. Branch and Section are no longer set here — the Coordinator adds those. The real Subject (Courses Applicable) — and with it the Abbr, Course Type &amp; Evaluation Type — is no longer picked here; the Coordinator now selects it when assigning each section's Course Instructor.</p>
-      <div class="config-grid">
-        <div class="config-field">
-          <label>Course Code <span style="text-transform:none;">(working label only)</span></label>
-          <input id="hod-newcourse-code" type="text" placeholder="e.g. 24CSEJ302" onchange="onNewCourseCodeChange(this.value)" onblur="onNewCourseCodeChange(this.value)">
-          <div id="hod-newcourse-code-note" class="section-meta" style="margin-top:4px;"></div>
-        </div>
-        <div class="config-field">
-          <label>Course Name <span style="text-transform:none;">(working label only)</span></label>
-          <input id="hod-newcourse-name" type="text" placeholder="e.g. Data Structures">
-        </div>
-        <div class="config-field">
-          <label>Semester <span style="text-transform:none;">(auto-filled from the Subject Catalog by code, when recognized)</span></label>
-          <select id="hod-newcourse-semester">
-            <option value="">— Select —</option>
-            ${SEMESTER_NUMBERS.map(n=>`<option value="${n}">Semester ${n}</option>`).join('')}
-          </select>
-        </div>
-        <div class="config-field">
-          <label>Existing faculty <span style="text-transform:none;">(pick from directory, all branches)</span></label>
-          <select id="hod-newcourse-cc-pick" onchange="fillCoordinatorFromDirectory(this.value)">${facultyDropdownOptionsHtml()}</select>
-        </div>
-        <div class="config-field">
-          <label>Coordinator email <span style="text-transform:none;">(optional — assign now)</span></label>
-          <input id="hod-newcourse-cc-email" type="email" placeholder="name@suh.in">
-        </div>
-        <div class="config-field">
-          <label>Coordinator name <span style="text-transform:none;">(only needed for a new account)</span></label>
-          <input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe">
-        </div>
-      </div>
+      <table class="form-table">
+        <tbody>
+          <tr>
+            <td class="ft-label" title="Working label only">Course Code</td>
+            <td class="ft-input">
+              <input id="hod-newcourse-code" type="text" placeholder="e.g. 24CSEJ302" onchange="onNewCourseCodeChange(this.value)" onblur="onNewCourseCodeChange(this.value)">
+              <div id="hod-newcourse-code-note" class="section-meta" style="margin-top:6px;"></div>
+            </td>
+          </tr>
+          <tr>
+            <td class="ft-label" title="Working label only">Course Name</td>
+            <td class="ft-input"><input id="hod-newcourse-name" type="text" placeholder="e.g. Data Structures"></td>
+          </tr>
+          <tr>
+            <td class="ft-label" title="Auto-filled from the Subject Catalog by code, when recognized">Semester</td>
+            <td class="ft-input">
+              <select id="hod-newcourse-semester">
+                <option value="">— Select —</option>
+                ${SEMESTER_NUMBERS.map(n=>`<option value="${n}">Semester ${n}</option>`).join('')}
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td class="ft-label" title="Pick from directory, all branches">Existing Faculty</td>
+            <td class="ft-input"><select id="hod-newcourse-cc-pick" onchange="fillCoordinatorFromDirectory(this.value)">${facultyDropdownOptionsHtml()}</select></td>
+          </tr>
+          <tr>
+            <td class="ft-label" title="Optional — assign now">Coordinator Email</td>
+            <td class="ft-input"><input id="hod-newcourse-cc-email" type="email" placeholder="name@suh.in"></td>
+          </tr>
+          <tr>
+            <td class="ft-label" title="Only needed for a new account">Coordinator Name</td>
+            <td class="ft-input"><input id="hod-newcourse-cc-name" type="text" placeholder="Dr. Jane Doe"></td>
+          </tr>
+        </tbody>
+      </table>
       <button class="btn" style="margin-top:14px;" onclick="App.createCourseSection(document.getElementById('hod-newcourse-code').value, document.getElementById('hod-newcourse-name').value, document.getElementById('hod-newcourse-cc-email').value, document.getElementById('hod-newcourse-cc-name').value, document.getElementById('hod-newcourse-semester').value)">Assign Coordinator</button>
     </div>
     ${courses.length===0 ? emptyStateHtml('No course sections yet', 'There are no course-sections in the system yet — use "Create Section & Assign Coordinator" above to add one.') : courses.map(c=>{
@@ -8029,7 +8071,14 @@ function renderCITermTestEntry(params){
   const endTs = tt.endDate ? new Date(tt.endDate).getTime() : null;
   const nowTs = Date.now();
   const withinWindow = (!startTs || nowTs>=startTs) && (!endTs || nowTs<=endTs);
-  const editable = (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && cycleIsActive && withinWindow;
+  // isCourseOwnerCI(course) is required here — canViewItemEntry() lets the
+  // assigned CC (and EA/HOD at their own stage) open this same shared page
+  // at any time, not just their own turn, so they can see progress. Without
+  // this check, a CC opening the page while it's still sitting at the CI's
+  // stage would see every mark box as editable (and be able to type into
+  // them) instead of read-only, since the stage/window checks below don't
+  // know WHO is looking, only what stage the item is at.
+  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && cycleIsActive && withinWindow;
   // The marks-entry PERIOD is considered finished once the window has
   // closed (endDate passed) or the Timetable Incharge has moved the active
   // cycle on — at that point the CI can no longer edit marks, but (if they
@@ -8331,7 +8380,12 @@ function renderCIComponentEntry(params){
   const itemKey = comp.key==='pracInternal' ? 'pracInternal' : (comp.key==='seePractical'||comp.key==='seePracticalProject') ? 'seePractical' : null;
   const ia = itemKey ? App.itemApproval(course.id, itemKey) : null;
   const correctionMode = course.status==='approved' && course.editUnlocked;
-  const editable = (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci');
+  // Same ownership check as the Term Test entry page: canViewItemEntry()
+  // lets the assigned CC (and EA/HOD at their own stage) open this page at
+  // any time to watch progress, so "editable" can't be based on stage
+  // alone — otherwise a CC viewing while it's still the CI's stage would
+  // see live, typeable mark boxes instead of a read-only view.
+  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci');
   const note = itemKey
     ? `Has its own CI → CC → EA → HOD verification chain — see the status card below.`
     : `No approval chain here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
@@ -8720,48 +8774,52 @@ function renderCCList(){
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
-      <p>Pick which coordination a new section is for — its Regulation, Subject and Evaluation Type all come from that automatically (via Supabase Courses Applicable, no approval needed). Choose a Branch and Section, assign a Course Instructor. When your instructor submits marks, they come to you first — verify and forward each record to the Executive Assistant before it moves on to the HOD.</p>
     </div>
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
-        <p class="section-meta" style="margin-top:4px;">Pick which coordination this is for (if you coordinate more than one) — Regulation, Subject and Evaluation Type all come from that automatically. Choose a Branch and Section, then an Instructor.</p>
-        <div class="config-grid">
-          <div class="config-field">
-            <label>Coordination</label>
-            <select id="cc-assign-base" onchange="onCCBaseChange(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select>
-          </div>
-          <div class="config-field">
-            <label>Branch</label>
-            <select id="cc-assign-branch" onchange="refreshCCSectionOptions()">${initialAllowedBranches.length ? initialAllowedBranches.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('') : `<option value="">— Pick a Coordination first —</option>`}</select>
-          </div>
-          <div class="config-field">
-            <label>Semester <span style="text-transform:none;">(prefilled from the coordination's own mapping)</span></label>
-            <select id="cc-assign-semester">
-              <option value="">— Select —</option>
-              ${SEMESTER_NUMBERS.map(n=>`<option value="${n}" ${initialBase && initialBase.semester===n?'selected':''}>Semester ${n}</option>`).join('')}
-            </select>
-          </div>
-          <div class="config-field">
-            <label>Section</label>
-            <select id="cc-assign-section">${initialSections.length ? initialSections.map(s=>`<option value="${s}">${s}</option>`).join('') : `<option value="">— Pick a Branch first —</option>`}</select>
-          </div>
-          <div class="config-field">
-            <label>Instructor <span style="text-transform:none;">(pick existing, or type a new email below)</span></label>
-            <select id="cc-assign-instructor-pick" onchange="onCCInstructorPick(this)">
-              <option value="">— Pick existing faculty (optional) —</option>
-              ${allFacultyOptionsHtml()}
-            </select>
-          </div>
-          <div class="config-field">
-            <label>Instructor email</label>
-            <input id="cc-assign-instructor" type="email" placeholder="name@suh.in">
-          </div>
-          <div class="config-field">
-            <label>Instructor name <span style="text-transform:none;">(only needed for a new account)</span></label>
-            <input id="cc-assign-instructor-name" type="text" placeholder="Dr. Jane Doe">
-          </div>
-        </div>
+        <table class="form-table">
+          <tbody>
+            <tr>
+              <td class="ft-label">Coordination</td>
+              <td class="ft-input"><select id="cc-assign-base" onchange="onCCBaseChange(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select></td>
+            </tr>
+            <tr>
+              <td class="ft-label">Branch</td>
+              <td class="ft-input"><select id="cc-assign-branch" onchange="refreshCCSectionOptions()">${initialAllowedBranches.length ? initialAllowedBranches.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('') : `<option value="">— Pick a Coordination first —</option>`}</select></td>
+            </tr>
+            <tr>
+              <td class="ft-label" title="Prefilled from the coordination's own mapping">Semester</td>
+              <td class="ft-input">
+                <select id="cc-assign-semester">
+                  <option value="">— Select —</option>
+                  ${SEMESTER_NUMBERS.map(n=>`<option value="${n}" ${initialBase && initialBase.semester===n?'selected':''}>Semester ${n}</option>`).join('')}
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <td class="ft-label">Section</td>
+              <td class="ft-input"><select id="cc-assign-section">${initialSections.length ? initialSections.map(s=>`<option value="${s}">${s}</option>`).join('') : `<option value="">— Pick a Branch first —</option>`}</select></td>
+            </tr>
+            <tr>
+              <td class="ft-label" title="Pick existing, or type a new email below">Instructor</td>
+              <td class="ft-input">
+                <select id="cc-assign-instructor-pick" onchange="onCCInstructorPick(this)">
+                  <option value="">— Pick existing faculty (optional) —</option>
+                  ${allFacultyOptionsHtml()}
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <td class="ft-label">Instructor Email</td>
+              <td class="ft-input"><input id="cc-assign-instructor" type="email" placeholder="name@suh.in"></td>
+            </tr>
+            <tr>
+              <td class="ft-label" title="Only needed for a new account">Instructor Name</td>
+              <td class="ft-input"><input id="cc-assign-instructor-name" type="text" placeholder="Dr. Jane Doe"></td>
+            </tr>
+          </tbody>
+        </table>
         <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value)">Add Section &amp; Assign Instructor</button>
       </div>
 
