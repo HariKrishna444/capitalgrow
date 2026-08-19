@@ -4829,14 +4829,52 @@ async function uploadAnswerScriptForStudent(courseId, cycle, kind, studentId, in
   }
 }
 window.uploadAnswerScriptForStudent = uploadAnswerScriptForStudent;
+/* Stable tie-breaker: when more than one student shares the winning value
+   (e.g. two students both scored the class-min, or two are equally close
+   to the average), a real coin-flip would pick a different student on
+   every re-render while marks are still being typed. Hashing the student
+   id lands on one arbitrary — effectively random — member of the tied
+   group, but always the SAME one for a given tie, so the enabled Upload
+   button doesn't jump between rows as the page redraws. */
+function pickOneOf(ids){
+  if(ids.length<=1) return ids[0] || null;
+  let winner = ids[0], winnerHash = -1;
+  ids.forEach(id=>{
+    let h = 0;
+    for(let i=0;i<id.length;i++) h = (h*31 + id.charCodeAt(i)) | 0;
+    h = Math.abs(h);
+    if(h>winnerHash){ winnerHash = h; winner = id; }
+  });
+  return winner;
+}
+/* Computes which student currently qualifies as Best / Average / Lowest
+   for this cycle, straight off the entered Term Test totals — this is
+   what drives which row's Upload button is enabled (see
+   ttScriptUploadCell below). "Average" means whichever student's total
+   sits closest to the class mean, not literally the mean itself (that
+   number rarely lands exactly on a real student's score). */
+function computeTTAutoPicks(scored){
+  if(!scored.length) return { bestId:null, avgId:null, lowId:null };
+  const max = Math.max(...scored.map(x=>x.total));
+  const min = Math.min(...scored.map(x=>x.total));
+  const avg = scored.reduce((a,x)=>a+x.total,0)/scored.length;
+  const bestIds = scored.filter(x=>x.total===max).map(x=>x.student.id);
+  const lowIds = scored.filter(x=>x.total===min).map(x=>x.student.id);
+  let minDist = Infinity;
+  scored.forEach(x=>{ const d = Math.abs(x.total-avg); if(d<minDist) minDist = d; });
+  const avgIds = scored.filter(x=>Math.abs(x.total-avg)===minDist).map(x=>x.student.id);
+  return { bestId: pickOneOf(bestIds), avgId: pickOneOf(avgIds), lowId: pickOneOf(lowIds) };
+}
 /* Per-student-row cell for the Term Test table: if this student already
    has an uploaded script for this cycle, show it (with a Replace option
-   while still editable); otherwise, as long as fewer than all 3 kinds have
-   been used for this cycle, show a compact kind-picker + file input so the
-   CI can tag this row as Best/Average/Lowest. Once all 3 are used, the
-   picker disappears for every remaining student — exactly 3 scripts per
-   cycle, no more. */
-function ttScriptUploadCell(course, cycle, student, editable){
+   while still editable). Otherwise the Upload control only appears at all
+   if the LIVE Highest/Average/Lowest calculation currently lands on this
+   student (autoPicks, from computeTTAutoPicks) — no more picking an
+   arbitrary student from a dropdown. A student can qualify for more than
+   one slot in a very small class (e.g. only 1-2 students scored so far);
+   in that rare case they get a small picker between just their own
+   qualifying slots. */
+function ttScriptUploadCell(course, cycle, student, editable, autoPicks){
   const uploads = scriptUploadsForCycle(course, cycle);
   const mine = Object.keys(SCRIPT_KINDS).find(k=>uploads[k] && uploads[k].studentId===student.id);
   if(mine){
@@ -4846,13 +4884,27 @@ function ttScriptUploadCell(course, cycle, student, editable){
       ${editable ? `<label class="file-input-label" style="font-size:11px;">Replace<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="uploadAnswerScriptForStudent('${course.id}','${cycle}','${mine}','${student.id}', this)"></label>` : ''}
     </div>`;
   }
-  const usedKinds = Object.keys(SCRIPT_KINDS).filter(k=>uploads[k]);
-  if(!editable || usedKinds.length>=3) return '';
-  const remaining = Object.keys(SCRIPT_KINDS).filter(k=>!usedKinds.includes(k));
+  const ap = autoPicks || { bestId:null, avgId:null, lowId:null };
+  const eligibleKinds = Object.keys(SCRIPT_KINDS).filter(k=>{
+    if(uploads[k]) return false;
+    if(k==='best') return ap.bestId===student.id;
+    if(k==='average') return ap.avgId===student.id;
+    if(k==='lowest') return ap.lowId===student.id;
+    return false;
+  });
+  if(!editable || !eligibleKinds.length) return '';
+  if(eligibleKinds.length===1){
+    const kind = eligibleKinds[0];
+    return `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+      <span class="status-pill status-coordinated">${SCRIPT_KINDS[kind]}</span>
+      <label class="file-input-label" style="font-size:11px;">Upload PDF<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="uploadAnswerScriptForStudent('${course.id}','${cycle}','${kind}','${student.id}', this)"></label>
+      <span id="script-status-${course.id}-${cycle}-${student.id}" class="section-meta" style="font-size:10.5px;"></span>
+    </div>`;
+  }
   const selectId = `script-kind-${course.id}-${cycle}-${student.id}`;
   return `<div style="display:flex;flex-direction:column;gap:4px;">
     <select id="${selectId}" style="font-size:11px;padding:3px 4px;">
-      ${remaining.map(k=>`<option value="${k}">${SCRIPT_KINDS[k]}</option>`).join('')}
+      ${eligibleKinds.map(k=>`<option value="${k}">${SCRIPT_KINDS[k]}</option>`).join('')}
     </select>
     <label class="file-input-label" style="font-size:11px;">Upload PDF<input type="file" accept="image/*,application/pdf" style="display:none;" onchange="uploadAnswerScriptForStudent('${course.id}','${cycle}', document.getElementById('${selectId}').value, '${student.id}', this)"></label>
     <span id="script-status-${course.id}-${cycle}-${student.id}" class="section-meta" style="font-size:10.5px;"></span>
@@ -4902,6 +4954,16 @@ function scriptUploadsViewHtml(course){
 
 let activeMarksTab = 'ttlab';
 
+/* Student name cell used across every CIE/SEE/Term Test marks table — puts
+   the Roll No/URN/Register Number to the right of the name in a muted
+   monospace tag, so every examination table (CIE, SEE, Term Test 1/2, Lab
+   Internal/External, SIA, etc.) shows it without needing a whole extra
+   column. Falls back to just the name if this student has no roll number
+   on file. */
+function studentNameCell(s){
+  return `${escapeHtml(s.name)}${s.rollNo ? ` <span class="mono" style="color:var(--text-soft);font-size:11px;font-weight:400;">${escapeHtml(s.rollNo)}</span>` : ''}`;
+}
+
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
 function marksViewTable(course){
   if(!course.evalType){
@@ -4925,7 +4987,7 @@ function marksViewTable(course){
       return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
     }).join('');
     return `<tr>
-      <td>${escapeHtml(s.name)}</td>
+      <td>${studentNameCell(s)}</td>
       ${cieCells}
       <td class="total-cell">${gt.cieTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
       ${seeCells}
@@ -4976,7 +5038,7 @@ function approvalGroupPanel(course, template, group, comps, editableOverride){
         onchange="onMarkChange(this)"></td>`;
     }).join('');
     const groupCalc = computeCIE(s, comps);
-    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${groupCalc.total}</td></tr>`;
+    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${groupCalc.total}</td></tr>`;
   }).join('');
   const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
   const groupLabel = group==='ttlab' ? 'Term Test 1/2 & Lab Internal' : 'Lab External';
@@ -5028,7 +5090,7 @@ function marksEntryTabs(course){
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
     }).join('');
-    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${cie.total}</td></tr>`;
+    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${cie.total}</td></tr>`;
   }).join('');
   const cieHead = otherCie.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
@@ -5044,7 +5106,7 @@ function marksEntryTabs(course){
         value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
         onchange="onMarkChange(this)"></td>`;
     }).join('');
-    return `<tr><td>${escapeHtml(s.name)}</td>${seeCells}<td class="total-cell">${seeCalc.total}</td></tr>`;
+    return `<tr><td>${studentNameCell(s)}</td>${seeCells}<td class="total-cell">${seeCalc.total}</td></tr>`;
   }).join('');
   const seeHead = otherSee.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
@@ -5104,7 +5166,7 @@ function siaEntryHtml(course, comp, editable){
     }).join('');
     const rawTotal = typeof s.marks[comp.key]==='number' ? s.marks[comp.key] : 0;
     const scaled = round1((Math.min(rawTotal, comp.rawMax)/comp.rawMax) * comp.scaledMax);
-    return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${rawTotal}/${comp.rawMax}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
+    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${rawTotal}/${comp.rawMax}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
   }).join('');
   const unitHead = Array.from({length:unitCount}, (_,i)=>{
     const label = TT_UNIT_OPTIONS[i] || `Unit ${i+1}`;
@@ -8107,6 +8169,18 @@ function renderCITermTestEntry(params){
     </span>`;
   }).join('')}</div>`;
 
+  // Class performance stats — highest / average / lowest, computed off the
+  // raw Term Test Total (/50) so it reads the same for every Evaluation
+  // Type regardless of how few or many marks that cycle is scaled to.
+  // Computed BEFORE the row-by-row table below because ttScriptUploadCell
+  // needs autoPicks to decide which single row gets an enabled Upload
+  // button for each of Best/Average/Lowest.
+  const scored = (course.students||[]).map(s=>{
+    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
+    return { student: s, total: computeTermTestRaw(detail).total };
+  }).filter(x=>x.total>0);
+  const autoPicks = computeTTAutoPicks(scored);
+
   const rows = (course.students||[]).map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
@@ -8159,24 +8233,17 @@ function renderCITermTestEntry(params){
     }).join('');
     const cieScaled = round1((Math.min(calc.total, comp.rawMax)/comp.rawMax) * comp.scaledMax);
     return `<tr>
-      <td>${escapeHtml(s.name)}</td>
+      <td>${studentNameCell(s)}</td>
       ${shortCells}
       <td class="total-cell">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
       ${longCells}
       <td class="total-cell">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
       <td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
       <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
-      <td>${ttScriptUploadCell(course, cycle, s, editable)}</td>
+      <td>${ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
     </tr>`;
   }).join('');
 
-  // Class performance stats — highest / average / lowest, computed off the
-  // raw Term Test Total (/50) so it reads the same for every Evaluation
-  // Type regardless of how few or many marks that cycle is scaled to.
-  const scored = (course.students||[]).map(s=>{
-    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
-    return { student: s, total: computeTermTestRaw(detail).total };
-  }).filter(x=>x.total>0);
   let statsHtml = `<p class="section-meta">No marks entered yet for ${escapeHtml(cycleLabel)} — class stats will appear once at least one student has a score.</p>`;
   if(scored.length){
     const max = Math.max(...scored.map(x=>x.total));
@@ -8396,7 +8463,7 @@ function renderCIComponentEntry(params){
       const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
       const scaled = typeof val==='number' ? round1((Math.min(val,comp.rawMax)/comp.rawMax)*comp.scaledMax) : '—';
       return `<tr>
-        <td>${escapeHtml(s.name)}</td>
+        <td>${studentNameCell(s)}</td>
         <td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
           class="${overMax?'invalid':''}"
           data-markkey="${course.id}|${s.id}|${comp.key}"
@@ -8589,7 +8656,7 @@ function renderCISectionView(params){
         const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
         return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
       }).join('');
-      return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td></tr>`;
+      return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td></tr>`;
     }).join('');
     const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
     return comps.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}<th>${section==='cie'?'CIE':'SEE'} Total</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'CIE':'SEE'} components on this Evaluation Type.</p>`;
