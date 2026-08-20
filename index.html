@@ -1246,18 +1246,29 @@ function otherSeeComponents(template){
 function seeEntryLocked(){
   return !!(App.state.currentTermTest && App.state.currentTermTest.cycle);
 }
-/* ---------- Practical Internal Test — Course Coordinator deadline ----------
+/* ---------- Practical Internal Test — Course Coordinator marks-entry
+   window (start + end) ----------
    Unlike every other CIE/SEE component (which stays open to the CI for as
    long as the Overall record itself is InProgress), Practical Internal Test
-   has its own optional marks-entry deadline that the Course Coordinator
-   (or HOD/Admin) can fix — see App.setPracInternalDeadline. Once that date
-   has passed, entry locks for the Course Instructor even though the record
-   is still InProgress. Leaving it unset (the default) means Practical
-   Internal Test behaves exactly like before — no deadline, always open. */
+   has its own optional marks-entry window — a start date/time and an end
+   date/time — that the Course Coordinator (or HOD/Admin) can fix, see
+   App.setPracInternalStart / App.setPracInternalDeadline. Before the start
+   time (if one is set) and after the end time (if one is set), entry locks
+   for the Course Instructor even though the record is still InProgress.
+   Both are stored as full <input type="datetime-local"> strings (date +
+   time-of-day), not just a date, so the window can open/close at a precise
+   time of day rather than only at midnight. Leaving both unset (the
+   default) means Practical Internal Test behaves exactly like before — no
+   window, always open. */
 function pracInternalDeadlinePassed(course){
   if(!course || !course.pracInternalDeadline) return false;
-  const end = new Date(course.pracInternalDeadline + 'T23:59:59');
+  const end = new Date(course.pracInternalDeadline);
   return !isNaN(end.getTime()) && Date.now() > end.getTime();
+}
+function pracInternalNotYetStarted(course){
+  if(!course || !course.pracInternalStart) return false;
+  const start = new Date(course.pracInternalStart);
+  return !isNaN(start.getTime()) && Date.now() < start.getTime();
 }
 
 const STATUS_LABEL = { draft:'InProgress', submitted:'Submitted', coordinated:'Coordinated', verified:'Verified', approved:'Approved' };
@@ -2016,6 +2027,19 @@ function toggleTTSetup(courseId, cycle){
 }
 window.toggleTTSetup = toggleTTSetup;
 
+/* Whether the HOD's "Edit Marks" panel is currently open on the HOD Review
+   page for a given course — toggled by toggleHodMarksEdit below. Closed by
+   default; opening/closing never touches student.marks itself, only the
+   generic App.saveMarks() call triggered by the Save button does that (see
+   App.hodSaveMarksEdit). */
+let hodMarksEditMap = {};
+function isHodMarksEditOpen(courseId){ return !!hodMarksEditMap[courseId]; }
+function toggleHodMarksEdit(courseId){
+  hodMarksEditMap[courseId] = !hodMarksEditMap[courseId];
+  renderContent();
+}
+window.toggleHodMarksEdit = toggleHodMarksEdit;
+
 /* Which raw CIE component key (as defined on the Evaluation Type template)
    a given Term Test cycle feeds into. Templates with two separate slots
    (tt1/tt2) map TT1->tt1 and TT2->tt2; templates with a single combined
@@ -2029,6 +2053,38 @@ function termTestComponentKey(template, cycle){
   if(cycle==='TT2' && keys.includes('tt2')) return 'tt2';
   if(keys.includes('termTest')) return 'termTest';
   return null;
+}
+/* ---------- Default Question Paper Setup — auto-applied the moment a
+   Course Instructor is assigned ----------
+   Previously the Course Coordinator had to manually open Question Paper
+   Setup, pick a Unit for every question (Q1-Q11), and forward it before
+   the Course Instructor could enter any Term Test marks. That's still
+   possible (and still the only way to pick real Units), but as a
+   convenience a default setup — every question fixed to Unit 1 — is now
+   applied and forwarded automatically for Term Test 1 and Term Test 2 the
+   moment a Course Instructor is assigned, so marks entry is never blocked
+   waiting on this step. The Coordinator can still reopen either cycle
+   (Question Paper Setup → Edit) at any time to correct the real Units;
+   reopening unlocks it for editing exactly as before. Skips a cycle
+   entirely if the Evaluation Type has no Term Test component for it, or if
+   that cycle already has a real setup in progress/forwarded (so this never
+   clobbers work the Coordinator already started). Returns the list of
+   cycles it defaulted, so the caller can mention them in a notification. */
+function applyDefaultTTPaperConfig(course){
+  const template = getCourseTemplate(course);
+  const defaulted = [];
+  course.ttPaperConfig = course.ttPaperConfig || {};
+  ['TT1','TT2'].forEach(cycle=>{
+    if(!termTestComponentKey(template, cycle)) return;
+    const existing = course.ttPaperConfig[cycle];
+    const alreadyStarted = existing && (existing.__forwarded || TT_ALL_QKEYS.some(qKey=>!!(existing[qKey]||{}).unit));
+    if(alreadyStarted) return;
+    const cfg = { __forwarded: true };
+    TT_ALL_QKEYS.forEach(qKey=>{ cfg[qKey] = { unit: TT_UNIT_OPTIONS[0] }; });
+    course.ttPaperConfig[cycle] = cfg;
+    defaulted.push(cycle);
+  });
+  return defaulted;
 }
 /* Reads one student's stored answer-sheet (s.marks.ttDetail[cycle]) and
    computes the short total, long raw/scaled total, and grand /50 total.
@@ -2119,7 +2175,7 @@ function seedState(){
     { id:'c5', code:'CS205', name:'Computer Networks',    section:'C', branch:'SAP'  },
     { id:'c6', code:'CS210', name:'Operating Systems',    section:'A', branch:'ECE'  }, // deliberately left unassigned — shows the empty state
     { id:'c7', code:'CS207', name:'Environmental Science',section:'D', branch:'SAP'  }, // pre-seeded, fully approved — Examination Branch demo record
-  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', pracInternalDeadline:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{}, students: makeStudents(), history: [] }));
+  ].map(c => ({ ...c, status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', pracInternalDeadline:'', pracInternalStart:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{}, students: makeStudents(), history: [] }));
   // c1 and c7 already have a Course Instructor assigned in the seed data below,
   // so their Coordinator has already fixed an Evaluation Type for them.
   courses.find(c=>c.id==='c1').evalType = 'ET1';
@@ -2258,7 +2314,7 @@ async function fetchStateFromSupabase(){
       studentCount: comp ? comp.student_count : 0,
       cieComplete: comp ? !!comp.cie_complete : false,
       seeComplete: comp ? !!comp.see_complete : false,
-      examDate: c.exam_date || '', pracInternalDeadline: c.prac_internal_deadline || '', scrutinyRemark: c.scrutiny_remark || '',
+      examDate: c.exam_date || '', pracInternalDeadline: c.prac_internal_deadline || '', pracInternalStart: c.prac_internal_start || '', scrutinyRemark: c.scrutiny_remark || '',
       frozenAt: c.frozen_at ? new Date(c.frozen_at).getTime() : null, frozenBy: c.frozen_by || '',
       scriptUploads: c.script_uploads || {}, ciAcknowledgedAt: c.ci_acknowledged_at ? new Date(c.ci_acknowledged_at).getTime() : null,
       history:[]
@@ -2325,7 +2381,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, item_approvals:c.itemApprovals||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, prac_internal_deadline:c.pracInternalDeadline||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, item_approvals:c.itemApprovals||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, prac_internal_deadline:c.pracInternalDeadline||null, prac_internal_start:c.pracInternalStart||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -2873,7 +2929,7 @@ const App = {
     if(dupe){ toast(`${code} already has a coordination shell — open it from Manage Coordinators.`, 'err'); return; }
     const course = {
       id: bizId('CRS', [code, 'shell'], this.state.courses.map(c=>c.id)), code, name, section: '', branch: '', semester,
-      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', pracInternalDeadline:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType:null, examDate:'', pracInternalDeadline:'', pracInternalStart:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       // Roster starts empty — the Course Coordinator builds it from the real
       // Student Directory (see App.setCourseRoster) rather than placeholder names.
@@ -2959,7 +3015,7 @@ const App = {
     const displayName = subj ? subj.name : base.name;
     const course = {
       id: bizId('CRS', [code, branch, sec], this.state.courses.map(c=>c.id)), code, name: displayName, section: sec, branch, semester, regulation,
-      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', pracInternalDeadline:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
+      status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', pracInternalDeadline:'', pracInternalStart:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
       editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
       students: [], history: []
     };
@@ -3016,10 +3072,15 @@ const App = {
       nextStudents.forEach(s=>syncNewStudent(course.id, s));
     }
 
+    // Auto-apply a default (Unit 1) Question Paper Setup for Term Test 1 &
+    // 2 so the new Course Instructor isn't blocked on the Coordinator
+    // doing that separately — see applyDefaultTTPaperConfig.
+    const defaultedCycles = evalType ? applyDefaultTTPaperConfig(course) : [];
     await syncCourse(course);
     this.logHistory(course, `Course Instructor assigned: ${ciUser.name} (${ciUser.email})`
       + (loadedCount ? ` · ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registration import` : ''));
-    this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).${evalType ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ' The Evaluation Type for this section is not fixed yet — check with your Coordinator.'} This role is active immediately — no separate approval step is needed.`, true, actor.email);
+    if(defaultedCycles.length) this.logHistory(course, `Default Question Paper Setup (Unit 1) auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
+    this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).${evalType ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ' The Evaluation Type for this section is not fixed yet — check with your Coordinator.'} This role is active immediately — no separate approval step is needed.${defaultedCycles.length ? ` A default Question Paper Setup (every question set to Unit 1) has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away — your Coordinator may still update the real Units later.` : ''}`, true, actor.email);
     toast(loadedCount
       ? `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section} — ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registrations.`
       : `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section}. No matching Course Registration rows were found, so the roster is empty — add students from the roster page, or import the registration sheet first.`, 'ok');
@@ -3173,16 +3234,22 @@ const App = {
     syncAssignment(rec);
     const roleLabel = type==='CC' ? 'Course Coordinator' : 'Course Instructor';
     let etNote = '';
+    let defaultedCycles = [];
     if(type==='CI'){
       course.evalType = subj.abbr;
       course.code = subj.code;
       course.name = subj.name;
       course.ciLoadType = loadType || null;
+      // Auto-apply a default (Unit 1) Question Paper Setup for Term Test
+      // 1 & 2 so the new Course Instructor isn't blocked on the
+      // Coordinator doing that separately — see applyDefaultTTPaperConfig.
+      defaultedCycles = applyDefaultTTPaperConfig(course);
       syncCourse(course);
       etNote = ` · Subject fixed as: ${subj.code} — ${subj.name} (${evalTypeLabel(subj.abbr)})${loadType ? ` · ${LOAD_TYPE_LABELS[loadType]}` : ''}`;
     }
     this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
-    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.`, true, actor.email);
+    if(defaultedCycles.length) this.logHistory(course, `Default Question Paper Setup (Unit 1) auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.${defaultedCycles.length ? ` A default Question Paper Setup (every question set to Unit 1) has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away — your Coordinator may still update the real Units later.` : ''}`, true, actor.email);
     toast(`${user.name} is now ${roleLabel} for ${course.code}.${etNote}`, 'ok');
     closeModal();
     renderSidebar();
@@ -3267,6 +3334,56 @@ const App = {
     // targeted write: only the students whose marks actually changed on screen
     syncStudents(courseId, touched);
     return course;
+  },
+
+  /* ---------- HOD: direct marks edit ----------
+     The HOD (or Admin) can override any CIE/SEE component straight from
+     the HOD Review page — see the "Edit Marks" toggle in renderHODReview,
+     which swaps marksViewTable into its editable mode (plain number
+     inputs, same data-course/data-student/data-field wiring the Course
+     Instructor's own entry pages use). Unlike App.saveMarks (which blindly
+     writes every visible input), this builds a before/after diff so the
+     audit trail and the Course Instructor's notification/email both say
+     exactly what changed, not just "marks were modified" — reused nowhere
+     else since only this page needs that level of detail. Only fields
+     that actually changed touch the database or trigger a notification. */
+  hodSaveMarksEdit(courseId){
+    const actor = this.currentUser();
+    if(!actor || !['HOD','ADMIN'].includes(actor.systemRole)){ toast('Only the HOD can modify marks here.', 'err'); return; }
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const template = getCourseTemplate(course);
+    const compLabel = {};
+    (template.cie||[]).concat(seeDisplayComponents(template)).forEach(c=>{ compLabel[c.key]=c.label; });
+    const changes = [];
+    const touched = [];
+    document.querySelectorAll(`[data-course="${courseId}"][data-field]`).forEach(input=>{
+      const sid = input.dataset.student;
+      const field = input.dataset.field;
+      const student = course.students.find(s=>s.id===sid);
+      if(!student) return;
+      const before = (student.marks[field]===undefined) ? null : student.marks[field];
+      const val = input.value === '' ? null : parseFloat(input.value);
+      const after = (val===null || isNaN(val)) ? null : val;
+      if(before === after) return;
+      changes.push(`${student.name}: ${compLabel[field]||field} ${before===null?'—':before} → ${after===null?'—':after}`);
+      student.marks[field] = after;
+      if(!touched.includes(student)) touched.push(student);
+    });
+    if(!changes.length){ toast('No changes to save.', 'err'); return; }
+    syncStudents(courseId, touched);
+    const shown = changes.slice(0,8).join('; ') + (changes.length>8 ? ` · +${changes.length-8} more` : '');
+    this.logHistory(course, `Marks modified directly by the HOD: ${shown}`);
+    const ciUser = getCourseCIUser(courseId);
+    if(ciUser){
+      this.notifyUser(ciUser.id, course, `${course.code} — marks modified by HOD`,
+        `${actor.name} (HOD) modified marks for ${course.code} — ${course.name}:\n${shown}\n\nPlease review the updated marks.`,
+        true, actor.email);
+    }
+    hodMarksEditMap[courseId] = false;
+    toast(`Marks updated${ciUser ? ' — the Course Instructor has been notified in-app and by email.' : '.'}`, 'ok');
+    renderSidebar();
+    renderContent();
   },
   validateCIEComplete(course){
     const components = getCourseComponents(course);
@@ -3372,10 +3489,25 @@ const App = {
     const ccUser = getCourseCCUser(courseId);
     const allowed = actor.systemRole==='ADMIN' || actor.systemRole==='HOD' || ccUser?.id===actor.id;
     if(!allowed){ toast('Only this section\'s Course Coordinator or the HOD can set the Practical Internal Test deadline.', 'err'); return; }
+    if(dateStr && course.pracInternalStart && new Date(dateStr) <= new Date(course.pracInternalStart)){ toast('The ending time must be after the starting time.', 'err'); return; }
     course.pracInternalDeadline = dateStr || '';
     syncCourse(course);
-    this.logHistory(course, `Practical Internal Test marks-entry deadline set to ${dateStr || '(cleared)'}`);
-    toast('Practical Internal Test deadline saved.', 'ok');
+    this.logHistory(course, `Practical Internal Test marks-entry ending time set to ${dateStr ? fmtDate(new Date(dateStr).getTime()) : '(cleared)'}`);
+    toast('Practical Internal Test ending time saved.', 'ok');
+    renderContent();
+  },
+  setPracInternalStart(courseId, dateStr){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const ccUser = getCourseCCUser(courseId);
+    const allowed = actor.systemRole==='ADMIN' || actor.systemRole==='HOD' || ccUser?.id===actor.id;
+    if(!allowed){ toast('Only this section\'s Course Coordinator or the HOD can set the Practical Internal Test starting time.', 'err'); return; }
+    if(dateStr && course.pracInternalDeadline && new Date(dateStr) >= new Date(course.pracInternalDeadline)){ toast('The starting time must be before the ending time.', 'err'); return; }
+    course.pracInternalStart = dateStr || '';
+    syncCourse(course);
+    this.logHistory(course, `Practical Internal Test marks-entry starting time set to ${dateStr ? fmtDate(new Date(dateStr).getTime()) : '(cleared)'}`);
+    toast('Practical Internal Test starting time saved.', 'ok');
     renderContent();
   },
 
@@ -4183,7 +4315,7 @@ const App = {
     if(!course){
       course = {
         id: bizId('CRS', [code, branch, sec||'nosec'], this.state.courses.map(c=>c.id)), code, name, section:sec, branch,
-        status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', pracInternalDeadline:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
+        status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', pracInternalDeadline:'', pracInternalStart:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
         editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
         students:[], studentsLoaded:true, history:[]
       };
@@ -5051,7 +5183,7 @@ function studentNameCell(s){
 }
 
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
-function marksViewTable(course){
+function marksViewTable(course, editable){
   if(!course.evalType){
     return `<div class="empty-state"><div class="em-title">Evaluation Type not yet fixed</div>The Course Coordinator hasn't fixed an Evaluation Type for this section yet, so no marks components exist to display.</div>`;
   }
@@ -5060,18 +5192,23 @@ function marksViewTable(course){
   const seeComponents = seeDisplayComponents(template);
   const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
   const grandMax = round1(CIE_MAX + seeTotalMax);
+  const cellHtml = (course, s, comp) => {
+    const v = s.marks[comp.key];
+    const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
+    if(editable){
+      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        class="${overMax?'invalid':''}"
+        data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        data-markkey="${course.id}|${s.id}|${comp.key}"
+        value="${v===undefined||v===null?'':v}" placeholder="/${comp.rawMax}"
+        onchange="onMarkChange(this)"></td>`;
+    }
+    return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+  };
   const rows = course.students.map(s=>{
     const gt = computeGrandTotal(s, course);
-    const cieCells = cieComponents.map(comp=>{
-      const v = s.marks[comp.key];
-      const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
-      return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
-    }).join('');
-    const seeCells = seeComponents.map(comp=>{
-      const v = s.marks[comp.key];
-      const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
-      return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
-    }).join('');
+    const cieCells = cieComponents.map(comp=>cellHtml(course, s, comp)).join('');
+    const seeCells = seeComponents.map(comp=>cellHtml(course, s, comp)).join('');
     return `<tr>
       <td>${studentNameCell(s)}</td>
       ${cieCells}
@@ -5087,6 +5224,7 @@ function marksViewTable(course){
       <div class="weight-track"><div class="weight-cie"></div><div class="weight-see"></div></div>
       <span>Evaluation Type: <strong>${escapeHtml(template.label)}</strong> · CIE (${cieComponents.map(c=>c.label).join(', ')}) · SEE (${seeComponents.map(c=>c.label).join(', ')})</span>
     </div>
+    ${editable ? `<p class="section-meta" style="margin-top:8px;color:var(--seal-red);">Edit mode — changes here are not saved until you press "Save Changes &amp; Notify CI" below.</p>` : ''}
     <div class="table-scroll">
       <table class="data-table" style="margin-top:14px;min-width:920px;">
         <thead><tr><th>Student</th>${cieHead}<th>CIE Total</th>${seeHead}<th>Total</th></tr></thead>
@@ -6990,6 +7128,7 @@ function renderHODLabExternalOverview(){
 function renderHODReview(params){
   const course = App.getCourse(params.courseId);
   const actionable = course.status === 'verified';
+  const hodEditOpen = ['HOD','ADMIN'].includes(App.currentUser().systemRole) && isHodMarksEditOpen(course.id);
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -7027,7 +7166,16 @@ function renderHODReview(params){
       </div>` : ''}
     ${course.status==='approved' && course.editUnlocked ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Unlocked for correction</div><p style="margin:8px 0 0;color:var(--text-soft);">The instructor is currently editing this record. It's still shown as Approved above and will re-lock once they finish.</p></div>` : ''}
     <div class="card">
-      ${marksViewTable(course)}
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
+        <div class="section-title" style="font-size:14px;">Marks</div>
+        ${['HOD','ADMIN'].includes(App.currentUser().systemRole) ? `<button class="btn ${hodEditOpen?'btn-outline':''} btn-sm" onclick="toggleHodMarksEdit('${course.id}')">${hodEditOpen ? 'Cancel Edit' : 'Edit Marks'}</button>` : ''}
+      </div>
+      ${marksViewTable(course, hodEditOpen)}
+      ${hodEditOpen ? `
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px;">
+          <button class="btn btn-outline" onclick="toggleHodMarksEdit('${course.id}')">Cancel</button>
+          <button class="btn btn-green" onclick="if(confirm('Save these marks and notify the Course Instructor by app notification and email?')) App.hodSaveMarksEdit('${course.id}')">Save Changes &amp; Notify CI</button>
+        </div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;flex-wrap:wrap;gap:10px;">
         <button class="btn-outline btn" onclick="openAuditModal('${course.id}')">View Audit Trail</button>
         ${actionable ? `
@@ -8545,15 +8693,19 @@ function renderCIComponentEntry(params){
   // Course-Coordinator-set deadline (see pracInternalDeadlinePassed) —
   // every other component here is unaffected by either gate.
   const seeLocked = section==='see' && seeEntryLocked();
-  const pracLocked = comp.key==='pracInternal' && pracInternalDeadlinePassed(course);
+  const pracNotStarted = comp.key==='pracInternal' && pracInternalNotYetStarted(course);
+  const pracEnded = comp.key==='pracInternal' && pracInternalDeadlinePassed(course);
+  const pracLocked = pracNotStarted || pracEnded;
   const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci') && !seeLocked && !pracLocked;
   const note = itemKey
     ? `Has its own CI → CC → EA → HOD verification chain — see the status card below.`
     : `No approval chain here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
   const lockBannerHtml = seeLocked
     ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">Sem-End Exam entry is locked while <strong>${escapeHtml(TERM_TEST_LABELS[App.state.currentTermTest.cycle]||App.state.currentTermTest.cycle)}</strong> is the active Term Test cycle. It opens once the Timetable Incharge closes the Term Test cycle out.</p></div>`
-    : pracLocked
-    ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">The Practical Internal Test marks-entry deadline (${escapeHtml(course.pracInternalDeadline)}, set by the Course Coordinator) has passed — entry is locked.</p></div>`
+    : pracNotStarted
+    ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">The Practical Internal Test marks-entry window hasn't opened yet — it starts at ${fmtDate(new Date(course.pracInternalStart).getTime())} (set by the Course Coordinator).</p></div>`
+    : pracEnded
+    ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">The Practical Internal Test marks-entry window closed at ${fmtDate(new Date(course.pracInternalDeadline).getTime())} (set by the Course Coordinator) — entry is locked.</p></div>`
     : '';
 
   const bodyHtml = comp.key==='sia' ? siaEntryHtml(course, comp, editable) : (()=>{
@@ -9225,16 +9377,25 @@ function renderCCTermTestSetup(params){
   // has no deadline here — it just stays open per its own normal gating.
   const pracComp = labInternalComponent(template);
   const pracDeadlinePassed = pracInternalDeadlinePassed(course);
+  const pracNotYetStarted = pracInternalNotYetStarted(course);
   const pracDeadlineHtml = pracComp ? `
     <div class="card">
-      <div class="section-title" style="font-size:14px;">Practical Internal Test — marks-entry deadline</div>
-      <p class="section-meta" style="margin-top:4px;">Optional. Once set, the Course Instructor can no longer enter or edit Practical Internal Test marks after this date. Every other component (Term Test, SIA, other CIE/SEE) has no such deadline and stays open as usual — this applies to Practical Internal Test only.</p>
-      <div style="display:flex;gap:10px;align-items:flex-end;margin-top:8px;flex-wrap:wrap;">
-        <div class="config-field" style="max-width:200px;"><label>Deadline</label><input type="date" id="pracdeadline-${course.id}" value="${course.pracInternalDeadline||''}"></div>
-        <button class="btn btn-sm" onclick="App.setPracInternalDeadline('${course.id}', document.getElementById('pracdeadline-${course.id}').value)">Save</button>
-        ${course.pracInternalDeadline ? `<button class="btn btn-outline btn-sm" onclick="App.setPracInternalDeadline('${course.id}', '')">Clear</button>` : ''}
+      <div class="section-title" style="font-size:14px;">Practical Internal Test — marks-entry window</div>
+      <p class="section-meta" style="margin-top:4px;">Optional. Set a starting time, an ending time, or both. Once set, the Course Instructor can only enter or edit Practical Internal Test marks between these two times — before the starting time (if set) and after the ending time (if set), entry is locked. Every other component (Term Test, SIA, other CIE/SEE) has no such window and stays open as usual — this applies to Practical Internal Test only.</p>
+      <div style="display:flex;gap:16px;align-items:flex-end;margin-top:8px;flex-wrap:wrap;">
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+          <div class="config-field" style="max-width:220px;"><label>Starting time</label><input type="datetime-local" id="pracstart-${course.id}" value="${course.pracInternalStart||''}"></div>
+          <button class="btn btn-sm" onclick="App.setPracInternalStart('${course.id}', document.getElementById('pracstart-${course.id}').value)">Save</button>
+          ${course.pracInternalStart ? `<button class="btn btn-outline btn-sm" onclick="App.setPracInternalStart('${course.id}', '')">Clear</button>` : ''}
+        </div>
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+          <div class="config-field" style="max-width:220px;"><label>Ending time</label><input type="datetime-local" id="pracdeadline-${course.id}" value="${course.pracInternalDeadline||''}"></div>
+          <button class="btn btn-sm" onclick="App.setPracInternalDeadline('${course.id}', document.getElementById('pracdeadline-${course.id}').value)">Save</button>
+          ${course.pracInternalDeadline ? `<button class="btn btn-outline btn-sm" onclick="App.setPracInternalDeadline('${course.id}', '')">Clear</button>` : ''}
+        </div>
       </div>
-      ${course.pracInternalDeadline ? `<p class="section-meta" style="margin-top:8px;${pracDeadlinePassed?'color:var(--seal-red);':''}">${pracDeadlinePassed ? `Deadline (${escapeHtml(course.pracInternalDeadline)}) has passed — Practical Internal Test entry is now locked for the Course Instructor.` : `Currently set to ${escapeHtml(course.pracInternalDeadline)}.`}</p>` : ''}
+      ${course.pracInternalStart ? `<p class="section-meta" style="margin-top:8px;${pracNotYetStarted?'color:var(--warn);':''}">${pracNotYetStarted ? `Starting time (${fmtDate(new Date(course.pracInternalStart).getTime())}) hasn't arrived yet — Practical Internal Test entry is locked for the Course Instructor until then.` : `Opened from ${fmtDate(new Date(course.pracInternalStart).getTime())}.`}</p>` : ''}
+      ${course.pracInternalDeadline ? `<p class="section-meta" style="margin-top:4px;${pracDeadlinePassed?'color:var(--seal-red);':''}">${pracDeadlinePassed ? `Ending time (${fmtDate(new Date(course.pracInternalDeadline).getTime())}) has passed — Practical Internal Test entry is now locked for the Course Instructor.` : `Currently closes at ${fmtDate(new Date(course.pracInternalDeadline).getTime())}.`}</p>` : ''}
     </div>` : '';
 
   const cycles = ['TT1','TT2'].filter(cycle=>termTestComponentKey(template, cycle));
