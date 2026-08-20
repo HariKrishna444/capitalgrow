@@ -534,6 +534,13 @@ table.data-table{
 .data-table input[type=number]:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
 .data-table input.invalid{border-color:var(--seal-red);background:#FEF2F2;}
 .total-cell{font-family:'IBM Plex Mono', monospace;font-weight:600;color:var(--ink);}
+/* Strong border highlight for the Part A / Part B / overall Total Marks
+   columns on the Term Test entry table, so those totals stand out visually
+   from the individual question-score columns around them. */
+.data-table th.hl-total{border-left:3px solid var(--warn) !important;border-right:3px solid var(--warn) !important;}
+.data-table td.hl-total{border-left:3px solid var(--warn) !important;border-right:3px solid var(--warn) !important;background:rgba(200,133,10,0.08);}
+.data-table tbody tr:last-child td.hl-total{border-bottom:3px solid var(--warn) !important;}
+.data-table thead tr:first-child th.hl-total{border-top:3px solid var(--warn) !important;}
 
 .empty-state{
   padding:44px 22px;text-align:center;color:var(--text-soft);
@@ -5375,31 +5382,38 @@ function marksEntryTabs(course){
    existing generic scaling pipeline (see computeCIE / the /rawMax*scaledMax
    formula) — no other code needs to know the entry happened unit-wise. */
 function siaEntryHtml(course, comp, editable){
-  const unitCount = Math.max(1, Math.round(comp.rawMax/10));
+  // SIA is always entered as 5 unit columns of /10 each (Unit 1–Unit 5 =
+  // 50 raw total), regardless of the Evaluation Type's configured rawMax
+  // for this component — the raw total is then scaled down to
+  // comp.scaledMax using 50 as the fixed denominator, so the same 5-column
+  // entry works the same way across every Evaluation Type.
+  const UNIT_COUNT = 5;
+  const UNIT_MAX = 10;
+  const RAW_TOTAL_MAX = UNIT_COUNT * UNIT_MAX; // 50
   const rows = course.students.map(s=>{
     const detail = (s.marks.siaDetail)||{};
-    const cells = Array.from({length:unitCount}, (_,i)=>{
+    const cells = Array.from({length:UNIT_COUNT}, (_,i)=>{
       const idx = i+1;
       const val = detail['unit'+idx];
-      const overMax = typeof val==='number' && (val>10 || val<0);
-      return `<td><input type="number" min="0" max="10" step="0.5" style="width:56px;"
+      const overMax = typeof val==='number' && (val>UNIT_MAX || val<0);
+      return `<td><input type="number" min="0" max="${UNIT_MAX}" step="0.5" style="width:56px;"
         class="${overMax?'invalid':''}"
         data-markkey="${course.id}|${s.id}|sia${idx}"
-        value="${val===undefined||val===null?'':val}" placeholder="/10" ${editable?'':'disabled'}
+        value="${val===undefined||val===null?'':val}" placeholder="/${UNIT_MAX}" ${editable?'':'disabled'}
         onchange="App.setSiaUnitMark('${course.id}','${s.id}','${comp.key}',${idx},this.value)"></td>`;
     }).join('');
     const rawTotal = typeof s.marks[comp.key]==='number' ? s.marks[comp.key] : 0;
-    const scaled = round1((Math.min(rawTotal, comp.rawMax)/comp.rawMax) * comp.scaledMax);
-    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${rawTotal}/${comp.rawMax}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
+    const scaled = round1((Math.min(rawTotal, RAW_TOTAL_MAX)/RAW_TOTAL_MAX) * comp.scaledMax);
+    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${rawTotal}/${RAW_TOTAL_MAX}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
   }).join('');
-  const unitHead = Array.from({length:unitCount}, (_,i)=>{
+  const unitHead = Array.from({length:UNIT_COUNT}, (_,i)=>{
     const label = TT_UNIT_OPTIONS[i] || `Unit ${i+1}`;
     const color = unitBandColor(label);
-    return `<th style="background:${color};color:var(--ink);">${escapeHtml(label)}<br><span style="text-transform:none;">/10</span></th>`;
+    return `<th style="background:${color};color:var(--ink);">${escapeHtml(label)}<br><span style="text-transform:none;">/${UNIT_MAX}</span></th>`;
   }).join('');
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">${escapeHtml(comp.label)} — unit-wise entry</div>
-    <p class="section-meta" style="margin-top:4px;">Enter each unit's score out of 10 (${unitCount} unit${unitCount===1?'':'s'} = ${comp.rawMax} raw), automatically scaled down to /${comp.scaledMax} for the CIE total.</p>
+    <p class="section-meta" style="margin-top:4px;">Enter each unit's score out of ${UNIT_MAX} (${UNIT_COUNT} units = ${RAW_TOTAL_MAX} raw), automatically scaled down to /${comp.scaledMax} for the CIE total.</p>
     <div class="table-scroll" style="margin-top:8px;"><table class="data-table"><thead><tr><th>Student</th>${unitHead}<th>Raw Total</th><th>Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
@@ -8469,10 +8483,10 @@ function renderCITermTestEntry(params){
     return `<tr>
       <td>${studentNameCell(s)}</td>
       ${shortCells}
-      <td class="total-cell">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
+      <td class="total-cell hl-total">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
       ${longCells}
-      <td class="total-cell">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
-      <td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
+      <td class="total-cell hl-total">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
+      <td class="total-cell hl-total">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
       <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
       <td>${ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
     </tr>`;
@@ -8545,10 +8559,10 @@ function renderCITermTestEntry(params){
             <tr>
               <th rowspan="3" style="vertical-align:middle;">Student</th>
               <th colspan="${TT_SHORT_KEYS.length}" style="text-align:center;background:var(--brass);color:#fff;">Part A</th>
-              <th rowspan="3" style="vertical-align:middle;">Part A<br>Total</th>
+              <th rowspan="3" class="hl-total" style="vertical-align:middle;">Part A<br>Total</th>
               <th colspan="${TT_ALL_LONG_QKEYS.length}" style="text-align:center;background:var(--brass);color:#fff;">Part B</th>
-              <th rowspan="3" style="vertical-align:middle;">Part B<br>Total</th>
-              <th rowspan="3" style="vertical-align:middle;">Term Test<br>Total</th>
+              <th rowspan="3" class="hl-total" style="vertical-align:middle;">Part B<br>Total</th>
+              <th rowspan="3" class="hl-total" style="vertical-align:middle;">Term Test<br>Total</th>
               <th rowspan="3" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
               <th rowspan="3" style="vertical-align:middle;">Evaluated<br>Script</th>
             </tr>
