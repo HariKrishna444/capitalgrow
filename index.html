@@ -852,7 +852,7 @@ function branchesForRegulation(regulation){
    CSE & CSC (Cyber Security) share the same subjects, sections B1-B3;
    AIML & CSD (Data Science) share the same subjects, sections B5-B11;
    ERP is its own thing — different subjects entirely, assigned directly by
-   the Timetable Incharge rather than through the Course Coordinator's
+   the Administrator rather than through the Course Coordinator's
    Subject Catalog flow, and only ever has one section, B4. */
 function rangeOf(prefix, start, end){ const out=[]; for(let i=start;i<=end;i++) out.push(prefix+i); return out; }
 const SECTION_RANGES = {
@@ -1232,7 +1232,7 @@ function otherSeeComponents(template){
    periodFinished in renderCITermTestEntry). On top of that: for as long as
    ANY Term Test cycle (TT1 or TT2) is fixed as active, Sem-End Exam entry
    (SEE Practical, and any SEE Theory shown here) is also locked — SEE
-   assessment only opens once the Timetable Incharge closes the Term Test
+   assessment only opens once the Administrator closes the Term Test
    cycle out entirely (currentTermTest goes back to null). This does not
    touch CIE components (Term Test itself, Practical Internal Test, SIA,
    etc.), which keep their own independent gating. */
@@ -1538,7 +1538,7 @@ function itemActionBarHtml(course, itemKey, editable){
   </div>`;
 }
 /* Term Test's own action bar — unlike the other flow items, TT1/TT2 have a
-   fixed entry PERIOD (the Timetable Incharge's start/end window). While
+   fixed entry PERIOD (the Administrator's start/end window). While
    that period is still open, only Save Progress is offered — the CI isn't
    meant to forward mid-window, since more marks may still change. Forward
    to Course Coordinator only appears (and is only enabled) once the period
@@ -2644,7 +2644,7 @@ window.addEventListener('hashchange', ()=>{
 const ROLE_ALLOWED_VIEWS = {
   ADMIN: ['admin-users','admin-course-reg','hod-coordinators','hod-termtest','hod-cc-detail','admin-seating-plan'],
   HOD: ['hod-list','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview','ci-termtest-entry','ci-component-entry'],
-  TTI: ['hod-coordinators','hod-termtest','hod-cc-detail','hod-faculty'],
+  TTI: ['hod-coordinators','hod-cc-detail','hod-faculty'],
   EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
   FACULTY: ['ci-sections','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
@@ -2686,6 +2686,24 @@ function canViewItemEntry(course, itemKey){
   const ia = itemKey ? App.itemApproval(course.id, itemKey) : null;
   if(ia && ia.stage==='ea' && actor.systemRole==='EA') return true;
   if(ia && ia.stage==='hod' && actor.systemRole==='HOD') return true;
+  return false;
+}
+/* Per-student CC/EA/HOD remark columns on the Term Test (TT1/TT2) marks
+   entry table — a free-text note about one particular student (e.g. "recheck
+   Q7", "absent — condoned"), separate from the whole-record verification
+   remarks used elsewhere. Each role's box is editable only by that role
+   (matching who's allowed to actually open this page at all per
+   canViewItemEntry — EA/HOD only while it's sitting at their own stage) or
+   by ADMIN; everyone who can view the page can still read all three. */
+function canEditTTStudentRemark(course, itemKey, role){
+  if(!course) return false;
+  const actor = App.currentUser();
+  if(!actor) return false;
+  if(actor.systemRole==='ADMIN') return true;
+  const ia = itemKey ? App.itemApproval(course.id, itemKey) : null;
+  if(role==='cc') return getCourseCCUser(course.id)?.id === actor.id;
+  if(role==='ea') return actor.systemRole==='EA' && !!ia && ia.stage==='ea';
+  if(role==='hod') return actor.systemRole==='HOD' && !!ia && ia.stage==='hod';
   return false;
 }
 /* Where the "← Back" button on a shared item-entry page (Term Test or a
@@ -3613,6 +3631,12 @@ const App = {
       ia.stage = 'cc';
       const ccAssignee = getActiveAssignment(courseId,'CC');
       if(ccAssignee) this.notifyUser(ccAssignee.userId, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Instructor.`, true, null, itemEntryLink(course, itemKey));
+      // Also let the EA and HOD know right away that the CI has submitted —
+      // not just once it actually reaches their own stage — so it shows up
+      // on their notification bell as soon as it happens, giving them early
+      // visibility into the department's marks-entry progress.
+      this.state.users.filter(u=>u.systemRole==='EA').forEach(u=>this.notifyUser(u.id, course, `${label} submitted by Course Instructor`, `${course.code} — ${label} marks have been submitted by the Course Instructor and forwarded to the Course Coordinator for verification.`, true, null, itemEntryLink(course, itemKey)));
+      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} submitted by Course Instructor`, `${course.code} — ${label} marks have been submitted by the Course Instructor and forwarded to the Course Coordinator for verification.`, true, null, itemEntryLink(course, itemKey)));
     } else if(ia.stage==='cc'){
       const ccUser = getCourseCCUser(courseId);
       if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can forward this.', 'err'); return; }
@@ -3825,8 +3849,10 @@ const App = {
     this.navigate('hod-list');
   },
 
-  /* ---------- Timetable Incharge/Admin: fix the active Academic Year +
+  /* ---------- Admin only: fix the active Academic Year +
      Semester + examination cycle (Term Test 1/2/3), visible to every role.
+     Fixing this cycle is an Administrator-only action — the Timetable
+     Incharge and Course Coordinator no longer have any say over it. 
      Only one cycle can be active at a time — fixing a new one automatically
      supersedes whatever was active before, so e.g. enabling TT2 disables
      TT1 (its marks-entry table drops to read-only everywhere it's open).
@@ -3835,7 +3861,7 @@ const App = {
      explicitly closes the cycle. ---------- */
   setTermTest(academicYear, semester, cycle, startDate=null, endDate=null){
     const actor = this.currentUser();
-    if(!['ADMIN','TTI'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can fix the examination cycle.', 'err'); return; }
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can fix the examination cycle.', 'err'); return; }
     if(!ACADEMIC_YEARS.includes(academicYear)){ toast('Choose an Academic Year.', 'err'); return; }
     if(!SEMESTER_LABELS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
     if(!TERM_TEST_LABELS[cycle]){ toast('Choose a valid term test.', 'err'); return; }
@@ -3865,12 +3891,12 @@ const App = {
     renderBell();
   },
   /* Manually shuts off the active cycle (sets it back to "not set") so
-     nobody can enter marks against any Term Test until the Timetable
-     Incharge fixes the next one — the explicit "we're done, lock it"
+     nobody can enter marks against any Term Test until the Administrator
+     fixes the next one — the explicit "we're done, lock it"
      action, separate from letting the time window simply expire. */
   closeTermTestCycle(){
     const actor = this.currentUser();
-    if(!['ADMIN','TTI'].includes(actor.systemRole)){ toast('Only the Timetable Incharge or an Administrator can close the examination cycle.', 'err'); return; }
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can close the examination cycle.', 'err'); return; }
     const cur = this.state.currentTermTest;
     if(!cur){ toast('No cycle is currently active.', 'err'); return; }
     const label = `${cur.academicYear} · ${cur.semester} · ${TERM_TEST_LABELS[cur.cycle]}`;
@@ -3999,6 +4025,26 @@ const App = {
     if(compKey) s.marks[compKey] = calc.total;
     syncStudent(courseId, s);
     renderContent();
+  },
+
+  /* ---------- CC/EA/HOD: per-student remark on the Term Test entry table
+     (one free-text note per role per student, e.g. flagging a particular
+     answer script for a recheck) — kept in s.marks.ttRemarks[cycle][role]
+     alongside the marks themselves so it rides along on the same student
+     sync. Distinct from the whole-record verification remarks (eaRemark,
+     lastRemark, etc); this one is about one student, not the whole class. */
+  setTermTestStudentRemark(courseId, studentId, cycle, itemKey, role, value){
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    if(!['cc','ea','hod'].includes(role)) return;
+    if(!canEditTTStudentRemark(course, itemKey, role)){ toast('You\'re not allowed to enter this remark right now.', 'err'); return; }
+    const s = (course.students||[]).find(x=>x.id===studentId);
+    if(!s) return;
+    s.marks = s.marks || {};
+    s.marks.ttRemarks = s.marks.ttRemarks || {};
+    s.marks.ttRemarks[cycle] = s.marks.ttRemarks[cycle] || {};
+    s.marks.ttRemarks[cycle][role] = (value||'').trim();
+    syncStudent(courseId, s);
   },
 
   /* ---------- CI: SIA unit-wise entry — sums the per-unit /10 scores into
@@ -4592,7 +4638,6 @@ function getNavForUser(user){
   ];
   if(user.systemRole==='TTI') return [
     {v:'hod-coordinators', label:'Manage Coordinators'},
-    {v:'hod-termtest', label:'Term Test Cycle'},
     {v:'hod-faculty', label:'Faculty Directory'},
   ];
   if(user.systemRole==='EA') return [
@@ -7426,8 +7471,7 @@ function renderHODCCDetail(params){
 }
 
 function renderHODTermTest(){
-  const actor = App.currentUser();
-  const eyebrow = actor.systemRole==='TTI' ? 'Timetable Incharge' : 'Administrator';
+  const eyebrow = 'Administrator';
   const current = App.state.currentTermTest;
   const history = App.state.termTestHistory || [];
   const wrap = el('<div></div>');
@@ -8153,7 +8197,7 @@ function renderCISubjectDetail(params){
   if(!isCourseOwnerCI(course)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
   const enterMode = course.status==='draft' || course.editUnlocked;
   const template = course.evalType ? getCourseTemplate(course) : null;
-  // Only the Term Test cycle the Timetable Incharge currently has fixed as
+  // Only the Term Test cycle the Administrator currently has fixed as
   // active is open here — e.g. while TT1 is active, "Enter Term Test 2"
   // stays disabled (and vice versa), so the CI can't get ahead of the
   // cycle that's actually been opened for the whole department.
@@ -8261,7 +8305,7 @@ function renderCITermTestSections(params={}){
   const { ciCourses } = getFacultyCourses(user.id);
   const tt = App.state.currentTermTest;
   const activeCycle = tt?.cycle || null;
-  // Only the cycle the Timetable Incharge currently has fixed as active is
+  // Only the cycle the Administrator currently has fixed as active is
   // open for entry — e.g. while TT1 is active, TT2's "Open Answer Sheet"
   // stays disabled, and vice versa, so the CI can't get ahead of the cycle
   // that's actually open for the whole department.
@@ -8317,6 +8361,18 @@ function renderCITermTestSections(params={}){
   return wrap;
 }
 function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
+/* One <td> of the CC/EA/HOD per-student remark trio at the end of the Term
+   Test entry table — see canEditTTStudentRemark for who can type into it. */
+function ttStudentRemarkCell(course, itemKey, cycle, s, role){
+  const val = (((s.marks||{}).ttRemarks||{})[cycle]||{})[role] || '';
+  const canEdit = canEditTTStudentRemark(course, itemKey, role);
+  const roleLabel = role==='cc' ? 'CC' : role==='ea' ? 'EA' : 'HOD';
+  return `<td><input type="text" style="width:130px;padding:5px 7px;font-size:12.5px;border:1px solid var(--rule);border-radius:6px;background:${canEdit?'#fff':'var(--parchment-2)'};"
+    placeholder="${roleLabel} remark" title="${roleLabel} remark for ${escapeHtml(s.name)}"
+    data-markkey="${course.id}|${s.id}|${cycle}_remark_${role}"
+    value="${escapeHtml(val)}" ${canEdit?'':'disabled'}
+    onchange="App.setTermTestStudentRemark('${course.id}','${s.id}','${cycle}','${itemKey}','${role}',this.value)"></td>`;
+}
 /* Structured Term Test entry — Q1-Q5 short answers (2 marks each) then
    Q6-Q11 long answers in 3 unit-paired choice questions, each split into
    parts (a)/(b). Both sides of a pair stay editable — the CI can enter
@@ -8358,7 +8414,7 @@ function renderCITermTestEntry(params){
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const forwarded = isTTForwarded(course, cycle);
   const ia = App.itemApproval(course.id, itemKey) || { stage:'ci', remark:'' };
-  // Mutual exclusivity: only the cycle the Timetable Incharge currently has
+  // Mutual exclusivity: only the cycle the Administrator currently has
   // fixed is open for entry — if they've since moved on to another cycle
   // (or closed it outright), this one drops to read-only even mid-way
   // through, same as if the CI had already forwarded it.
@@ -8376,14 +8432,14 @@ function renderCITermTestEntry(params){
   // know WHO is looking, only what stage the item is at.
   const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && cycleIsActive && withinWindow;
   // The marks-entry PERIOD is considered finished once the window has
-  // closed (endDate passed) or the Timetable Incharge has moved the active
+  // closed (endDate passed) or the Administrator has moved the active
   // cycle on — at that point the CI can no longer edit marks, but (if they
   // haven't forwarded yet) they can now forward what they have on to the CC.
   // While the period is still open, only Save Progress is available; the
   // CI is not meant to forward mid-entry.
   const periodFinished = !cycleIsActive || !withinWindow;
   const lockBannerHtml = !cycleIsActive
-    ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">The Timetable Incharge has moved the active cycle to <strong>${escapeHtml(TERM_TEST_LABELS[tt.cycle]||tt.cycle)}</strong> — ${escapeHtml(cycleLabel)} is now read-only here.</p>`
+    ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">The Administrator has moved the active cycle to <strong>${escapeHtml(TERM_TEST_LABELS[tt.cycle]||tt.cycle)}</strong> — ${escapeHtml(cycleLabel)} is now read-only here.</p>`
     : (!withinWindow ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">${startTs && nowTs<startTs ? `The marks-entry window for ${escapeHtml(cycleLabel)} opens ${fmtDate(startTs)}.` : `The marks-entry window for ${escapeHtml(cycleLabel)} closed ${endTs?fmtDate(endTs):''} — no further edits are allowed.`}</p>` : '');
   const comp = template.cie.find(c=>c.key===compKey);
 
@@ -8475,6 +8531,9 @@ function renderCITermTestEntry(params){
       <td class="total-cell hl-total">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
       <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
       <td>${ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
+      ${ttStudentRemarkCell(course, itemKey, cycle, s, 'cc')}
+      ${ttStudentRemarkCell(course, itemKey, cycle, s, 'ea')}
+      ${ttStudentRemarkCell(course, itemKey, cycle, s, 'hod')}
     </tr>`;
   }).join('');
 
@@ -8551,6 +8610,9 @@ function renderCITermTestEntry(params){
               <th rowspan="3" class="hl-total" style="vertical-align:middle;">Term Test<br>Total</th>
               <th rowspan="3" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
               <th rowspan="3" style="vertical-align:middle;">Evaluated<br>Script</th>
+              <th rowspan="3" style="vertical-align:middle;">CC<br>Remark</th>
+              <th rowspan="3" style="vertical-align:middle;">EA<br>Remark</th>
+              <th rowspan="3" style="vertical-align:middle;">HOD<br>Remark</th>
             </tr>
             <tr>${shortHeadGrp.top}${longHeadGrp.top}</tr>
             <tr>${shortHeadGrp.sub}${longHeadGrp.sub}</tr>
@@ -8688,7 +8750,7 @@ function renderCIComponentEntry(params){
   // see live, typeable mark boxes instead of a read-only view.
   // SEE (Sem-End Exam) entry — SEE Practical, and any SEE Theory shown here
   // — is locked for as long as a Term Test cycle (TT1 or TT2) is currently
-  // fixed as active; it only opens once the Timetable Incharge closes the
+  // fixed as active; it only opens once the Administrator closes the
   // Term Test cycle out. Practical Internal Test has its own, separate
   // Course-Coordinator-set deadline (see pracInternalDeadlinePassed) —
   // every other component here is unaffected by either gate.
@@ -8701,7 +8763,7 @@ function renderCIComponentEntry(params){
     ? `Has its own CI → CC → EA → HOD verification chain — see the status card below.`
     : `No approval chain here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
   const lockBannerHtml = seeLocked
-    ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">Sem-End Exam entry is locked while <strong>${escapeHtml(TERM_TEST_LABELS[App.state.currentTermTest.cycle]||App.state.currentTermTest.cycle)}</strong> is the active Term Test cycle. It opens once the Timetable Incharge closes the Term Test cycle out.</p></div>`
+    ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">Sem-End Exam entry is locked while <strong>${escapeHtml(TERM_TEST_LABELS[App.state.currentTermTest.cycle]||App.state.currentTermTest.cycle)}</strong> is the active Term Test cycle. It opens once the Administrator closes the Term Test cycle out.</p></div>`
     : pracNotStarted
     ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">The Practical Internal Test marks-entry window hasn't opened yet — it starts at ${fmtDate(new Date(course.pracInternalStart).getTime())} (set by the Course Coordinator).</p></div>`
     : pracEnded
