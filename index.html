@@ -1513,13 +1513,23 @@ function itemApprovalStatusHtml(course, itemKey){
   if(!ia) return '';
   const actor = App.currentUser();
   const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
-  const canAct =
+  const canForward =
     (ia.stage==='cc' && (getCourseCCUser(course.id)?.id===actor.id || actor.systemRole==='ADMIN')) ||
     (ia.stage==='ea' && (actor.systemRole==='EA' || actor.systemRole==='ADMIN')) ||
     (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN'));
-  const actionHtml = canAct ? `<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
-      <button class="btn btn-red btn-sm" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${course.id}','${itemKey}', r);">Send Back to CI</button>
-      <button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${ia.stage==='hod' ? 'Approve' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>
+  // The Course Coordinator does NOT get a "Send Back to CI" button — instead
+  // they flag a problem on a particular student via the CC Remark column
+  // (see ttStudentRemarkCell) and simply forward on, leaving the actual
+  // send-back-or-not call to the Executive Assistant / HOD once they've
+  // reviewed those remarks. So only EA/HOD (or an Admin, as a general
+  // override) can send an item back to the CI.
+  const canSendBack =
+    (ia.stage==='ea' && (actor.systemRole==='EA' || actor.systemRole==='ADMIN')) ||
+    (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN')) ||
+    (ia.stage==='cc' && actor.systemRole==='ADMIN');
+  const actionHtml = (canForward || canSendBack) ? `<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+      ${canSendBack ? `<button class="btn btn-red btn-sm" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${course.id}','${itemKey}', r);">Send Back to CI</button>` : ''}
+      ${canForward ? `<button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${ia.stage==='hod' ? 'Approve' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>` : ''}
     </div>` : '';
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">${escapeHtml(label)} — Verification Status</div>
@@ -1538,12 +1548,14 @@ function itemActionBarHtml(course, itemKey, editable){
   </div>`;
 }
 /* Term Test's own action bar — unlike the other flow items, TT1/TT2 have a
-   fixed entry PERIOD (the Administrator's start/end window). While
-   that period is still open, only Save Progress is offered — the CI isn't
-   meant to forward mid-window, since more marks may still change. Forward
-   to Course Coordinator only appears (and is only enabled) once the period
-   has finished, and stays available even after entry itself has gone
-   read-only, so long as it's still sitting at the CI's stage.
+   fixed entry PERIOD (the Administrator's start/end window). Forward to
+   Course Coordinator is now available any time it's the CI's turn — even
+   mid-window, before the period itself has finished — so a CI who's done
+   entering marks can send them on for verification right away instead of
+   sitting on them until the window closes. This is what actually gets
+   marks into the CC/EA/HOD pipeline sooner. It stays available after entry
+   has gone read-only (period finished) too, so long as it's still sitting
+   at the CI's stage.
    This bar is for the CI only. canViewItemEntry() also lets the assigned
    CC (and EA/HOD at their own stage) open this same page — so without an
    explicit ownership check here, a Course Coordinator viewing their own
@@ -1558,12 +1570,10 @@ function termTestActionBarHtml(course, itemKey, editable, periodFinished, ia){
   const inCIWindow = course.status==='draft' || correctionMode;
   if(!stillCIsTurn || !inCIWindow || !(editable || periodFinished)) return '';
   const saveBtn = editable ? `<button class="btn btn-outline btn-sm" onclick="App.saveItemProgress('${course.id}')">Save Progress</button>` : '';
-  const forwardBtn = periodFinished
-    ? `<button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>`
-    : `<button class="btn btn-sm" style="opacity:.5;cursor:not-allowed;" disabled title="Available once the Term Test entry period finishes">Forward to Course Coordinator</button>`;
+  const forwardBtn = `<button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>`;
   return `<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;">
     ${saveBtn}${forwardBtn}
-    ${!periodFinished ? `<span class="section-meta" style="font-size:12px;">Forwarding unlocks once the Term Test entry period finishes.</span>` : ''}
+    ${!periodFinished ? `<span class="section-meta" style="font-size:12px;">Forwarding early — verification by the Course Coordinator can start right away, before the entry period ends.</span>` : ''}
   </div>`;
 }
 
@@ -2779,6 +2789,12 @@ const App = {
     const target = pending || { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
     this.navigate(target.view, target.params);
     renderBell();
+    // Passive catch for the case nobody explicitly closed the cycle: if its
+    // own end-time has already quietly passed, run the same delay sweep
+    // that an explicit close triggers. sweepTermTestDelays is itself
+    // idempotent (delayNotified guards each item), so this is safe to run
+    // on every login without re-notifying anyone.
+    this.checkTermTestWindowExpiry();
   },
   async logout(){
     try{ await sb.auth.signOut(); }catch(e){ console.warn('sign-out failed', e); }
@@ -3665,9 +3681,12 @@ const App = {
     const ia = this.itemApproval(courseId, itemKey);
     const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
     if(ia.stage==='ci' || ia.stage==='done'){ toast('Nothing to send back from here.', 'err'); return; }
+    // Course Coordinators don't send items back to the CI — that's an
+    // Executive Assistant/HOD call (or an Admin override). A CC flags a
+    // problem with a particular student via that student's CC Remark box
+    // instead, then forwards on as normal.
     if(ia.stage==='cc'){
-      const ccUser = getCourseCCUser(courseId);
-      if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can send this back.', 'err'); return; }
+      if(actor.systemRole!=='ADMIN'){ toast('Course Coordinators don\'t send items back — add a CC Remark for the student instead and forward it on; the Executive Assistant or HOD can send it back to the Course Instructor.', 'err'); return; }
     } else if(ia.stage==='ea' && actor.systemRole!=='EA' && actor.systemRole!=='ADMIN'){ toast('Only the Executive Assistant can send this back.', 'err'); return; }
     else if(ia.stage==='hod' && actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can send this back.', 'err'); return; }
     if(!remark || !remark.trim()){ toast('A remark is required so the Course Instructor knows what to fix.', 'err'); return; }
@@ -3900,6 +3919,11 @@ const App = {
     const cur = this.state.currentTermTest;
     if(!cur){ toast('No cycle is currently active.', 'err'); return; }
     const label = `${cur.academicYear} · ${cur.semester} · ${TERM_TEST_LABELS[cur.cycle]}`;
+    // Before wiping it out, sweep every section for one whose CI never
+    // forwarded this cycle's marks in time — those get a delay notification
+    // of their own (see sweepTermTestDelays) so the gap doesn't just
+    // disappear along with the closed cycle.
+    this.sweepTermTestDelays(cur);
     this.state.currentTermTest = null;
     syncAppSetting('current_term_test', null);
     this.state.termTestHistory = this.state.termTestHistory || [];
@@ -3917,6 +3941,64 @@ const App = {
     renderContent();
     renderBell();
   },
+
+  /* ---------- Delay sweep: flags every course-section whose CI never
+     forwarded TT1/TT2 marks before that cycle's entry window ended, and
+     sends one notification each to that section's Course Coordinator, every
+     HOD, and every Administrator, so a forgotten submission surfaces on
+     their dashboard notification bell instead of silently sitting there.
+     Guarded by itemApprovals[itemKey].delayNotified so each item only ever
+     fires this once, however many times the sweep itself runs. Called (a)
+     the moment the Administrator explicitly closes the cycle, and (b)
+     passively on login if the window's own end time has already quietly
+     passed without anyone closing it (see checkTermTestWindowExpiry). ---------- */
+  sweepTermTestDelays(cycleInfo){
+    if(!cycleInfo || !cycleInfo.cycle) return;
+    const itemKey = cycleInfo.cycle==='TT1' ? 'tt1' : cycleInfo.cycle==='TT2' ? 'tt2' : null;
+    if(!itemKey) return;
+    const cycleLabel = TERM_TEST_LABELS[cycleInfo.cycle] || cycleInfo.cycle;
+    const hodUsers = this.state.users.filter(u=>u.systemRole==='HOD');
+    const adminUsers = this.state.users.filter(u=>u.systemRole==='ADMIN');
+    let flaggedAny = false;
+    this.state.courses.forEach(course=>{
+      if(!course.evalType) return;
+      const template = getCourseTemplate(course);
+      const compKey = template ? termTestComponentKey(template, cycleInfo.cycle) : null;
+      if(!compKey) return; // this cycle isn't part of the section's Evaluation Type
+      if(!isTTForwarded(course, cycleInfo.cycle)) return; // CC never even forwarded the paper setup, so there was nothing for the CI to act on
+      course.itemApprovals = course.itemApprovals || {};
+      const ia = course.itemApprovals[itemKey];
+      if(!ia || ia.stage!=='ci' || ia.delayNotified) return; // already forwarded on, or already flagged once
+      ia.delayNotified = true;
+      flaggedAny = true;
+      const ciUser = getCourseCIUser(course.id);
+      const ccUser = getCourseCCUser(course.id);
+      const title = `${cycleLabel} marks not submitted — ${course.code}`;
+      const body = `${course.code} — ${course.name}: ${cycleLabel} marks were not forwarded${ciUser ? ` by ${ciUser.name} (Course Instructor)` : ''} before the entry period ended.\n\nOpen it in DVS: ${buildAppLink('cc-list',{})}`;
+      const targetIds = new Set();
+      if(ccUser) targetIds.add(ccUser.id);
+      hodUsers.forEach(u=>targetIds.add(u.id));
+      adminUsers.forEach(u=>targetIds.add(u.id));
+      targetIds.forEach(uid=>{
+        const n = { id:bizId('NOTE', ['DELAY', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:uid, courseId:course.id, title, body, ts:Date.now(), read:false };
+        this.state.notifications.unshift(n);
+        syncNotification(n);
+      });
+      syncCourse(course);
+    });
+    if(flaggedAny) renderBell();
+  },
+  /* Passive companion to sweepTermTestDelays — if the active cycle's own
+     end-time has already gone by (nobody explicitly closed it), run the
+     sweep anyway so a forgotten CI submission still gets caught. Does NOT
+     touch currentTermTest itself — the window's expiry already makes entry
+     read-only everywhere on its own; this only fires the notifications. */
+  checkTermTestWindowExpiry(){
+    const cur = this.state.currentTermTest;
+    if(!cur || !cur.cycle || !cur.endDate) return;
+    if(Date.now() > new Date(cur.endDate).getTime()) this.sweepTermTestDelays(cur);
+  },
+
 
 
   /* ---------- CI: save one answer-cell of the structured Term Test entry
@@ -8414,10 +8496,19 @@ function renderCITermTestEntry(params){
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const forwarded = isTTForwarded(course, cycle);
   const ia = App.itemApproval(course.id, itemKey) || { stage:'ci', remark:'' };
+  // If the EA/HOD has just sent this item back to the CI for correction,
+  // the CI needs to be able to fix it even if the Term Test cycle has since
+  // moved on (Administrator fixed the next cycle) or the entry window has
+  // closed — otherwise a send-back would leave the CI with no way to act on
+  // it at all. This mirrors correctionMode above (the Overall record's own
+  // "reopen for editing" escape hatch), scoped to just this one item.
+  const sentBackForCorrection = ia.stage==='ci' && !!ia.remark;
   // Mutual exclusivity: only the cycle the Administrator currently has
   // fixed is open for entry — if they've since moved on to another cycle
   // (or closed it outright), this one drops to read-only even mid-way
-  // through, same as if the CI had already forwarded it.
+  // through, same as if the CI had already forwarded it. Unless this item
+  // was just sent back for correction (see sentBackForCorrection above), in
+  // which case that lock is lifted so the CI can actually fix it.
   const cycleIsActive = tt.cycle === cycle;
   const startTs = tt.startDate ? new Date(tt.startDate).getTime() : null;
   const endTs = tt.endDate ? new Date(tt.endDate).getTime() : null;
@@ -8430,17 +8521,19 @@ function renderCITermTestEntry(params){
   // stage would see every mark box as editable (and be able to type into
   // them) instead of read-only, since the stage/window checks below don't
   // know WHO is looking, only what stage the item is at.
-  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && cycleIsActive && withinWindow;
+  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && (sentBackForCorrection || (cycleIsActive && withinWindow));
   // The marks-entry PERIOD is considered finished once the window has
   // closed (endDate passed) or the Administrator has moved the active
   // cycle on — at that point the CI can no longer edit marks, but (if they
   // haven't forwarded yet) they can now forward what they have on to the CC.
   // While the period is still open, only Save Progress is available; the
-  // CI is not meant to forward mid-entry.
-  const periodFinished = !cycleIsActive || !withinWindow;
-  const lockBannerHtml = !cycleIsActive
+  // CI is not meant to forward mid-entry. A send-back for correction always
+  // counts as "finished" too — the CI can fix the flagged issue and forward
+  // it straight back on, without waiting for the cycle window itself.
+  const periodFinished = sentBackForCorrection || !cycleIsActive || !withinWindow;
+  const lockBannerHtml = sentBackForCorrection ? '' : (!cycleIsActive
     ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">The Administrator has moved the active cycle to <strong>${escapeHtml(TERM_TEST_LABELS[tt.cycle]||tt.cycle)}</strong> — ${escapeHtml(cycleLabel)} is now read-only here.</p>`
-    : (!withinWindow ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">${startTs && nowTs<startTs ? `The marks-entry window for ${escapeHtml(cycleLabel)} opens ${fmtDate(startTs)}.` : `The marks-entry window for ${escapeHtml(cycleLabel)} closed ${endTs?fmtDate(endTs):''} — no further edits are allowed.`}</p>` : '');
+    : (!withinWindow ? `<p class="section-meta" style="color:var(--seal-red);margin-top:6px;">${startTs && nowTs<startTs ? `The marks-entry window for ${escapeHtml(cycleLabel)} opens ${fmtDate(startTs)}.` : `The marks-entry window for ${escapeHtml(cycleLabel)} closed ${endTs?fmtDate(endTs):''} — no further edits are allowed.`}</p>` : ''));
   const comp = template.cie.find(c=>c.key===compKey);
 
   // Unit/split are the Course Coordinator's call now — this page only shows
