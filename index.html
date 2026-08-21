@@ -8186,6 +8186,84 @@ async function exportPrint(courseId){
 }
 window.exportPrint = exportPrint;
 
+/* ---------- Term Test 1/2 marks export (PDF + XLSX) ----------
+   Once the CI has forwarded a Term Test's marks on to the Course
+   Coordinator (isTTForwarded), the entered marks stop being editable and
+   become a fixed record worth taking off the app entirely — the CC (and
+   anyone else who can view this page: EA/HOD) can pull down a PDF or
+   Excel copy of exactly what was entered, in the same Part A/Part B
+   template shape shown on screen, without having to screenshot the table
+   or wait for the whole record to reach the Examination Branch's own
+   export further down the pipeline. */
+function ttExportTableData(course, cycle){
+  const cycleLabel = TERM_TEST_LABELS[cycle] || cycle;
+  const template = getCourseTemplate(course);
+  const compKey = termTestComponentKey(template, cycle);
+  const comp = template.cie.find(c=>c.key===compKey);
+  const header = ['Student', 'Roll No',
+    ...TT_SHORT_KEYS.map(k=>`${k.toUpperCase()} (/${TT_SHORT_EACH_MAX})`), 'Part A Total',
+    ...TT_ALL_LONG_QKEYS.map(qKey=>`${qKey.toUpperCase()} (/${getLongPairMax(qKey)})`), 'Part B Total',
+    'Term Test Total', `${cycleLabel} Scaled (/${comp.scaledMax})`];
+  const rows = (course.students||[]).map(s=>{
+    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
+    const calc = computeTermTestRaw(detail);
+    const shortVals = TT_SHORT_KEYS.map(k=>ttNum(detail[k]));
+    const longVals = TT_ALL_LONG_QKEYS.map(qKey=>{
+      const d = detail[qKey] || {};
+      const cfg = getQuestionConfig(course, cycle, qKey);
+      if(cfg.split===cfg.fullValue) return ttNum(d.a);
+      const av = ttNum(d.a), bv = ttNum(d.b);
+      return (av==='' && bv==='') ? '' : `${av===''?0:av}+${bv===''?0:bv}`;
+    });
+    const cieScaled = round1((Math.min(calc.total, comp.rawMax)/comp.rawMax) * comp.scaledMax);
+    return [s.name, s.rollNo || '', ...shortVals, calc.shortTotal, ...longVals, calc.longRaw, calc.total, cieScaled];
+  });
+  return { header, rows, cycleLabel, comp };
+}
+async function exportTTPdf(courseId, cycle){
+  const course = await App.ensureCourseStudentsLoaded(courseId);
+  if(!isTTForwarded(course, cycle)){ toast('Marks haven\'t been forwarded to the Course Coordinator yet.', 'err'); return; }
+  const { header, rows, cycleLabel } = ttExportTableData(course, cycle);
+  const area = document.getElementById('print-area');
+  const theadHtml = `<tr>${header.map(h=>`<th style="border:1px solid #000;padding:4px 6px;background:#eee;font-size:10px;">${escapeHtml(String(h))}</th>`).join('')}</tr>`;
+  const tbodyHtml = rows.map(r=>`<tr>${r.map(v=>`<td style="border:1px solid #000;padding:4px 6px;text-align:center;font-size:10.5px;">${escapeHtml(String(v))}</td>`).join('')}</tr>`).join('');
+  area.innerHTML = `
+    <h2 style="font-family:'Inter', sans-serif;">${escapeHtml(course.name)} — ${escapeHtml(course.code)}</h2>
+    <p class="mono" style="font-size:12px;">${courseMeta(course)} · ${escapeHtml(cycleLabel)} — Forwarded marks</p>
+    <table style="border-collapse:collapse;width:100%;margin-top:10px;"><thead>${theadHtml}</thead><tbody>${tbodyHtml}</tbody></table>
+  `;
+  window.print();
+  area.innerHTML = '';
+}
+window.exportTTPdf = exportTTPdf;
+async function exportTTXlsx(courseId, cycle){
+  const course = await App.ensureCourseStudentsLoaded(courseId);
+  if(!isTTForwarded(course, cycle)){ toast('Marks haven\'t been forwarded to the Course Coordinator yet.', 'err'); return; }
+  try{
+    await ensureXLSXLoaded();
+  }catch(e){
+    toast('Could not load the spreadsheet writer — check your connection and try again.', 'err');
+    return;
+  }
+  const { header, rows, cycleLabel } = ttExportTableData(course, cycle);
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const wb = XLSX.utils.book_new();
+  const sheetName = (cycleLabel || 'Marks').replace(/[\\/?*[\]:]/g, '').slice(0, 31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fileName = `${course.code}_Section${course.section}_${cycle}_marks.xlsx`;
+  try{
+    XLSX.writeFile(wb, fileName);
+  }catch(e){
+    const blob = new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/octet-stream" });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+}
+window.exportTTXlsx = exportTTXlsx;
+
 /* ================= FACULTY DIRECTORY (uploaded by EA, branch-wise; HOD views read-only) ================= */
 function facultyDirectoryEntries(){
   return App.state.users.filter(u=>u.systemRole==='FACULTY' && u.homeBranch);
@@ -9000,22 +9078,22 @@ function renderCITermTestEntry(params){
         const aOverMax = typeof av==='number' && (av>fullCap || av<0);
         const bOverMax = typeof bv==='number' && (bv>half || bv<0);
         return cfg.split===cfg.fullValue
-          ? `<td class="mono"${winMark} style="white-space:nowrap;">
+          ? `<td class="mono"${winMark} style="white-space:nowrap;text-align:center;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
-              <input type="number" min="0" max="${max}" step="0.5" style="width:56px;" placeholder="/${max}"
+              <input type="number" min="0" max="${max}" step="0.5" style="width:56px;text-align:center;" placeholder="/${max}"
                 class="${aOverMax?'invalid':''}"
                 data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_a"
                 value="${ttNum(av)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
             </td>`
-          : `<td class="mono"${winMark} style="white-space:nowrap;">
+          : `<td class="mono"${winMark} style="white-space:nowrap;text-align:center;">
               <span style="font-size:10px;color:var(--text-soft);">${qKey.toUpperCase()}</span>
-              <input type="number" min="0" max="${half}" step="0.5" style="width:44px;" placeholder="a/${half}"
+              <input type="number" min="0" max="${half}" step="0.5" style="width:44px;text-align:center;" placeholder="a/${half}"
                 class="${aOverMax?'invalid':''}"
                 data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_a"
                 value="${ttNum(av)}" ${editable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
-              <input type="number" min="0" max="${half}" step="0.5" style="width:44px;" placeholder="b/${half}"
+              <input type="number" min="0" max="${half}" step="0.5" style="width:44px;text-align:center;" placeholder="b/${half}"
                 class="${bOverMax?'invalid':''}"
                 data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_b"
                 value="${ttNum(bv)}" ${editable ? '' : 'disabled'}
@@ -9107,6 +9185,9 @@ function renderCITermTestEntry(params){
             value="${escapeHtml(ttSearchQueries[searchKey] || '')}"
             oninput="filterTTStudentRows('${course.id}','${cycle}', this.value)">
         </div>
+        ${forwarded ? `
+        <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTPdf('${course.id}','${cycle}')" title="Download the entered ${escapeHtml(cycleLabel)} marks as a PDF">⬇ PDF</button>
+        <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTXlsx('${course.id}','${cycle}')" title="Download the entered ${escapeHtml(cycleLabel)} marks as an Excel file">⬇ XLSX</button>` : ''}
         <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="toggleTTFullscreen()">
           <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-label">✕ Exit Full Screen</span>
         </button>
