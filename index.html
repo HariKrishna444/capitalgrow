@@ -684,7 +684,17 @@ body.tt-fs-active .tt-fs-wrap .table-scroll{
   overflow:auto;flex:1;
 }
 body.tt-fs-active .tt-fs-wrap table.data-table{
-  font-size:12px;min-width:0;width:100%;
+  /* Deliberately NOT width:100% here (that used to be the rule) — forcing
+     the table to fill the screen when its natural (content-based) width is
+     narrower than the viewport made table-layout:auto stretch whichever
+     cells had the least content (mainly the single-answer Q6-Q11 cells,
+     the Scaled and Evaluated Script columns) to soak up the leftover
+     space, showing up as ugly dead-space boxes next to a tiny 56px input.
+     Letting the table size itself naturally (it still has the inline
+     min-width:1400px, and .table-scroll below stays horizontally
+     scrollable) keeps every column snug around its actual content
+     instead. */
+  font-size:12px;
 }
 body.tt-fs-active .tt-fs-wrap table.data-table th,
 body.tt-fs-active .tt-fs-wrap table.data-table td{
@@ -1646,6 +1656,66 @@ function termTestActionBarHtml(course, itemKey, editable, periodFinished, ia){
 const STUDENT_POOL = ['Aarav Sharma','Diya Kulkarni','Rohan Gupta','Sneha Reddy','Kabir Malhotra','Isha Bansal','Arjun Nair','Meera Pillai','Karthik Iyer','Ananya Joshi'];
 
 const TERM_TEST_LABELS = { TT1:'Term Test 1', TT2:'Term Test 2', TT3:'Term Test 3' };
+
+/* Shared "Term Test time period" banner — dropped at the top of every
+   role's landing dashboard (CI's "My Subjects", CC's "My Coordination",
+   EA's "Verification Queue", HOD's "Pending Approval", and the
+   Examination Branch's "Approved Records") so nobody has to click into a
+   Term Test entry page just to see when TT1/TT2 opens or closes.
+   Three states, in priority order:
+     1. The Administrator's currently-fixed cycle, while its window is
+        either still open OR hasn't started yet ("Active"/"Upcoming").
+     2. Once that window closes (or no cycle is fixed at all), the most
+        recent past cycle's window from termTestHistory — labelled
+        "Previous" — so the dashboard still shows a concrete date range
+        instead of just going blank the moment a deadline passes.
+     3. Nothing, only if there's genuinely no dated cycle on record yet. */
+function termTestPeriodBannerHtml(){
+  const fmtWindow = (startTs, endTs) => {
+    const dOnly = ts => new Date(ts).toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'});
+    if(startTs && endTs) return `${dOnly(startTs)} – ${dOnly(endTs)}`;
+    if(startTs) return `Opens ${dOnly(startTs)}`;
+    if(endTs) return `Closes ${dOnly(endTs)}`;
+    return 'No window set';
+  };
+  const fullLabelFor = (cycle, academicYear, semester) => {
+    const label = TERM_TEST_LABELS[cycle] || cycle;
+    return (academicYear && semester) ? `${academicYear} · ${semester} · ${label}` : label;
+  };
+  const bannerRow = (kind, fullLabel, windowText) => {
+    const pillClass = kind==='Active' ? 'status-approved' : kind==='Upcoming' ? 'status-submitted' : 'status-draft';
+    const borderColor = kind==='Previous' ? 'var(--text-soft)' : 'var(--brass)';
+    return `<div class="card" style="padding:12px 16px;margin-bottom:14px;border-left:3px solid ${borderColor};display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span class="status-pill ${pillClass}" style="flex-shrink:0;">${kind} examination cycle</span>
+      <span class="section-meta" style="font-weight:600;color:var(--ink);">${escapeHtml(fullLabel)}</span>
+      <span class="section-meta">${escapeHtml(windowText)}</span>
+    </div>`;
+  };
+
+  const tt = App.state.currentTermTest;
+  const nowTs = Date.now();
+  if(tt && tt.cycle){
+    const startTs = tt.startDate ? new Date(tt.startDate).getTime() : null;
+    const endTs = tt.endDate ? new Date(tt.endDate).getTime() : null;
+    const ended = endTs && nowTs > endTs;
+    if(!ended){
+      const notStarted = startTs && nowTs < startTs;
+      return bannerRow(notStarted ? 'Upcoming' : 'Active', fullLabelFor(tt.cycle, tt.academicYear, tt.semester), fmtWindow(startTs, endTs));
+    }
+    // Window's closed but the Admin hasn't fixed the next cycle yet — fall
+    // through and show THIS cycle's own (now past) window as "Previous",
+    // same as the termTestHistory lookup below would for an older one.
+    return bannerRow('Previous', fullLabelFor(tt.cycle, tt.academicYear, tt.semester), fmtWindow(startTs, endTs));
+  }
+  // No cycle fixed right now — look back through history (newest first)
+  // for the most recent cycle that actually carried a dated window.
+  const history = App.state.termTestHistory || [];
+  const past = history.find(h=>h.cycle && (h.startDate || h.endDate));
+  if(!past) return '';
+  const startTs = past.startDate ? new Date(past.startDate).getTime() : null;
+  const endTs = past.endDate ? new Date(past.endDate).getTime() : null;
+  return bannerRow('Previous', fullLabelFor(past.cycle, past.academicYear, past.semester), fmtWindow(startTs, endTs));
+}
 
 // ============================================================================
 // TERM TEST QUESTION TEMPLATE — fixed for every student, every course,
@@ -7401,6 +7471,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
+    ${termTestPeriodBannerHtml()}
     ${hodDashboardSummaryHtml(all)}
     ${pendingEtRequestsHtml()}
     ${pendingApprovalGroupsHtml()}
@@ -7977,6 +8048,7 @@ function renderEAList(){
       <h2>Verification Queue</h2>
       <p>Submissions reach you after the Course Coordinator has verified them. Check each record for completeness before it reaches the HOD.</p>
     </div>
+    ${termTestPeriodBannerHtml()}
     ${list.map(c=>`
       <div class="card">
         <div class="card-row">
@@ -8058,6 +8130,7 @@ function renderExamList(){
       <h2>Approved Records</h2>
       <p>Read-only, finalized results only. InProgress and other unapproved submissions never appear here. Full marks are loaded on demand per record, not all at once, to keep this page fast as records accumulate. This is the final step in the Overall flow — CI → CC → EA → HOD → EB — confirming closes out that record.</p>
     </div>
+    ${termTestPeriodBannerHtml()}
     ${approved.length===0 ? emptyStateHtml('No finalized records yet','Approved course-sections will appear here once the HOD locks them.') : `
     ${pending.length ? `<div class="section-title" style="font-size:14px;margin:6px 0;">Awaiting Confirmation (${pending.length})</div>${pending.map(cardHtml).join('')}` : ''}
     ${published.length ? `<div class="section-title" style="font-size:14px;margin:18px 0 6px;">Published (${published.length})</div>${published.map(cardHtml).join('')}` : ''}
@@ -8504,6 +8577,7 @@ function renderCISections(){
       <h2>My Subjects</h2>
       <p>Pick the semester your subject belongs to, then enter marks against the Evaluation Type fixed for it.</p>
     </div>
+    ${termTestPeriodBannerHtml()}
     <div class="card">
       <div class="config-grid">
         <div class="config-field">
@@ -9623,6 +9697,7 @@ function renderCCList(){
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
     </div>
+    ${termTestPeriodBannerHtml()}
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
