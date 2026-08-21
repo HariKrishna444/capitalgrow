@@ -4857,10 +4857,19 @@ function renderContent(){
   const activeEl = document.activeElement;
   const activeMarkKey = activeEl && c.contains(activeEl) ? activeEl.getAttribute('data-markkey') : null;
   const activeSelStart = activeMarkKey && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null;
+  // Snapshot exactly where the focused mark box sits on screen (not just the
+  // page's scroll offset) so we can keep it pinned there after rebuild, even
+  // when content ABOVE it (e.g. the Class Performance stats, which flip from
+  // a one-line placeholder to full stat cards the first time any student in
+  // this cycle gets a score) changes height. Restoring the raw scrollY alone
+  // doesn't account for that shift, which is what made the box a caller was
+  // mid-typing in visibly "jump" down the screen the first time they entered
+  // a mark for a given cycle.
+  const activeElViewportTop = activeMarkKey ? activeEl.getBoundingClientRect().top : null;
 
   const build = () => {
     c.innerHTML = '';
-    if(user.systemRole !== 'ADMIN'){
+    if(user.systemRole !== 'ADMIN' && view !== 'ci-termtest-entry'){
       const bannerHtml = termTestBanner();
       if(bannerHtml){
         const bannerWrap = el('<div></div>');
@@ -4881,6 +4890,14 @@ function renderContent(){
         toRefocus.focus({preventScroll:true});
         if(activeSelStart!==null && typeof toRefocus.setSelectionRange==='function'){
           try{ toRefocus.setSelectionRange(activeSelStart, activeSelStart); }catch(e){ /* not applicable to this input type */ }
+        }
+        // Correct for any layout shift above the box (see note above) by
+        // nudging the scroll so the box lands back at the exact viewport
+        // position it was at before the rebuild, instead of trusting the
+        // page's raw scrollY (which assumes nothing above it moved).
+        if(activeElViewportTop!==null){
+          const delta = toRefocus.getBoundingClientRect().top - activeElViewportTop;
+          if(delta) window.scrollBy(0, delta);
         }
       }
     }
@@ -5600,21 +5617,29 @@ function onMarkChange(input){
 }
 window.onMarkChange = onMarkChange;
 
-/* Marks-entry keyboard flow: pressing Enter in a marks number box commits
-   the value (same as tabbing/clicking away — fires the normal onchange
+/* Marks-entry keyboard flow: pressing Enter OR Tab in a marks number box
+   commits the value (same as clicking away — fires the normal onchange
    handler, which saves and re-renders) and moves focus straight to the
-   next marks box, in reading order, instead of doing nothing or submitting
-   a form. Every marks input carries a stable data-markkey identifying its
-   cell (course|student|field), so the "next" box can be re-found even
-   though onchange's renderContent() call rebuilds the table underneath us. */
+   next marks box, in reading order (previous box for Shift+Tab), instead
+   of doing nothing or submitting a form. Tab needs its own explicit
+   handling here rather than relying on the browser's native tab order:
+   onchange's renderContent() call destroys and rebuilds the whole table
+   the instant this box loses focus, so by the time the browser would
+   normally move focus to "the next element after this one" that original
+   next element no longer exists — focus was landing nowhere. Every marks
+   input carries a stable data-markkey identifying its cell
+   (course|student|field), so the "next"/"previous" box can be re-found
+   even though the table underneath us just got rebuilt. */
 document.addEventListener('keydown', function(e){
-  if(e.key!=='Enter') return;
+  if(e.key!=='Enter' && e.key!=='Tab') return;
   const t = e.target;
   if(!(t.tagName==='INPUT' && t.type==='number' && t.dataset.markkey)) return;
   e.preventDefault();
   const boxes = Array.from(document.querySelectorAll('input[type="number"][data-markkey]:not([disabled])'));
   const idx = boxes.indexOf(t);
-  const nextKey = (idx>-1 && idx<boxes.length-1) ? boxes[idx+1].dataset.markkey : null;
+  const goPrev = e.key==='Tab' && e.shiftKey;
+  const targetIdx = goPrev ? idx-1 : idx+1;
+  const nextKey = (idx>-1 && targetIdx>=0 && targetIdx<boxes.length) ? boxes[targetIdx].dataset.markkey : null;
   t.blur(); // synchronously fires onchange -> save + renderContent, if the value changed
   if(nextKey){
     const next = document.querySelector(`input[data-markkey="${CSS.escape(nextKey)}"]`);
