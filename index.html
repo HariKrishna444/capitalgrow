@@ -679,8 +679,14 @@ body.tt-fs-active .tt-fs-wrap table.data-table th,
 body.tt-fs-active .tt-fs-wrap table.data-table td{
   padding:4px 5px;
 }
+/* Sticky header top-offsets (per-row, so a 3-row header like the Term
+   Test table's stacks correctly instead of every row fighting for top:0)
+   are computed and applied in JS — see applyStickyTableHeaders(). This
+   rule just needs `position:sticky` as a baseline for any header cell
+   that JS hasn't reached yet (e.g. a stray reflow before the first call);
+   the JS-set inline `top`/`z-index` always win once it runs. */
 body.tt-fs-active .tt-fs-wrap thead th{
-  position:sticky;top:0;z-index:2;
+  position:sticky;
 }
 .tt-fs-exit-label{display:none;}
 body.tt-fs-active .tt-fs-exit-label{display:inline-flex;}
@@ -2163,6 +2169,25 @@ function computeTermTestRaw(detail){
   const longScaled = round1((longRaw / TT_LONG_RAW_MAX) * TT_LONG_SCALED_MAX);
   const total = round1(shortTotal + longScaled);
   return { shortTotal, longRaw, longScaled, attempted, total, errors:[], valid:true };
+}
+/* Whether a student's Term Test entry for this cycle is COMPLETE — every
+   short answer (Q1-Q5) has a value, and every long-answer choice pair
+   (Q6/Q7, Q8/Q9, Q10/Q11) has at least one side of the pair filled in
+   (matching computeTermTestRaw's own "attempted" notion of a pair, since
+   the paper is set up as an either/or choice, not both). Used to gate the
+   Evaluated Script upload control (ttScriptUploadCell) so a student only
+   becomes eligible for Best/Average/Lowest script upload once their marks
+   are actually finished, not the moment they have any nonzero total. */
+function isTTFullyEntered(detail){
+  detail = detail || {};
+  const shortDone = TT_SHORT_KEYS.every(k=>typeof detail[k]==='number' && !isNaN(detail[k]));
+  const longDone = TT_LONG_PAIRS.every(({a,b})=>{
+    const da = detail[a] || {}, db = detail[b] || {};
+    const hasA = typeof da.a==='number' || typeof da.b==='number';
+    const hasB = typeof db.a==='number' || typeof db.b==='number';
+    return hasA || hasB;
+  });
+  return shortDone && longDone;
 }
 
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -4878,6 +4903,12 @@ function renderContent(){
       }
     }
     c.appendChild(fn(App.ui.params));
+    // Any multi-row sticky table header (currently just the Term Test 1/2
+    // marks table) needs its per-row top offsets computed off ACTUAL
+    // rendered row heights, which only exist once `c` is attached to the
+    // document — hence this runs here, after appendChild, not inside the
+    // page-render function itself. See applyStickyTableHeaders' own note.
+    applyStickyTableHeaders(c);
 
     // Restore scroll (page + any wide marks table) and focus so re-entering
     // marks doesn't keep bouncing the view back to the top/left.
@@ -5363,6 +5394,19 @@ function scriptUploadsViewHtml(course){
 }
 
 let activeMarksTab = 'ttlab';
+/* Per-subject+cycle "search students" box on the Term Test marks-entry
+   table (renderCITermTestEntry) — keyed by `${courseId}|${cycle}` so
+   switching between Term Test 1 and Term Test 2, or between sections,
+   starts with a blank search rather than leaking a filter from elsewhere.
+   Filtering itself (filterTTStudentRows below) is a direct DOM row
+   show/hide, not a re-render through App state, so typing in it never
+   triggers renderContent()'s full rebuild — no flicker, no lost cursor
+   position, and it works identically in Full Screen mode since that mode
+   only hides/expands sibling cards, it never touches this one.
+   ttSearchQueries persists it across the onchange-triggered rebuilds that
+   DO happen (saving a mark), see the re-apply block in
+   renderCITermTestEntry right after the rows are built. */
+const ttSearchQueries = {};
 
 /* Student name cell used across every CIE/SEE/Term Test marks table — puts
    the Roll No/URN/Register Number to the right of the name in a muted
@@ -5616,6 +5660,55 @@ function onMarkChange(input){
   renderContent();
 }
 window.onMarkChange = onMarkChange;
+
+/* Search box above the Term Test marks-entry table: filters the roster to
+   students whose name or roll no matches, by directly toggling each row's
+   display (see the `data-tt-search` attribute set on every <tr> in
+   renderCITermTestEntry) rather than going through App state + a full
+   renderContent() rebuild — so it stays instant and never disturbs whatever
+   mark box currently has focus. Persisted in ttSearchQueries (keyed by
+   course+cycle) purely so the filter survives the rebuild that DOES happen
+   whenever a mark itself is saved; renderCITermTestEntry re-applies it from
+   there every time. Works identically in Full Screen mode since the search
+   box lives inside .tt-fs-wrap, the one card that stays visible (and just
+   gets bigger) in that mode. */
+function filterTTStudentRows(courseId, cycle, query){
+  ttSearchQueries[`${courseId}|${cycle}`] = query;
+  const q = (query||'').trim().toLowerCase();
+  document.querySelectorAll('tr[data-tt-search]').forEach(tr=>{
+    tr.style.display = (!q || (tr.getAttribute('data-tt-search')||'').includes(q)) ? '' : 'none';
+  });
+}
+window.filterTTStudentRows = filterTTStudentRows;
+
+/* Keeps the Term Test marks table's 3-row header (Part A/B group row, Unit
+   row, Question row) pinned in view while scrolling down a long roster —
+   in BOTH normal and Full Screen mode, since it's the same table element
+   either way. A single `position:sticky;top:0` on every header cell (the
+   old Full Screen-only CSS) only works for a single-row header: with three
+   stacked header rows all pinned to the same top:0, rows 2 and 3 would
+   fight row 1 for the same spot and overlap it once scrolled. Instead this
+   walks the <thead> rows in order and gives each one `top` equal to the
+   cumulative rendered height of the rows above it, so all three stack
+   correctly and stay visible together. Re-run after every table rebuild
+   (renderContent, on every mark saved) and after toggling Full Screen
+   (its font size / cell padding shrink, which changes each row's height,
+   so the offsets have to be recalculated, not just set once). */
+function applyStickyTableHeaders(root){
+  (root||document).querySelectorAll('table.sticky-thead').forEach(table=>{
+    const rows = Array.from(table.querySelectorAll('thead > tr'));
+    let cumulative = 0;
+    rows.forEach(tr=>{
+      Array.from(tr.children).forEach(cell=>{
+        cell.style.position = 'sticky';
+        cell.style.top = cumulative + 'px';
+        cell.style.zIndex = 6;
+      });
+      cumulative += tr.getBoundingClientRect().height;
+    });
+  });
+}
+window.applyStickyTableHeaders = applyStickyTableHeaders;
 
 /* Marks-entry keyboard flow: pressing Enter OR Tab in a marks number box
    commits the value (same as clicking away — fires the normal onchange
@@ -8551,9 +8644,17 @@ function toggleTTFullscreen(){
   } else {
     toast('Full screen isn\'t supported in this browser.', 'err');
   }
+  // Full Screen mode shrinks the table's font size/cell padding (see CSS),
+  // which changes every header row's rendered height — so the sticky
+  // header's per-row top offsets (applyStickyTableHeaders) need
+  // recalculating against the new sizes, not just set once at initial
+  // render. Deferred a tick so it runs after the tt-fs-active class change
+  // (and the fullscreen request itself) has actually repainted.
+  requestAnimationFrame(()=> applyStickyTableHeaders(document.getElementById('content')));
 }
 document.addEventListener('fullscreenchange', ()=>{
   if(!document.fullscreenElement) document.body.classList.remove('tt-fs-active');
+  requestAnimationFrame(()=> applyStickyTableHeaders(document.getElementById('content')));
 });
 /* One <td> of the CC/EA/HOD per-student remark trio at the end of the Term
    Test entry table — see canEditTTStudentRemark for who can type into it. */
@@ -8586,6 +8687,7 @@ function renderCITermTestEntry(params){
   const cycle = params.cycle || tt?.cycle || 'TT1';
   const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
   const ttFsWrapId = `tt-fs-${course.id}-${cycle}`;
+  const searchKey = `${course.id}|${cycle}`;
   if(!canViewItemEntry(course, itemKey)){
     const wrapDenied = el('<div></div>');
     wrapDenied.innerHTML = `<div class="page-head">${backBtnEarly}<h2>Term Test</h2></div>${notYourSubjectHtml()}`;
@@ -8675,7 +8777,16 @@ function renderCITermTestEntry(params){
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     return { student: s, total: computeTermTestRaw(detail).total };
   }).filter(x=>x.total>0);
-  const autoPicks = computeTTAutoPicks(scored);
+  // Evaluated Script upload eligibility (autoPicks) is deliberately computed
+  // off only the FULLY entered students, not every student with any nonzero
+  // total — otherwise a student with just one question typed in could get
+  // flagged "Lowest" and prompted to upload a script before their marks are
+  // even finished. The Class Performance stat cards above still use the
+  // broader `scored` list as-is, since "current running Highest/Average" is
+  // useful progress info even mid-entry; it's specifically the upload
+  // prompt that should wait for a complete entry.
+  const fullyScored = scored.filter(x=>isTTFullyEntered((x.student.marks && x.student.marks.ttDetail && x.student.marks.ttDetail[cycle]) || {}));
+  const autoPicks = computeTTAutoPicks(fullyScored);
   // The CC/EA/HOD remark trio is per-column optional table space: show a
   // given role's column only if either (a) it already has at least one
   // remark on it for this subject+cycle, so it's worth a read-only viewer's
@@ -8741,7 +8852,8 @@ function renderCITermTestEntry(params){
       return cellFor(a, aWinning) + cellFor(b, bWinning);
     }).join('');
     const cieScaled = round1((Math.min(calc.total, comp.rawMax)/comp.rawMax) * comp.scaledMax);
-    return `<tr>
+    const searchHay = `${s.name||''} ${s.rollNo||''}`.toLowerCase();
+    return `<tr data-tt-search="${escapeHtml(searchHay)}">
       <td>${studentNameCell(s)}</td>
       ${shortCells}
       <td class="total-cell hl-total">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
@@ -8821,9 +8933,14 @@ function renderCITermTestEntry(params){
           <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-label">✕ Exit Full Screen</span>
         </button>
       </div>
+      <div style="margin-top:10px;max-width:360px;">
+        <input type="search" class="search-input" placeholder="🔎 Search student by name or roll no…"
+          value="${escapeHtml(ttSearchQueries[searchKey] || '')}"
+          oninput="filterTTStudentRows('${course.id}','${cycle}', this.value)">
+      </div>
       <div class="table-scroll" style="margin-top:10px;">
 
-        <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
+        <table class="data-table sticky-thead" style="min-width:1400px;border-radius:6px;overflow:hidden;">
           <thead>
             <tr>
               <th rowspan="3" style="vertical-align:middle;">Student</th>
@@ -8847,6 +8964,23 @@ function renderCITermTestEntry(params){
       ${termTestActionBarHtml(course, itemKey, editable, periodFinished, ia)}
     </div>`}
   `;
+  // Re-apply any in-progress search filter and the sticky header offsets
+  // right after building the table markup above, so both survive the
+  // full-rebuild that happens whenever a mark is saved (App.setTermTestMark
+  // -> renderContent() -> this function runs again from scratch). See
+  // ttSearchQueries and applyStickyTableHeaders for why each is needed.
+  const activeQuery = (ttSearchQueries[searchKey] || '').trim().toLowerCase();
+  if(activeQuery){
+    wrap.querySelectorAll('tr[data-tt-search]').forEach(tr=>{
+      tr.style.display = (tr.getAttribute('data-tt-search')||'').includes(activeQuery) ? '' : 'none';
+    });
+  }
+  // NOTE: sticky header offsets (applyStickyTableHeaders) are deliberately
+  // NOT applied here — `wrap` isn't attached to the document yet at this
+  // point (the caller, renderContent's build(), does that), and
+  // getBoundingClientRect() on a detached element returns all zeros, which
+  // would collapse every header row's offset to 0 and overlap them. See
+  // the call in renderContent() instead, which runs after appendChild.
   return wrap;
 }
 /* Sets which tab is active on the "My Subjects" marks-entry screen (ci-entry)
