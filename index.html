@@ -500,19 +500,26 @@ table.data-table.sticky-thead{
 .data-table thead th{
   font-family:'IBM Plex Mono', monospace;font-size:10.5px;
   letter-spacing:0.06em;text-transform:uppercase;color:#fff;
-  text-align:left;padding:12px 14px;background:var(--brass);
-  border-bottom:2px solid var(--ink);border-right:1px solid rgba(255,255,255,0.28);white-space:nowrap;
+  text-align:center;padding:12px 14px;background:var(--brass);
+  border:2px solid var(--ink);white-space:nowrap;
 }
-.data-table thead th:last-child{border-right:none;}
-.data-table tbody td{padding:10px 14px;border-bottom:1px solid var(--rule-light);border-right:1px solid var(--rule-light);vertical-align:middle;}
-.data-table tbody td:last-child{border-right:none;}
-.data-table tbody tr:last-child td{border-bottom:none;}
+.data-table thead th:first-child{text-align:left;}
+/* Every data cell gets a thick, solid border on all four sides (matching
+   the Excel-mimic grid look shared by every marks-entry table — TT1, TT2,
+   SIA, Practical Internal, SEE Practical, and so on) instead of the old
+   hairline bottom/right-only rules. Cell content is centered by default,
+   like the numeric Q6-Q11 cells always were, so Part A's Q1-Q5 boxes (and
+   every other plain value column) line up the same way instead of
+   trailing right. The student-name column stays left-aligned since it's
+   text, not a mark. */
+.data-table tbody td{padding:10px 14px;border:2px solid var(--rule);vertical-align:middle;text-align:center;}
+.data-table tbody td:first-child{text-align:left;}
 .data-table tbody tr:nth-child(even){background:var(--parchment-2);}
 .data-table tbody tr:hover{background:#EEF2FF;}
 /* Group-header row (e.g. UNIT 1 / UNIT 2 spans on Term Test & SIA tables)
    gets its own slightly darker rule beneath it so the two header rows read
    as a clear, bordered block rather than blending together. */
-.data-table thead tr:first-child th{border-bottom:1px solid rgba(255,255,255,0.35);}
+.data-table thead tr:first-child th{border-bottom:2px solid rgba(255,255,255,0.5);}
 .data-table thead tr:last-child th{border-bottom:2px solid var(--ink);}
 /* Student-name column stays put while scrolling horizontally through a wide
    marks table (many question/unit columns) — the same trick as a frozen
@@ -526,7 +533,7 @@ table.data-table.sticky-thead{
 .data-table tbody tr:nth-child(odd) td:first-child{ background:var(--card); }
 .data-table tbody tr:hover td:first-child{ background:#EEF2FF; }
 .data-table input[type=number]{
-  width:66px;padding:6px 8px;border:1px solid var(--rule);
+  width:66px;padding:6px 8px;border:1px solid var(--rule);text-align:center;
   background:#fff;font-size:13px;border-radius:6px;transition:border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .data-table input[type=number]:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
