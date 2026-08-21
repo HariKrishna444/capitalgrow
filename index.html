@@ -4921,6 +4921,16 @@ function renderContent(){
   const prevScrollY = window.scrollY;
   const prevScrollX = window.scrollX;
   const prevTableScrollLefts = Array.from(c.querySelectorAll('.table-scroll')).map(elm => elm.scrollLeft);
+  // In normal (non-fullscreen) mode the whole page scrolls, so window.scrollY
+  // above is enough. In fullscreen mode (see the CSS on .tt-fs-wrap
+  // .table-scroll) THIS div is the one that actually scrolls vertically —
+  // window.scrollY never changes at all. Without saving/restoring its own
+  // scrollTop too, every mark save (onchange -> scheduleRenderContent ->
+  // rebuild) snapped the fullscreen table back to row 1, which looked like
+  // clicking an empty cell was "jumping" you up to the student names/roll
+  // numbers at the top — it was actually the PRECEDING box's onchange
+  // rebuilding the table out from under your next click.
+  const prevTableScrollTops = Array.from(c.querySelectorAll('.table-scroll')).map(elm => elm.scrollTop);
   const activeEl = document.activeElement;
   const activeMarkKey = activeEl && c.contains(activeEl) ? activeEl.getAttribute('data-markkey') : null;
   const activeSelStart = activeMarkKey && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null;
@@ -4956,6 +4966,7 @@ function renderContent(){
     // marks doesn't keep bouncing the view back to the top/left.
     const newTableScrolls = c.querySelectorAll('.table-scroll');
     prevTableScrollLefts.forEach((left, i) => { if(newTableScrolls[i]) newTableScrolls[i].scrollLeft = left; });
+    prevTableScrollTops.forEach((top, i) => { if(newTableScrolls[i]) newTableScrolls[i].scrollTop = top; });
     window.scrollTo(prevScrollX, prevScrollY);
     if(activeMarkKey){
       const toRefocus = c.querySelector(`[data-markkey="${activeMarkKey}"]`);
