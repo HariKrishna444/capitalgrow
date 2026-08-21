@@ -486,6 +486,17 @@ table.data-table{
   border:1px solid var(--rule);border-radius:var(--radius);overflow:hidden;
   box-shadow:var(--shadow-sm);
 }
+/* Sticky-header tables (currently just the Term Test 1/2 marks table)
+   can't have overflow:hidden here like every other .data-table does: an
+   element with overflow!=visible becomes the nearest "scrolling ancestor"
+   position:sticky measures against, and since a <table> never scrolls
+   itself, that silently breaks the sticky header (it just scrolls away
+   with the page instead of pinning). The rounded corners this would have
+   provided move to the actual scrolling wrapper (.table-scroll) around it
+   instead — see the markup comment where that table is built. */
+table.data-table.sticky-thead{
+  overflow:visible;border-radius:0;box-shadow:none;border:none;
+}
 .data-table thead th{
   font-family:'IBM Plex Mono', monospace;font-size:10.5px;
   letter-spacing:0.06em;text-transform:uppercase;color:#fff;
@@ -8983,9 +8994,19 @@ function renderCITermTestEntry(params){
           <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-label">✕ Exit Full Screen</span>
         </button>
       </div>
-      <div class="table-scroll" style="margin-top:10px;">
+      <div class="table-scroll" style="margin-top:10px;border-radius:6px;overflow:auto;box-shadow:var(--shadow-sm);border:1px solid var(--rule);">
 
-        <table class="data-table sticky-thead" style="min-width:1400px;border-radius:6px;overflow:hidden;">
+        <!-- overflow:hidden was deliberately REMOVED from this table (unlike
+             other .data-table instances) — an element with overflow!=visible
+             becomes the nearest "scrolling ancestor" that position:sticky
+             measures against, and since the <table> itself never actually
+             scrolls, having overflow:hidden here silently hijacked that role
+             from the real scrolling container (.table-scroll, right above),
+             making the sticky Part A/B header a no-op: it just scrolled away
+             with everything else instead of pinning. The rounded corners
+             this used to provide now come from .table-scroll instead, which
+             is the correct (and only) scrolling ancestor here. -->
+        <table class="data-table sticky-thead" style="min-width:1400px;">
           <thead>
             <tr>
               <th rowspan="3" style="vertical-align:middle;">Student</th>
