@@ -4190,7 +4190,11 @@ const App = {
     const calc = computeTermTestRaw(s.marks.ttDetail[cycle]);
     if(compKey) s.marks[compKey] = calc.total;
     syncStudent(courseId, s);
-    renderContent();
+    // Deferred (not an immediate renderContent()) — see scheduleRenderContent's
+    // comment: this onchange fires mid-click when moving to another box, and
+    // an immediate rebuild here was hijacking that click (see user-reported
+    // "clicking to the next box jumps to Evaluated Script" bug).
+    scheduleRenderContent();
   },
 
   /* ---------- CC/EA/HOD: per-student remark on the Term Test entry table
@@ -4241,7 +4245,8 @@ const App = {
     const sum = Object.values(s.marks.siaDetail).reduce((a,b)=>a+(typeof b==='number'?b:0), 0);
     s.marks[compKey] = Math.round(sum*2)/2;
     syncStudent(courseId, s);
-    renderContent();
+    // Deferred — same click-hijacking issue as setTermTestMark above.
+    scheduleRenderContent();
   },
 
   /* ---------- EA: faculty directory, uploaded branch-wise ---------- */
@@ -4834,6 +4839,32 @@ function renderSidebar(){
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
 const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true };
+/* Defers a renderContent() rebuild to the next tick instead of running it
+   synchronously inside an onchange handler. onchange fires the instant an
+   input loses focus — i.e. mid-click, before the browser has finished
+   dispatching the very click that moved focus away from it. Rebuilding the
+   whole DOM synchronously at that point (as the Term Test / SIA / other
+   marks-entry onchange handlers used to do) can swap out the element the
+   pending click was about to land on: e.g. clicking from one marks box to
+   another, or to the Evaluated Script upload/view cell in the same row,
+   which can appear or change the instant a mark is saved (see
+   ttScriptUploadCell / computeTTAutoPicks). The click then ends up hitting
+   whatever happens to be under the pointer after the rebuild — often not
+   the box the user was actually aiming for — instead of the intended
+   target. Deferring with setTimeout(0) lets the current click finish first
+   (so the browser focuses whatever the user actually clicked on the STILL
+   OLD, not-yet-rebuilt DOM), and only rebuilds afterwards; by then
+   document.activeElement genuinely is the box the user clicked, so
+   renderContent()'s existing focus-restore logic (see its own comment)
+   correctly refocuses that one, not the box that was just edited.
+   _renderContentQueued coalesces bursts of onchange calls (e.g. Tab-ing
+   fast through several boxes) into a single rebuild. */
+let _renderContentQueued = false;
+function scheduleRenderContent(){
+  if(_renderContentQueued) return;
+  _renderContentQueued = true;
+  setTimeout(()=>{ _renderContentQueued = false; renderContent(); }, 0);
+}
 function renderContent(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
@@ -5668,7 +5699,8 @@ function onMarkChange(input){
   const val = parseFloat(input.value);
   input.classList.toggle('invalid', !isNaN(val) && (val<0 || val>max));
   App.saveMarks(input.dataset.course);
-  renderContent();
+  // Deferred — same click-hijacking issue as setTermTestMark above.
+  scheduleRenderContent();
 }
 window.onMarkChange = onMarkChange;
 
