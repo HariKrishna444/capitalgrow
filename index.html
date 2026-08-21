@@ -638,6 +638,36 @@ table.data-table{
 .search-input:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
 
 .table-scroll{overflow-x:auto;}
+
+/* Full-screen marks-entry mode (Term Test 1/2) — toggled via the native
+   Fullscreen API on the wrapping .tt-fs-wrap element (see
+   toggleTTFullscreen()). While fullscreen, this element becomes the entire
+   viewport: we drop it to a tight white canvas, shrink the table's type a
+   notch, and pin the header row so scrolling a long roster doesn't lose
+   track of which question column is which — the goal is Part A and Part B
+   fitting side by side without the horizontal scrollbar that shows up at
+   normal page width, not a hard guarantee against ever scrolling on very
+   large classes. */
+.tt-fs-wrap:fullscreen{
+  background:#fff;padding:14px 18px;overflow:auto;display:flex;flex-direction:column;
+}
+.tt-fs-wrap:fullscreen .table-scroll{
+  overflow:auto;flex:1;
+}
+.tt-fs-wrap:fullscreen table.data-table{
+  font-size:12px;min-width:0;width:100%;
+}
+.tt-fs-wrap:fullscreen table.data-table th,
+.tt-fs-wrap:fullscreen table.data-table td{
+  padding:4px 5px;
+}
+.tt-fs-wrap:fullscreen thead th{
+  position:sticky;top:0;z-index:2;
+}
+.tt-fs-exit-btn{display:none;}
+.tt-fs-wrap:fullscreen .tt-fs-exit-btn{display:inline-flex;}
+.tt-fs-wrap:fullscreen .tt-fs-enter-label{display:none;}
+
 .tab-bar{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--rule);}
 .tab-btn{
   background:none;border:none;padding:10px 16px;
@@ -8443,6 +8473,21 @@ function renderCITermTestSections(params={}){
   return wrap;
 }
 function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
+/* Toggles the native Fullscreen API on the marks-entry table's wrapping
+   element (id passed in), so Part A/Part B can lay out across the whole
+   screen instead of the normal page width. Falls back to a toast if the
+   browser refuses (e.g. blocked by an iframe's permissions policy) rather
+   than failing silently. */
+function toggleTTFullscreen(wrapId){
+  const elm = document.getElementById(wrapId);
+  if(!elm) return;
+  if(document.fullscreenElement){
+    document.exitFullscreen().catch(()=>{});
+  } else {
+    (elm.requestFullscreen ? elm.requestFullscreen() : Promise.reject())
+      .catch(()=> toast('Full screen isn\'t available in this browser/window — try opening DVS in its own tab.', 'err'));
+  }
+}
 /* One <td> of the CC/EA/HOD per-student remark trio at the end of the Term
    Test entry table — see canEditTTStudentRemark for who can type into it. */
 function ttStudentRemarkCell(course, itemKey, cycle, s, role){
@@ -8473,6 +8518,7 @@ function renderCITermTestEntry(params){
   const tt = App.state.currentTermTest;
   const cycle = params.cycle || tt?.cycle || 'TT1';
   const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
+  const ttFsWrapId = `tt-fs-${course.id}-${cycle}`;
   if(!canViewItemEntry(course, itemKey)){
     const wrapDenied = el('<div></div>');
     wrapDenied.innerHTML = `<div class="page-head">${backBtnEarly}<h2>Term Test</h2></div>${notYourSubjectHtml()}`;
@@ -8563,6 +8609,19 @@ function renderCITermTestEntry(params){
     return { student: s, total: computeTermTestRaw(detail).total };
   }).filter(x=>x.total>0);
   const autoPicks = computeTTAutoPicks(scored);
+  // The CC/EA/HOD remark trio is per-column optional table space: show a
+  // given role's column only if either (a) it already has at least one
+  // remark on it for this subject+cycle, so it's worth a read-only viewer's
+  // screen space, or (b) the person looking at this page right now is the
+  // one who's actually allowed to type into it — otherwise the very role
+  // meant to add the FIRST remark would never see a box to add it in.
+  // Empty + not-editable-by-this-viewer is the only case that's hidden.
+  const anyRemark = (role) => (course.students||[]).some(s=>!!((((s.marks||{}).ttRemarks||{})[cycle]||{})[role]));
+  const showRemarkCol = {
+    cc: anyRemark('cc') || canEditTTStudentRemark(course, itemKey, 'cc'),
+    ea: anyRemark('ea') || canEditTTStudentRemark(course, itemKey, 'ea'),
+    hod: anyRemark('hod') || canEditTTStudentRemark(course, itemKey, 'hod'),
+  };
 
   const rows = (course.students||[]).map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
@@ -8624,9 +8683,9 @@ function renderCITermTestEntry(params){
       <td class="total-cell hl-total">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
       <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
       <td>${ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
-      ${ttStudentRemarkCell(course, itemKey, cycle, s, 'cc')}
-      ${ttStudentRemarkCell(course, itemKey, cycle, s, 'ea')}
-      ${ttStudentRemarkCell(course, itemKey, cycle, s, 'hod')}
+      ${showRemarkCol.cc ? ttStudentRemarkCell(course, itemKey, cycle, s, 'cc') : ''}
+      ${showRemarkCol.ea ? ttStudentRemarkCell(course, itemKey, cycle, s, 'ea') : ''}
+      ${showRemarkCol.hod ? ttStudentRemarkCell(course, itemKey, cycle, s, 'hod') : ''}
     </tr>`;
   }).join('');
 
@@ -8689,7 +8748,13 @@ function renderCITermTestEntry(params){
       <div style="margin-top:8px;">${statsHtml}</div>
     </div>
     <div class="card">
-      <div class="section-title" style="font-size:16px;">Enter ${escapeHtml(cycleLabel)} Marks</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div class="section-title" style="font-size:16px;">Enter ${escapeHtml(cycleLabel)} Marks</div>
+        <button class="btn btn-outline btn-sm no-print" onclick="toggleTTFullscreen('${ttFsWrapId}')">
+          <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-btn">✕ Exit Full Screen</span>
+        </button>
+      </div>
+      <div id="${ttFsWrapId}" class="tt-fs-wrap">
       <div class="table-scroll" style="margin-top:10px;">
 
         <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
@@ -8703,15 +8768,16 @@ function renderCITermTestEntry(params){
               <th rowspan="3" class="hl-total" style="vertical-align:middle;">Term Test<br>Total</th>
               <th rowspan="3" style="vertical-align:middle;">${escapeHtml(cycleLabel)}<br>Scaled (/${comp.scaledMax})</th>
               <th rowspan="3" style="vertical-align:middle;">Evaluated<br>Script</th>
-              <th rowspan="3" style="vertical-align:middle;">CC<br>Remark</th>
-              <th rowspan="3" style="vertical-align:middle;">EA<br>Remark</th>
-              <th rowspan="3" style="vertical-align:middle;">HOD<br>Remark</th>
+              ${showRemarkCol.cc ? `<th rowspan="3" style="vertical-align:middle;">CC<br>Remark</th>` : ''}
+              ${showRemarkCol.ea ? `<th rowspan="3" style="vertical-align:middle;">EA<br>Remark</th>` : ''}
+              ${showRemarkCol.hod ? `<th rowspan="3" style="vertical-align:middle;">HOD<br>Remark</th>` : ''}
             </tr>
             <tr>${shortHeadGrp.top}${longHeadGrp.top}</tr>
             <tr>${shortHeadGrp.sub}${longHeadGrp.sub}</tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
+      </div>
       </div>
       ${termTestActionBarHtml(course, itemKey, editable, periodFinished, ia)}
     </div>`}
