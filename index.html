@@ -4839,6 +4839,16 @@ function renderContent(){
   const activeEl = document.activeElement;
   const activeMarkKey = activeEl && c.contains(activeEl) ? activeEl.getAttribute('data-markkey') : null;
   const activeSelStart = activeMarkKey && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null;
+  // Same problem for Full Screen mode (see toggleTTFullscreen): the
+  // fullscreen element is a specific DOM node, and c.innerHTML='' below
+  // destroys it, which makes the browser silently drop out of fullscreen —
+  // so pressing Tab/Enter while entering Term Test marks (which fires
+  // onchange -> save -> renderContent) used to boot the CI straight out of
+  // Full Screen mid-entry. Note which element (by id) was fullscreen before
+  // the rebuild, and re-request fullscreen on its same-id replacement
+  // after — this has to stay synchronous with the triggering keypress for
+  // the browser to allow it back in without a fresh click.
+  const prevFullscreenWrapId = document.fullscreenElement ? document.fullscreenElement.id : null;
 
   const build = () => {
     c.innerHTML = '';
@@ -4864,6 +4874,14 @@ function renderContent(){
         if(activeSelStart!==null && typeof toRefocus.setSelectionRange==='function'){
           try{ toRefocus.setSelectionRange(activeSelStart, activeSelStart); }catch(e){ /* not applicable to this input type */ }
         }
+      }
+    }
+    if(prevFullscreenWrapId && !document.fullscreenElement){
+      const reFs = document.getElementById(prevFullscreenWrapId);
+      if(reFs && reFs.requestFullscreen){
+        reFs.requestFullscreen().catch(()=>{
+          toast('Full Screen closed — your browser needs a fresh click on "Full Screen" to re-enter it.', 'err');
+        });
       }
     }
   };
