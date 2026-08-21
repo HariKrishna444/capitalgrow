@@ -639,34 +639,47 @@ table.data-table{
 
 .table-scroll{overflow-x:auto;}
 
-/* Full-screen marks-entry mode (Term Test 1/2) — toggled via the native
-   Fullscreen API on the wrapping .tt-fs-wrap element (see
-   toggleTTFullscreen()). While fullscreen, this element becomes the entire
-   viewport: we drop it to a tight white canvas, shrink the table's type a
-   notch, and pin the header row so scrolling a long roster doesn't lose
-   track of which question column is which — the goal is Part A and Part B
-   fitting side by side without the horizontal scrollbar that shows up at
-   normal page width, not a hard guarantee against ever scrolling on very
-   large classes. */
-.tt-fs-wrap:fullscreen{
-  background:#fff;padding:14px 18px;overflow:auto;display:flex;flex-direction:column;
+/* Full-screen marks-entry mode (Term Test 1/2) — toggleTTFullscreen()
+   fullscreens document.documentElement (the whole page) rather than this
+   div, specifically so that renderContent()'s rebuild-on-every-save never
+   has to touch real browser fullscreen state (see toggleTTFullscreen()'s
+   comment for why). The look-and-feel is driven entirely by the
+   `tt-fs-active` class on <body>, kept in sync with real fullscreen state
+   by a fullscreenchange listener: everything marked .tt-fs-hide (page
+   header, verification card, analytics, class stats, and the app shell's
+   own topbar/sidebar) disappears, and .tt-fs-wrap — the "Enter Marks" card
+   — expands to fill the freed-up space, with a shrunk, sticky-header table
+   so Part A and Part B fit side by side without the horizontal scrollbar
+   that shows up at normal page width. Not a hard guarantee against ever
+   scrolling vertically on a very large roster — but the header stays
+   pinned either way. */
+body.tt-fs-active .tt-fs-hide,
+body.tt-fs-active .topbar,
+body.tt-fs-active #sidebar{
+  display:none !important;
 }
-.tt-fs-wrap:fullscreen .table-scroll{
+body.tt-fs-active .content{
+  padding:12px 18px;
+}
+body.tt-fs-active .tt-fs-wrap{
+  display:flex;flex-direction:column;height:calc(100vh - 24px);
+}
+body.tt-fs-active .tt-fs-wrap .table-scroll{
   overflow:auto;flex:1;
 }
-.tt-fs-wrap:fullscreen table.data-table{
+body.tt-fs-active .tt-fs-wrap table.data-table{
   font-size:12px;min-width:0;width:100%;
 }
-.tt-fs-wrap:fullscreen table.data-table th,
-.tt-fs-wrap:fullscreen table.data-table td{
+body.tt-fs-active .tt-fs-wrap table.data-table th,
+body.tt-fs-active .tt-fs-wrap table.data-table td{
   padding:4px 5px;
 }
-.tt-fs-wrap:fullscreen thead th{
+body.tt-fs-active .tt-fs-wrap thead th{
   position:sticky;top:0;z-index:2;
 }
-.tt-fs-exit-btn{display:none;}
-.tt-fs-wrap:fullscreen .tt-fs-exit-btn{display:inline-flex;}
-.tt-fs-wrap:fullscreen .tt-fs-enter-label{display:none;}
+.tt-fs-exit-label{display:none;}
+body.tt-fs-active .tt-fs-exit-label{display:inline-flex;}
+body.tt-fs-active .tt-fs-enter-label{display:none;}
 
 .tab-bar{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--rule);}
 .tab-btn{
@@ -4839,16 +4852,6 @@ function renderContent(){
   const activeEl = document.activeElement;
   const activeMarkKey = activeEl && c.contains(activeEl) ? activeEl.getAttribute('data-markkey') : null;
   const activeSelStart = activeMarkKey && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null;
-  // Same problem for Full Screen mode (see toggleTTFullscreen): the
-  // fullscreen element is a specific DOM node, and c.innerHTML='' below
-  // destroys it, which makes the browser silently drop out of fullscreen —
-  // so pressing Tab/Enter while entering Term Test marks (which fires
-  // onchange -> save -> renderContent) used to boot the CI straight out of
-  // Full Screen mid-entry. Note which element (by id) was fullscreen before
-  // the rebuild, and re-request fullscreen on its same-id replacement
-  // after — this has to stay synchronous with the triggering keypress for
-  // the browser to allow it back in without a fresh click.
-  const prevFullscreenWrapId = document.fullscreenElement ? document.fullscreenElement.id : null;
 
   const build = () => {
     c.innerHTML = '';
@@ -4876,14 +4879,13 @@ function renderContent(){
         }
       }
     }
-    if(prevFullscreenWrapId && !document.fullscreenElement){
-      const reFs = document.getElementById(prevFullscreenWrapId);
-      if(reFs && reFs.requestFullscreen){
-        reFs.requestFullscreen().catch(()=>{
-          toast('Full Screen closed — your browser needs a fresh click on "Full Screen" to re-enter it.', 'err');
-        });
-      }
-    }
+    // NOTE on Full Screen mode (Term Test marks entry): toggleTTFullscreen()
+    // deliberately puts document.documentElement into fullscreen, not the
+    // marks table div itself. document.documentElement is never touched by
+    // c.innerHTML='' above, so the browser's fullscreen state simply isn't
+    // affected by this rebuild at all — no exit, no re-request, no flicker,
+    // however many marks get saved. See toggleTTFullscreen()'s own comment
+    // for why an inner-element approach didn't hold up.
   };
 
   const courseId = App.ui.params && App.ui.params.courseId;
@@ -8491,21 +8493,38 @@ function renderCITermTestSections(params={}){
   return wrap;
 }
 function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
-/* Toggles the native Fullscreen API on the marks-entry table's wrapping
-   element (id passed in), so Part A/Part B can lay out across the whole
-   screen instead of the normal page width. Falls back to a toast if the
-   browser refuses (e.g. blocked by an iframe's permissions policy) rather
-   than failing silently. */
-function toggleTTFullscreen(wrapId){
-  const elm = document.getElementById(wrapId);
-  if(!elm) return;
-  if(document.fullscreenElement){
-    document.exitFullscreen().catch(()=>{});
-  } else {
-    (elm.requestFullscreen ? elm.requestFullscreen() : Promise.reject())
+/* Toggles Full Screen mode for Term Test marks entry. Fullscreens
+   document.documentElement (the whole page) — deliberately NOT the marks
+   table div itself — because that div gets destroyed and rebuilt by
+   renderContent() on every single mark saved (onchange fires on Tab/Enter),
+   and a fullscreen-ed element getting removed from the DOM makes the
+   browser silently exit fullscreen. An earlier version fullscreened the
+   table div and tried to re-request fullscreen after each rebuild, which
+   "worked" but caused a visible exit/re-enter flicker on every box. Since
+   document.documentElement is never removed by that rebuild, fullscreening
+   it means the browser's fullscreen state is simply never touched by
+   normal marks entry — no exit, no flicker, ever.
+   The actual "hide the clutter, make the table big" look is done with a
+   `tt-fs-active` class on <body> (kept in sync with real browser fullscreen
+   state via the fullscreenchange listener below, so pressing Esc — a
+   totally valid way to leave fullscreen — cleans up the layout too, not
+   just a click on this button). CSS elsewhere hides everything marked
+   `.tt-fs-hide` and expands `.tt-fs-wrap` while that class is present. */
+function toggleTTFullscreen(){
+  if(document.body.classList.contains('tt-fs-active')){
+    if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+    document.body.classList.remove('tt-fs-active');
+  } else if(document.documentElement.requestFullscreen){
+    document.documentElement.requestFullscreen()
+      .then(()=> document.body.classList.add('tt-fs-active'))
       .catch(()=> toast('Full screen isn\'t available in this browser/window — try opening DVS in its own tab.', 'err'));
+  } else {
+    toast('Full screen isn\'t supported in this browser.', 'err');
   }
 }
+document.addEventListener('fullscreenchange', ()=>{
+  if(!document.fullscreenElement) document.body.classList.remove('tt-fs-active');
+});
 /* One <td> of the CC/EA/HOD per-student remark trio at the end of the Term
    Test entry table — see canEditTTStudentRemark for who can type into it. */
 function ttStudentRemarkCell(course, itemKey, cycle, s, role){
@@ -8745,34 +8764,33 @@ function renderCITermTestEntry(params){
   const longHeadGrp = groupedHeaderRows(longItems);
 
   wrap.innerHTML = `
-    <div class="page-head">
+    <div class="page-head tt-fs-hide">
       ${backBtn}
       <div class="page-eyebrow">${escapeHtml(cycleLabel)}${fullLabel && fullLabel!==cycleLabel ? ` (Active cycle: ${escapeHtml(fullLabel)})` : ''} · feeds into "${escapeHtml(comp.label)}"</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
     </div>
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
-    ${itemApprovalStatusHtml(course, itemKey)}
-    ${lockBannerHtml}
-    <div class="card">
+    <div class="tt-fs-hide">${itemApprovalStatusHtml(course, itemKey)}</div>
+    <div class="tt-fs-hide">${lockBannerHtml}</div>
+    <div class="card tt-fs-hide">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <button class="btn btn-outline btn-sm" style="pointer-events:none;">📊 ${escapeHtml(cycleLabel)} Analytics</button>
         <button class="btn btn-outline btn-sm no-print" onclick="toggleInlineAnalytics('${course.id}|${cycle}')">${isInlineAnalyticsOpen(course.id+'|'+cycle) ? 'Hide charts ▲' : 'Show charts ▼'}</button>
       </div>
       ${isInlineAnalyticsOpen(course.id+'|'+cycle) ? buildScoreAnalyticsCharts(scored, TT_TOTAL_MAX) : ''}
     </div>
-    <div class="card">
+    <div class="card tt-fs-hide">
       <div class="section-title" style="font-size:14px;">Class Performance — ${escapeHtml(cycleLabel)}</div>
       <div style="margin-top:8px;">${statsHtml}</div>
     </div>
-    <div class="card">
+    <div class="card tt-fs-wrap" id="${ttFsWrapId}">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div class="section-title" style="font-size:16px;">Enter ${escapeHtml(cycleLabel)} Marks</div>
-        <button class="btn btn-outline btn-sm no-print" onclick="toggleTTFullscreen('${ttFsWrapId}')">
-          <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-btn">✕ Exit Full Screen</span>
+        <button class="btn btn-outline btn-sm no-print" onclick="toggleTTFullscreen()">
+          <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-label">✕ Exit Full Screen</span>
         </button>
       </div>
-      <div id="${ttFsWrapId}" class="tt-fs-wrap">
       <div class="table-scroll" style="margin-top:10px;">
 
         <table class="data-table" style="min-width:1400px;border-radius:6px;overflow:hidden;">
@@ -8795,7 +8813,6 @@ function renderCITermTestEntry(params){
           </thead>
           <tbody>${rows}</tbody>
         </table>
-      </div>
       </div>
       ${termTestActionBarHtml(course, itemKey, editable, periodFinished, ia)}
     </div>`}
