@@ -533,10 +533,10 @@ table.data-table.sticky-thead{
 .data-table tbody tr:nth-child(odd) td:first-child{ background:var(--card); }
 .data-table tbody tr:hover td:first-child{ background:#EEF2FF; }
 .data-table input[type=number]{
-  width:66px;padding:6px 8px;border:1px solid var(--rule);text-align:center;
+  width:66px;padding:5px 8px;border:2px solid var(--ink);text-align:center;
   background:#fff;font-size:13px;border-radius:6px;transition:border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.data-table input[type=number]:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
+.data-table input[type=number]:focus{outline:none;border-color:var(--brass);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
 .data-table input.invalid{border-color:var(--seal-red);background:#FEF2F2;}
 .total-cell{font-family:'IBM Plex Mono', monospace;font-weight:600;color:var(--ink);}
 /* Strong border highlight for the Part A / Part B / overall Total Marks
@@ -6295,21 +6295,28 @@ const state = {
     examTitle: "I. B.Tech - II Semester End Examination - May/June 2026",
     courseCode: "25MAT1002 - Discrete Mathematics",
     branch: "CSE",
-    roomNo: "1201",
+    roomNo: "1106",
     date: "23-05-2026",
     time: "09:30 AM to 12:30 PM",
   },
   students: [],
   tab: "roster", // "roster" | "seating" | "seatingPlan" | "rooms" | "consolidated"
   // Automatic room allocation — splits the uploaded roster into rooms of
-  // `capacity` students each (upload order), so a 150-student roster with
-  // capacity 35 becomes 5 rooms (35/35/35/35/10) without any manual work.
-  // Each room's roomNo stays editable (see renderRoomAllocList) since real
-  // room numbers rarely run 1,2,3... and admins need to match whatever
-  // rooms were actually booked.
+  // `capacity` students each (upload order), so a 500-student roster at
+  // the default 35/room becomes 15 rooms with zero manual work. Room
+  // numbers are pulled from ROOM_SEQUENCE below (real, pre-assigned exam
+  // rooms, floor by floor, starting at 1106) instead of a bare 1,2,3...
+  // count, but every room number stays editable in the Room Allocation
+  // tab for whichever exam actually needs different rooms.
+  // activeIndex/activeIndex tracks which single room is currently shown
+  // in the Attendance Sheet / Room Wise Seating Plan / Seating Plan
+  // previews and their pager (see roomPagerHtml/wireRoomPager) — those
+  // three tabs render ONE room at a time since a room only seats 35, and
+  // the pager pages through all of them without needing to re-upload.
   roomAlloc: {
     capacity: 35,
     rooms: [], // [{ roomNo, students: [{slNo, register, name}] }]
+    activeIndex: 0,
   },
   consolidated: {
     circularDate: "22-05-2026",
@@ -6319,6 +6326,17 @@ const state = {
     rows: [],
   },
 };
+
+// Real, pre-assigned exam rooms (35 seats each), in the order they should
+// be filled: 1st floor (1106 — the default starting room), then 2nd
+// floor, then 5th floor. Auto-allocation works through this list in
+// order before falling back to generated numbers if a roster needs more
+// than these 22 rooms (770 seats).
+const ROOM_SEQUENCE = [
+  "1106", "1107", "1113", "1115", "1116", "1117", "1118",
+  "1201", "1202", "1207", "1214", "1215", "1216", "1217", "1218", "1219", "1220", "1221",
+  "1514", "1515", "1516", "1517",
+];
 
 /* =================================================================
    UR NUMBERS for the Consolidated Seating Plan row.
@@ -6377,10 +6395,12 @@ function syncRoomToConsolidated() {
 
 /* =================================================================
    AUTOMATIC ROOM ALLOCATION — splits the full roster (in upload order)
-   into rooms of `capacity` students each, so a 150-student upload at the
-   default 35/room becomes 5 rooms (35,35,35,35,10) with zero manual work.
-   Room numbers are auto-numbered 1,2,3... but stay fully editable, since
-   real room numbers rarely run in a clean sequence.
+   into rooms of `capacity` students each, so a 500-student upload at the
+   default 35/room becomes 15 rooms (35 x14 + 10) with zero manual work.
+   Room numbers come from ROOM_SEQUENCE (real, pre-assigned rooms, floor
+   by floor, starting at 1106) and only fall back to generated numbers if
+   a roster needs more rooms than that list has. Every room number stays
+   fully editable afterwards in the Room Allocation tab.
    ================================================================= */
 function autoAllocateRooms() {
   if (!state.students.length) return;
@@ -6395,13 +6415,78 @@ function autoAllocateRooms() {
       register: s.register,
       name: s.name,
     }));
-    if (slice.length) rooms.push({ roomNo: String(i + 1), students: slice });
+    if (!slice.length) continue;
+    const roomNo = i < ROOM_SEQUENCE.length ? ROOM_SEQUENCE[i] : `EXTRA-${i - ROOM_SEQUENCE.length + 1}`;
+    rooms.push({ roomNo, students: slice });
+  }
+  if (roomCount > ROOM_SEQUENCE.length) {
+    toast(`Only ${ROOM_SEQUENCE.length} default rooms are configured — the extra room(s) are labelled EXTRA-1, EXTRA-2... Edit their Room No in the Room Allocation tab to match real rooms.`, "err");
   }
   state.roomAlloc.rooms = rooms;
+  state.roomAlloc.activeIndex = 0;
   renderRoomAllocList();
-  if (state.tab === "rooms") renderPreview();
+  syncAllRoomsToConsolidated();
+  if (state.tab === "rooms" || state.tab === "roster" || state.tab === "seating" || state.tab === "seatingPlan") renderPreview();
 }
 document.getElementById("autoAllocateBtn").addEventListener("click", autoAllocateRooms);
+
+/* =================================================================
+   ROOM PAGER — the Attendance Sheet / Room Wise Seating Plan / Seating
+   Plan previews each show one room (35 students) at a time instead of
+   trying to cram the whole roster into a single room-sized layout.
+   currentRoom()/activeRoomStudents() feed that single room's data into
+   the existing render/export code; roomPagerHtml()/wireRoomPager() add
+   the "Prev / Next Room" controls above the preview.
+   ================================================================= */
+function currentRoom() {
+  const rooms = state.roomAlloc.rooms;
+  if (!rooms.length) return null;
+  const idx = Math.min(Math.max(0, state.roomAlloc.activeIndex), rooms.length - 1);
+  state.roomAlloc.activeIndex = idx;
+  return rooms[idx];
+}
+function activeRoomStudents() {
+  const room = currentRoom();
+  return room ? room.students : state.students;
+}
+function roomPagerHtml() {
+  const rooms = state.roomAlloc.rooms;
+  if (!rooms.length) return "";
+  const idx = state.roomAlloc.activeIndex;
+  const room = rooms[idx];
+  return `
+  <div class="room-pager no-print" style="display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:16px;font-family:sans-serif;">
+    <button type="button" id="roomPagerPrev" class="btn green" style="padding:8px 14px;font-size:12px;" ${idx === 0 ? "disabled" : ""}>&#8249; Prev Room</button>
+    <span style="font-size:12px;color:var(--muted);font-weight:600;">Room ${idx + 1} of ${rooms.length} &middot; Room No <b style="color:var(--maroon);">${escapeHtml(room.roomNo)}</b> &middot; ${room.students.length} student(s)</span>
+    <button type="button" id="roomPagerNext" class="btn green" style="padding:8px 14px;font-size:12px;" ${idx === rooms.length - 1 ? "disabled" : ""}>Next Room &#8250;</button>
+  </div>`;
+}
+function wireRoomPager() {
+  const prev = document.getElementById("roomPagerPrev");
+  const next = document.getElementById("roomPagerNext");
+  if (prev) prev.addEventListener("click", () => { state.roomAlloc.activeIndex = Math.max(0, state.roomAlloc.activeIndex - 1); renderPreview(); });
+  if (next) next.addEventListener("click", () => { state.roomAlloc.activeIndex = Math.min(state.roomAlloc.rooms.length - 1, state.roomAlloc.activeIndex + 1); renderPreview(); });
+}
+
+/* Rebuilds the Consolidated Seating Plan's room rows from EVERY
+   auto-allocated room (not just the currently-paged one), so uploading
+   500 students immediately shows all ~15 rooms in the circular without
+   the admin needing to click "Add/Update" once per room. */
+function syncAllRoomsToConsolidated() {
+  state.roomAlloc.rooms.forEach((room) => {
+    const row = {
+      roomNo: room.roomNo,
+      students: room.students.length,
+      urNumbers: computeUrNumbers(room.students),
+      department: state.header.branch,
+    };
+    const idx = state.consolidated.rows.findIndex((r) => r.roomNo === room.roomNo);
+    if (idx >= 0) state.consolidated.rows[idx] = row;
+    else state.consolidated.rows.push(row);
+  });
+  renderConsolidatedRows();
+  if (state.tab === "consolidated") renderPreview();
+}
 
 function renderRoomAllocList() {
   const container = document.getElementById("roomAllocRows");
@@ -6550,10 +6635,11 @@ async function handleFile(file) {
     ["exportAttendance", "exportSeatingXlsx", "exportSeatingPdf", "exportSeatingPlanXlsx", "exportSeatingPlanPdf", "syncConsolidatedBtn", "autoAllocateBtn"].forEach(
       (id) => (document.getElementById(id).disabled = false)
     );
-    syncRoomToConsolidated();
-    // Re-run auto-allocation on every fresh upload so the room breakdown
-    // always reflects the roster currently loaded, using whatever capacity
-    // is set (rather than leaving a stale room list from a previous file).
+    // autoAllocateRooms() below now also rebuilds the Consolidated
+    // Seating Plan (via syncAllRoomsToConsolidated), covering every room
+    // at once — no need for the old single-room syncRoomToConsolidated()
+    // call here, which only ever synced whatever one roomNo happened to
+    // be in the header field.
     autoAllocateRooms();
     renderPreview();
   } catch (e) {
@@ -6706,6 +6792,7 @@ function getTotalSeats() {
 
 function seatTableHtml(rowsPerCol, cols) {
   const totalSeats = getTotalSeats();
+  const roomStudents = activeRoomStudents();
   let html = `<table class="sheet"><thead><tr>`;
   for (let c = 0; c < cols; c++) html += `<th>Seat No</th><th>UR Number</th>`;
   html += `</tr></thead><tbody>`;
@@ -6714,7 +6801,7 @@ function seatTableHtml(rowsPerCol, cols) {
     for (let c = 0; c < cols; c++) {
       const seatNo = seatNumberAt(r, c, rowsPerCol);
       const isBox = seatNo <= totalSeats;
-      const st = isBox && seatNo <= state.students.length ? state.students[seatNo - 1] : null;
+      const st = isBox && seatNo <= roomStudents.length ? roomStudents[seatNo - 1] : null;
       if (!isBox) {
         html += `<td></td><td></td>`;
       } else if (st) {
@@ -6743,67 +6830,84 @@ function renderPreview() {
     return;
   }
 
-  if (state.tab === "roster") {
-    // Letterhead: logo, exam title, date pinned top-right
-    let html = `<div class="doc-header">`;
-    html += `<div class="doc-date">Date:${escapeHtml(h.date)}</div>`;
-    html += `<img class="doc-logo" src="${UNIVERSITY_LOGO_BASE64}" alt="${escapeHtml(h.institution)} logo" />`;
-    html += `<div class="doc-title">${escapeHtml(h.examTitle)}</div>`;
-    html += `</div>`;
-    html += `<div class="doc-meta">`;
-    html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
-    html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
-    html += `</div>`;
-    html += `<table class="sheet"><thead><tr><th>Sl.No</th><th>Register Number</th><th>Name of the Student</th><th>Answer Booklet Sl.No</th><th>Signature</th></tr></thead><tbody>`;
-    state.students.forEach((s) => {
-      html += `<tr><td>${s.slNo}</td><td class="left">${escapeHtml(s.register)}</td><td class="left">${escapeHtml(s.name)}</td><td></td><td></td></tr>`;
-    });
-    html += `</tbody></table>`;
-    body.innerHTML = html;
-    return;
-  }
+  // These three tabs each show ONE room (up to 35 students) at a time —
+  // the pager above the letterhead lets the admin page through every
+  // auto-allocated room without re-uploading.
+  if (state.tab === "roster" || state.tab === "seating" || state.tab === "seatingPlan") {
+    const pager = roomPagerHtml();
+    const room = currentRoom();
+    const roomNo = room ? room.roomNo : h.roomNo;
+    const roomStudents = activeRoomStudents();
 
-  if (state.tab === "seating") {
-    // Room Wise Seating Plan (original compact template)
-    const rowsPerCol = getRowsPerCol();
-    const cols = Math.max(1, Math.ceil(getTotalSeats() / rowsPerCol));
-    let html = `<div class="doc-header">`;
-    html += `<div class="doc-date">Date:${escapeHtml(h.date)}</div>`;
-    html += `<img class="doc-logo" src="${UNIVERSITY_LOGO_BASE64}" alt="${escapeHtml(h.institution)} logo" />`;
-    html += `<div class="doc-title">${escapeHtml(h.examTitle)}</div>`;
-    html += `<div class="doc-title">Room No : ${escapeHtml(h.roomNo)}</div>`;
-    html += `</div>`;
-    html += `<div class="doc-meta">`;
-    html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
-    html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
-    html += `</div>`;
-    html += `<div class="doc-title" style="font-size:15px;margin:14px 0 8px;">SEATING PLAN</div>`;
-    html += seatTableHtml(rowsPerCol, cols);
-    html += `<div class="doc-signature">Signature of Chief Superintendent</div>`;
-    body.innerHTML = html;
-    return;
-  }
+    if (state.tab === "roster") {
+      // Letterhead: logo, exam title, date pinned top-right
+      let html = pager;
+      html += `<div class="doc-header">`;
+      html += `<div class="doc-date">Date:${escapeHtml(h.date)}</div>`;
+      html += `<img class="doc-logo" src="${UNIVERSITY_LOGO_BASE64}" alt="${escapeHtml(h.institution)} logo" />`;
+      html += `<div class="doc-title">${escapeHtml(h.examTitle)}</div>`;
+      html += `<div class="doc-title">Room No : ${escapeHtml(roomNo)}</div>`;
+      html += `</div>`;
+      html += `<div class="doc-meta">`;
+      html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
+      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
+      html += `</div>`;
+      html += `<table class="sheet"><thead><tr><th>Sl.No</th><th>Register Number</th><th>Name of the Student</th><th>Answer Booklet Sl.No</th><th>Signature</th></tr></thead><tbody>`;
+      roomStudents.forEach((s) => {
+        html += `<tr><td>${s.slNo}</td><td class="left">${escapeHtml(s.register)}</td><td class="left">${escapeHtml(s.name)}</td><td></td><td></td></tr>`;
+      });
+      html += `</tbody></table>`;
+      body.innerHTML = html;
+      wireRoomPager();
+      return;
+    }
 
-  if (state.tab === "seatingPlan") {
-    // Seating Plan — matches the official room-slip circular template
-    // (logo, YAMNAMPET line, Date of Exam/Room No row, note text, dual signatures)
-    const rowsPerCol = getRowsPerCol();
-    const cols = Math.max(1, Math.ceil(getTotalSeats() / rowsPerCol));
-    let html = `<div class="doc-header">`;
-    html += `<img class="doc-logo" src="${UNIVERSITY_LOGO_BASE64}" alt="${escapeHtml(h.institution)} logo" />`;
-    html += `<div class="doc-title">${escapeHtml(h.examTitle)}</div>`;
-    html += `</div>`;
-    html += `<div class="doc-meta">`;
-    html += `<div class="doc-row"><span><b>Date of Exam:</b> ${escapeHtml(h.date)}</span><span><b>Room No:</b> ${escapeHtml(h.roomNo)}</span></div>`;
-    html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
-    html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
-    html += `</div>`;
-    html += `<div class="doc-title seating-plan-heading" style="margin:14px 0 8px;">SEATING PLAN</div>`;
-    html += seatTableHtml(rowsPerCol, cols);
-    html += `<div class="doc-note">Cross the box containing the hall ticket number with red pen when the candidate is absent. Seating should be strictly arranged according to the above plan.</div>`;
-    html += `<div class="doc-sig-row"><span>Signature of Hall Superintendent</span><span>Signature of Chief Superintendent</span></div>`;
-    body.innerHTML = html;
-    return;
+    if (state.tab === "seating") {
+      // Room Wise Seating Plan (original compact template)
+      const rowsPerCol = getRowsPerCol();
+      const cols = Math.max(1, Math.ceil(getTotalSeats() / rowsPerCol));
+      let html = pager;
+      html += `<div class="doc-header">`;
+      html += `<div class="doc-date">Date:${escapeHtml(h.date)}</div>`;
+      html += `<img class="doc-logo" src="${UNIVERSITY_LOGO_BASE64}" alt="${escapeHtml(h.institution)} logo" />`;
+      html += `<div class="doc-title">${escapeHtml(h.examTitle)}</div>`;
+      html += `<div class="doc-title">Room No : ${escapeHtml(roomNo)}</div>`;
+      html += `</div>`;
+      html += `<div class="doc-meta">`;
+      html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
+      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
+      html += `</div>`;
+      html += `<div class="doc-title" style="font-size:15px;margin:14px 0 8px;">SEATING PLAN</div>`;
+      html += seatTableHtml(rowsPerCol, cols);
+      html += `<div class="doc-signature">Signature of Chief Superintendent</div>`;
+      body.innerHTML = html;
+      wireRoomPager();
+      return;
+    }
+
+    if (state.tab === "seatingPlan") {
+      // Seating Plan — matches the official room-slip circular template
+      // (logo, YAMNAMPET line, Date of Exam/Room No row, note text, dual signatures)
+      const rowsPerCol = getRowsPerCol();
+      const cols = Math.max(1, Math.ceil(getTotalSeats() / rowsPerCol));
+      let html = pager;
+      html += `<div class="doc-header">`;
+      html += `<img class="doc-logo" src="${UNIVERSITY_LOGO_BASE64}" alt="${escapeHtml(h.institution)} logo" />`;
+      html += `<div class="doc-title">${escapeHtml(h.examTitle)}</div>`;
+      html += `</div>`;
+      html += `<div class="doc-meta">`;
+      html += `<div class="doc-row"><span><b>Date of Exam:</b> ${escapeHtml(h.date)}</span><span><b>Room No:</b> ${escapeHtml(roomNo)}</span></div>`;
+      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
+      html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
+      html += `</div>`;
+      html += `<div class="doc-title seating-plan-heading" style="margin:14px 0 8px;">SEATING PLAN</div>`;
+      html += seatTableHtml(rowsPerCol, cols);
+      html += `<div class="doc-note">Cross the box containing the hall ticket number with red pen when the candidate is absent. Seating should be strictly arranged according to the above plan.</div>`;
+      html += `<div class="doc-sig-row"><span>Signature of Hall Superintendent</span><span>Signature of Chief Superintendent</span></div>`;
+      body.innerHTML = html;
+      wireRoomPager();
+      return;
+    }
   }
 
   if (state.tab === "rooms") {
@@ -6872,30 +6976,34 @@ function escapeHtml(str) {
 }
 
 /* =================================================================
-   EXPORT: Attendance .xlsx (SheetJS)
+   EXPORT: Attendance .xlsx (SheetJS) — one sheet per auto-allocated room
    ================================================================= */
 document.getElementById("exportAttendance").onclick = () => {
   const h = state.header;
-  const title = [
-    [h.institution],
-    [h.examTitle],
-    [`Course Code & Title : ${h.courseCode}`],
-    [`Branch: ${h.branch}        Room No: ${h.roomNo}        Date: ${h.date}        Time: ${h.time}`],
-    [],
-    ["Sl.No", "Register Number", "Name of the Student", "Answer Booklet Serial Number", "Signature of Student"],
-  ];
-  const body = state.students.map((s) => [s.slNo, s.register, s.name, "", ""]);
-  const ws = XLSX.utils.aoa_to_sheet([...title, ...body]);
-  ws["!merges"] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 4 } },
-    { s: { r: 3, c: 0 }, e: { r: 3, c: 4 } },
-  ];
-  ws["!cols"] = [{ wch: 8 }, { wch: 22 }, { wch: 34 }, { wch: 26 }, { wch: 22 }];
+  const rooms = state.roomAlloc.rooms.length ? state.roomAlloc.rooms : [{ roomNo: h.roomNo, students: state.students }];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Attendance Sheet");
-  const fileName = `Attendance_${h.roomNo || "sheet"}.xlsx`;
+  rooms.forEach((room) => {
+    const title = [
+      [h.institution],
+      [h.examTitle],
+      [`Course Code & Title : ${h.courseCode}`],
+      [`Branch: ${h.branch}        Room No: ${room.roomNo}        Date: ${h.date}        Time: ${h.time}`],
+      [],
+      ["Sl.No", "Register Number", "Name of the Student", "Answer Booklet Serial Number", "Signature of Student"],
+    ];
+    const body = room.students.map((s) => [s.slNo, s.register, s.name, "", ""]);
+    const ws = XLSX.utils.aoa_to_sheet([...title, ...body]);
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 4 } },
+      { s: { r: 3, c: 0 }, e: { r: 3, c: 4 } },
+    ];
+    ws["!cols"] = [{ wch: 8 }, { wch: 22 }, { wch: 34 }, { wch: 26 }, { wch: 22 }];
+    const sheetName = `Room ${room.roomNo}`.replace(/[\\/?*[\]:]/g, "").slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+  const fileName = `Attendance_AllRooms_${rooms.length}rooms.xlsx`;
   XLSX.writeFile(wb, fileName);
 
   const blob = new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], {
@@ -6905,54 +7013,59 @@ document.getElementById("exportAttendance").onclick = () => {
 };
 
 /* =================================================================
-   EXPORT: Seating Plan .xlsx (SheetJS)
+   EXPORT: Seating Plan .xlsx (SheetJS) — one sheet per auto-allocated room
    ================================================================= */
 document.getElementById("exportSeatingXlsx").onclick = () => {
   const h = state.header;
   const rowsPerCol = getRowsPerCol();
   const totalSeats = getTotalSeats();
   const cols = Math.max(1, Math.ceil(totalSeats / rowsPerCol));
+  const rooms = state.roomAlloc.rooms.length ? state.roomAlloc.rooms : [{ roomNo: h.roomNo, students: state.students }];
 
   const headRow = [];
   for (let c = 0; c < cols; c++) headRow.push("Seat No", "UR Number");
-
-  const title = [
-    [h.institution],
-    [h.examTitle],
-    [`Room No : ${h.roomNo}`],
-    [`Date:${h.date}`],
-    [`Course Code & Title : ${h.courseCode}`],
-    [`Branch: ${h.branch}        Time: ${h.time}`],
-    ["SEATING PLAN"],
-    [],
-    headRow,
-  ];
-  const titleRowCount = title.length;
-
-  const body = [];
-  for (let r = 0; r < rowsPerCol; r++) {
-    const line = [];
-    for (let c = 0; c < cols; c++) {
-      const seatNo = seatNumberAt(r, c, rowsPerCol);
-      const isBox = seatNo <= totalSeats;
-      const st = isBox && seatNo <= state.students.length ? state.students[seatNo - 1] : null;
-      if (!isBox) line.push("", "");
-      else line.push(seatNo, st ? st.register : "");
-    }
-    body.push(line);
-  }
   const lastCol = headRow.length - 1;
-  const signatureRowIdx = titleRowCount + rowsPerCol + 1; // blank row, then signature
-  const signatureRow = Array(headRow.length).fill("");
-  signatureRow[lastCol] = "Signature of Chief Superintendent";
 
-  const ws = XLSX.utils.aoa_to_sheet([...title, ...body, [], signatureRow]);
-  ws["!merges"] = [0, 1, 2, 3, 4, 5, 6].map((r) => ({ s: { r, c: 0 }, e: { r, c: lastCol } }));
-  ws["!merges"].push({ s: { r: signatureRowIdx, c: Math.max(0, lastCol - 1) }, e: { r: signatureRowIdx, c: lastCol } });
-  ws["!cols"] = Array(headRow.length).fill({ wch: 14 });
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Seating Plan");
-  const fileName = `SeatingPlan_Room${h.roomNo || ""}.xlsx`;
+  rooms.forEach((room) => {
+    const title = [
+      [h.institution],
+      [h.examTitle],
+      [`Room No : ${room.roomNo}`],
+      [`Date:${h.date}`],
+      [`Course Code & Title : ${h.courseCode}`],
+      [`Branch: ${h.branch}        Time: ${h.time}`],
+      ["SEATING PLAN"],
+      [],
+      headRow,
+    ];
+    const titleRowCount = title.length;
+
+    const body = [];
+    for (let r = 0; r < rowsPerCol; r++) {
+      const line = [];
+      for (let c = 0; c < cols; c++) {
+        const seatNo = seatNumberAt(r, c, rowsPerCol);
+        const isBox = seatNo <= totalSeats;
+        const st = isBox && seatNo <= room.students.length ? room.students[seatNo - 1] : null;
+        if (!isBox) line.push("", "");
+        else line.push(seatNo, st ? st.register : "");
+      }
+      body.push(line);
+    }
+    const signatureRowIdx = titleRowCount + rowsPerCol + 1; // blank row, then signature
+    const signatureRow = Array(headRow.length).fill("");
+    signatureRow[lastCol] = "Signature of Chief Superintendent";
+
+    const ws = XLSX.utils.aoa_to_sheet([...title, ...body, [], signatureRow]);
+    ws["!merges"] = [0, 1, 2, 3, 4, 5, 6].map((r) => ({ s: { r, c: 0 }, e: { r, c: lastCol } }));
+    ws["!merges"].push({ s: { r: signatureRowIdx, c: Math.max(0, lastCol - 1) }, e: { r: signatureRowIdx, c: lastCol } });
+    ws["!cols"] = Array(headRow.length).fill({ wch: 14 });
+    const sheetName = `Room ${room.roomNo}`.replace(/[\\/?*[\]:]/g, "").slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  const fileName = `SeatingPlan_AllRooms_${rooms.length}rooms.xlsx`;
   XLSX.writeFile(wb, fileName);
 
   const blob = new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], {
@@ -6962,72 +7075,77 @@ document.getElementById("exportSeatingXlsx").onclick = () => {
 };
 
 /* =================================================================
-   EXPORT: Seating Plan .pdf (jsPDF + autotable)
+   EXPORT: Seating Plan .pdf (jsPDF + autotable) — one page per room
    ================================================================= */
 document.getElementById("exportSeatingPdf").onclick = () => {
   const h = state.header;
   const rowsPerCol = getRowsPerCol();
   const totalSeats = getTotalSeats();
   const cols = Math.max(1, Math.ceil(totalSeats / rowsPerCol));
+  const rooms = state.roomAlloc.rooms.length ? state.roomAlloc.rooms : [{ roomNo: h.roomNo, students: state.students }];
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  // Logo, centered
-  const logoW = 130, logoH = 54;
-  doc.addImage(UNIVERSITY_LOGO_BASE64, "PNG", pageWidth / 2 - logoW / 2, 24, logoW, logoH);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text(`Date:${h.date}`, pageWidth - 40, 36, { align: "right" });
-
-  doc.setFontSize(15);
-  doc.text(h.examTitle, pageWidth / 2, 96, { align: "center" });
-  doc.setFontSize(12);
-  doc.text(`Room No : ${h.roomNo}`, pageWidth / 2, 114, { align: "center" });
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.text(`Course Code & Title : ${h.courseCode}`, 40, 138);
-  doc.setFont("helvetica", "bold");
-  doc.text(`Branch: ${h.branch}`, 40, 154);
-  doc.text(`Time: ${h.time}`, pageWidth - 40, 154, { align: "right" });
-
-  doc.setFontSize(12);
-  doc.text("SEATING PLAN", pageWidth / 2, 176, { align: "center" });
-
   const head = [[]];
   for (let c = 0; c < cols; c++) head[0].push("Seat No", "UR Number");
 
-  const body = [];
-  for (let r = 0; r < rowsPerCol; r++) {
-    const line = [];
-    for (let c = 0; c < cols; c++) {
-      const seatNo = seatNumberAt(r, c, rowsPerCol);
-      const isBox = seatNo <= totalSeats;
-      const st = isBox && seatNo <= state.students.length ? state.students[seatNo - 1] : null;
-      if (!isBox) line.push("", "");
-      else line.push(String(seatNo), st ? st.register : "");
-    }
-    body.push(line);
-  }
+  rooms.forEach((room, i) => {
+    if (i > 0) doc.addPage();
 
-  doc.autoTable({
-    head,
-    body,
-    startY: 190,
-    theme: "grid",
-    styles: { fontSize: 8, halign: "center", cellPadding: 4, fontStyle: "bold", textColor: [0, 0, 0] },
-    headStyles: { fillColor: [239, 232, 216], textColor: [0, 0, 0], fontStyle: "bold" },
+    // Logo, centered
+    const logoW = 130, logoH = 54;
+    doc.addImage(UNIVERSITY_LOGO_BASE64, "PNG", pageWidth / 2 - logoW / 2, 24, logoW, logoH);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(`Date:${h.date}`, pageWidth - 40, 36, { align: "right" });
+
+    doc.setFontSize(15);
+    doc.text(h.examTitle, pageWidth / 2, 96, { align: "center" });
+    doc.setFontSize(12);
+    doc.text(`Room No : ${room.roomNo}`, pageWidth / 2, 114, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Course Code & Title : ${h.courseCode}`, 40, 138);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Branch: ${h.branch}`, 40, 154);
+    doc.text(`Time: ${h.time}`, pageWidth - 40, 154, { align: "right" });
+
+    doc.setFontSize(12);
+    doc.text("SEATING PLAN", pageWidth / 2, 176, { align: "center" });
+
+    const body = [];
+    for (let r = 0; r < rowsPerCol; r++) {
+      const line = [];
+      for (let c = 0; c < cols; c++) {
+        const seatNo = seatNumberAt(r, c, rowsPerCol);
+        const isBox = seatNo <= totalSeats;
+        const st = isBox && seatNo <= room.students.length ? room.students[seatNo - 1] : null;
+        if (!isBox) line.push("", "");
+        else line.push(String(seatNo), st ? st.register : "");
+      }
+      body.push(line);
+    }
+
+    doc.autoTable({
+      head,
+      body,
+      startY: 190,
+      theme: "grid",
+      styles: { fontSize: 8, halign: "center", cellPadding: 4, fontStyle: "bold", textColor: [0, 0, 0] },
+      headStyles: { fillColor: [239, 232, 216], textColor: [0, 0, 0], fontStyle: "bold" },
+    });
+
+    const afterTableY = doc.lastAutoTable.finalY + 50;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Signature of Chief Superintendent", pageWidth - 40, afterTableY, { align: "right" });
   });
 
-  const afterTableY = doc.lastAutoTable.finalY + 50;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Signature of Chief Superintendent", pageWidth - 40, afterTableY, { align: "right" });
-
-  const fileName = `SeatingPlan_Room${h.roomNo || ""}.pdf`;
+  const fileName = `SeatingPlan_AllRooms_${rooms.length}rooms.pdf`;
   doc.save(fileName);
 
   const blob = doc.output("blob");
@@ -7066,79 +7184,84 @@ document.getElementById("exportSeatingPlanXlsx").onclick = async () => {
   const cols = Math.max(1, Math.ceil(totalSeats / rowsPerCol));
   const colCount = cols * 2;
   const lastCol = colCount; // 1-indexed last column for ExcelJS
+  const rooms = state.roomAlloc.rooms.length ? state.roomAlloc.rooms : [{ roomNo: h.roomNo, students: state.students }];
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("Seating Plan", {
-    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
-    views: [{ showGridLines: false }],
-  });
-  ws.columns = Array(colCount).fill({ width: 15 });
 
-  const addMergedText = (text, opts = {}) => {
-    const row = ws.addRow([]);
-    ws.mergeCells(row.number, 1, row.number, lastCol);
-    const cell = row.getCell(1);
-    cell.value = text;
-    cell.font = { bold: true, size: opts.size || 11, name: opts.font || "Calibri" };
-    cell.alignment = { horizontal: opts.align || "center", vertical: "middle" };
-    return row;
-  };
+  rooms.forEach((room) => {
+    const sheetName = `Room ${room.roomNo}`.replace(/[\\/?*[\]:]/g, "").slice(0, 31);
+    const ws = wb.addWorksheet(sheetName, {
+      pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
+      views: [{ showGridLines: false }],
+    });
+    ws.columns = Array(colCount).fill({ width: 15 });
 
-  addMergedText(h.institution, { size: 14 });
-  addMergedText("YAMNAMPET, GHATKESAR", { size: 10 });
-  addMergedText(h.examTitle, { size: 13 });
-  addMergedText(`Date of Exam: ${h.date}        Room No: ${h.roomNo}`, { align: "left" });
-  addMergedText(`Branch: ${h.branch}        Time: ${h.time}`, { align: "left" });
-  addMergedText(`Course Code & Title : ${h.courseCode}`, { align: "left" });
-  addMergedText("SEATING PLAN", { size: 13, font: "Times New Roman" });
-  ws.addRow([]);
+    const addMergedText = (text, opts = {}) => {
+      const row = ws.addRow([]);
+      ws.mergeCells(row.number, 1, row.number, lastCol);
+      const cell = row.getCell(1);
+      cell.value = text;
+      cell.font = { bold: true, size: opts.size || 11, name: opts.font || "Calibri" };
+      cell.alignment = { horizontal: opts.align || "center", vertical: "middle" };
+      return row;
+    };
 
-  // Table header row (Seat No / UR Number ...)
-  const headRow = [];
-  for (let c = 0; c < cols; c++) headRow.push("Seat No", "UR Number");
-  const headerRow = ws.addRow(headRow);
-  headerRow.eachCell((cell) => {
-    cell.font = { bold: true };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
-    cell.border = XLSX_BLACK_BORDER;
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFE8D8" } };
-  });
+    addMergedText(h.institution, { size: 14 });
+    addMergedText("YAMNAMPET, GHATKESAR", { size: 10 });
+    addMergedText(h.examTitle, { size: 13 });
+    addMergedText(`Date of Exam: ${h.date}        Room No: ${room.roomNo}`, { align: "left" });
+    addMergedText(`Branch: ${h.branch}        Time: ${h.time}`, { align: "left" });
+    addMergedText(`Course Code & Title : ${h.courseCode}`, { align: "left" });
+    addMergedText("SEATING PLAN", { size: 13, font: "Times New Roman" });
+    ws.addRow([]);
 
-  // Table body
-  for (let r = 0; r < rowsPerCol; r++) {
-    const line = [];
-    for (let c = 0; c < cols; c++) {
-      const seatNo = seatNumberAt(r, c, rowsPerCol);
-      const isBox = seatNo <= totalSeats;
-      const st = isBox && seatNo <= state.students.length ? state.students[seatNo - 1] : null;
-      if (!isBox) line.push("", "");
-      else line.push(seatNo, st ? st.register : "");
-    }
-    const bodyRow = ws.addRow(line);
-    bodyRow.eachCell({ includeEmpty: true }, (cell) => {
+    // Table header row (Seat No / UR Number ...)
+    const headRow = [];
+    for (let c = 0; c < cols; c++) headRow.push("Seat No", "UR Number");
+    const headerRow = ws.addRow(headRow);
+    headerRow.eachCell((cell) => {
       cell.font = { bold: true };
       cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.border = XLSX_BLACK_BORDER;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFE8D8" } };
     });
-  }
 
-  ws.addRow([]);
-  addMergedText(
-    "Cross the box containing the hall ticket number with red pen when the candidate is absent. Seating should be strictly arranged according to the above plan.",
-    { size: 10 }
-  );
-  ws.addRow([]);
+    // Table body
+    for (let r = 0; r < rowsPerCol; r++) {
+      const line = [];
+      for (let c = 0; c < cols; c++) {
+        const seatNo = seatNumberAt(r, c, rowsPerCol);
+        const isBox = seatNo <= totalSeats;
+        const st = isBox && seatNo <= room.students.length ? room.students[seatNo - 1] : null;
+        if (!isBox) line.push("", "");
+        else line.push(seatNo, st ? st.register : "");
+      }
+      const bodyRow = ws.addRow(line);
+      bodyRow.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { bold: true };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = XLSX_BLACK_BORDER;
+      });
+    }
 
-  const sigRow = ws.addRow([]);
-  sigRow.getCell(1).value = "Signature of Hall Superintendent";
-  sigRow.getCell(1).font = { bold: true };
-  ws.mergeCells(sigRow.number, lastCol - 1, sigRow.number, lastCol);
-  const sigRight = sigRow.getCell(lastCol - 1);
-  sigRight.value = "Signature of Chief Superintendent";
-  sigRight.font = { bold: true };
-  sigRight.alignment = { horizontal: "right" };
+    ws.addRow([]);
+    addMergedText(
+      "Cross the box containing the hall ticket number with red pen when the candidate is absent. Seating should be strictly arranged according to the above plan.",
+      { size: 10 }
+    );
+    ws.addRow([]);
 
-  const fileName = `SeatingPlan_Circular_Room${h.roomNo || ""}.xlsx`;
+    const sigRow = ws.addRow([]);
+    sigRow.getCell(1).value = "Signature of Hall Superintendent";
+    sigRow.getCell(1).font = { bold: true };
+    ws.mergeCells(sigRow.number, lastCol - 1, sigRow.number, lastCol);
+    const sigRight = sigRow.getCell(lastCol - 1);
+    sigRight.value = "Signature of Chief Superintendent";
+    sigRight.font = { bold: true };
+    sigRight.alignment = { horizontal: "right" };
+  });
+
+  const fileName = `SeatingPlan_Circular_AllRooms_${rooms.length}rooms.xlsx`;
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -7152,73 +7275,78 @@ document.getElementById("exportSeatingPlanPdf").onclick = () => {
   const rowsPerCol = getRowsPerCol();
   const totalSeats = getTotalSeats();
   const cols = Math.max(1, Math.ceil(totalSeats / rowsPerCol));
+  const rooms = state.roomAlloc.rooms.length ? state.roomAlloc.rooms : [{ roomNo: h.roomNo, students: state.students }];
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  const logoW = 120, logoH = 50;
-  doc.addImage(UNIVERSITY_LOGO_BASE64, "PNG", pageWidth / 2 - logoW / 2, 20, logoW, logoH);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(15);
-  doc.text(h.examTitle, pageWidth / 2, 92, { align: "center" });
-
-  doc.setFontSize(10);
-  doc.text(`Date of Exam: ${h.date}`, 40, 116);
-  doc.text(`Room No: ${h.roomNo}`, pageWidth - 40, 116, { align: "right" });
-  doc.text(`Branch: ${h.branch}`, 40, 132);
-  doc.text(`Time: ${h.time}`, pageWidth - 40, 132, { align: "right" });
-  doc.setFont("helvetica", "normal");
-  doc.text(`Course Code & Title : ${h.courseCode}`, 40, 148);
-
-  doc.setFont("times", "bold");
-  doc.setFontSize(16);
-  doc.text("SEATING PLAN", pageWidth / 2, 172, { align: "center" });
-
   const head = [[]];
   for (let c = 0; c < cols; c++) head[0].push("Seat No", "UR Number");
 
-  const body = [];
-  for (let r = 0; r < rowsPerCol; r++) {
-    const line = [];
-    for (let c = 0; c < cols; c++) {
-      const seatNo = seatNumberAt(r, c, rowsPerCol);
-      const isBox = seatNo <= totalSeats;
-      const st = isBox && seatNo <= state.students.length ? state.students[seatNo - 1] : null;
-      if (!isBox) line.push("", "");
-      else line.push(String(seatNo), st ? st.register : "");
-    }
-    body.push(line);
-  }
+  rooms.forEach((room, i) => {
+    if (i > 0) doc.addPage();
 
-  doc.autoTable({
-    head,
-    body,
-    startY: 186,
-    theme: "grid",
-    tableLineColor: [0, 0, 0],
-    tableLineWidth: 1.2,
-    styles: { fontSize: 8, halign: "center", valign: "middle", cellPadding: 8, fontStyle: "bold", textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.9 },
-    headStyles: { fillColor: [239, 232, 216], textColor: [0, 0, 0], fontStyle: "bold", lineColor: [0, 0, 0], lineWidth: 1.1 },
+    const logoW = 120, logoH = 50;
+    doc.addImage(UNIVERSITY_LOGO_BASE64, "PNG", pageWidth / 2 - logoW / 2, 20, logoW, logoH);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text(h.examTitle, pageWidth / 2, 92, { align: "center" });
+
+    doc.setFontSize(10);
+    doc.text(`Date of Exam: ${h.date}`, 40, 116);
+    doc.text(`Room No: ${room.roomNo}`, pageWidth - 40, 116, { align: "right" });
+    doc.text(`Branch: ${h.branch}`, 40, 132);
+    doc.text(`Time: ${h.time}`, pageWidth - 40, 132, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.text(`Course Code & Title : ${h.courseCode}`, 40, 148);
+
+    doc.setFont("times", "bold");
+    doc.setFontSize(16);
+    doc.text("SEATING PLAN", pageWidth / 2, 172, { align: "center" });
+
+    const body = [];
+    for (let r = 0; r < rowsPerCol; r++) {
+      const line = [];
+      for (let c = 0; c < cols; c++) {
+        const seatNo = seatNumberAt(r, c, rowsPerCol);
+        const isBox = seatNo <= totalSeats;
+        const st = isBox && seatNo <= room.students.length ? room.students[seatNo - 1] : null;
+        if (!isBox) line.push("", "");
+        else line.push(String(seatNo), st ? st.register : "");
+      }
+      body.push(line);
+    }
+
+    doc.autoTable({
+      head,
+      body,
+      startY: 186,
+      theme: "grid",
+      tableLineColor: [0, 0, 0],
+      tableLineWidth: 1.2,
+      styles: { fontSize: 8, halign: "center", valign: "middle", cellPadding: 8, fontStyle: "bold", textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.9 },
+      headStyles: { fillColor: [239, 232, 216], textColor: [0, 0, 0], fontStyle: "bold", lineColor: [0, 0, 0], lineWidth: 1.1 },
+    });
+
+    const afterTableY = doc.lastAutoTable.finalY + 24;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const noteLines = doc.splitTextToSize(
+      "Cross the box containing the hall ticket number with red pen when the candidate is absent. Seating should be strictly arranged according to the above plan.",
+      pageWidth - 80
+    );
+    doc.text(noteLines, pageWidth / 2, afterTableY, { align: "center" });
+
+    const sigY = afterTableY + noteLines.length * 12 + 40;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Signature of Hall Superintendent", 40, sigY);
+    doc.text("Signature of Chief Superintendent", pageWidth - 40, sigY, { align: "right" });
   });
 
-  const afterTableY = doc.lastAutoTable.finalY + 24;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  const noteLines = doc.splitTextToSize(
-    "Cross the box containing the hall ticket number with red pen when the candidate is absent. Seating should be strictly arranged according to the above plan.",
-    pageWidth - 80
-  );
-  doc.text(noteLines, pageWidth / 2, afterTableY, { align: "center" });
-
-  const sigY = afterTableY + noteLines.length * 12 + 40;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Signature of Hall Superintendent", 40, sigY);
-  doc.text("Signature of Chief Superintendent", pageWidth - 40, sigY, { align: "right" });
-
-  const fileName = `SeatingPlan_Circular_Room${h.roomNo || ""}.pdf`;
+  const fileName = `SeatingPlan_Circular_AllRooms_${rooms.length}rooms.pdf`;
   doc.save(fileName);
 
   const blob = doc.output("blob");
