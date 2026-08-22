@@ -6419,7 +6419,7 @@ function syncRoomToConsolidated() {
     roomNo: h.roomNo,
     students: state.students.length,
     urNumbers: computeUrNumbers(state.students),
-    department: h.branch,
+    department: roomBranchLabel(state.students),
   };
   const idx = state.consolidated.rows.findIndex((r) => r.roomNo === h.roomNo);
   if (idx >= 0) state.consolidated.rows[idx] = row;
@@ -6594,7 +6594,7 @@ function buildRoomAttendancePdfDoc(room) {
   doc.setFontSize(10);
   doc.text(`Course Code & Title : ${h.courseCode}`, 40, 126);
   doc.setFont("helvetica", "bold");
-  doc.text(`Branch: ${h.branch}`, 40, 142);
+  doc.text(`Branch: ${roomBranchLabel(room.students)}`, 40, 142);
   doc.text(`Time: ${h.time}`, pageWidth - 40, 142, { align: "right" });
 
   doc.autoTable({
@@ -6876,6 +6876,7 @@ function renderPreview() {
     const room = currentRoom();
     const roomNo = room ? room.roomNo : h.roomNo;
     const roomStudents = activeRoomStudents();
+    const roomBranch = roomBranchLabel(roomStudents);
 
     if (state.tab === "roster") {
       // Letterhead: logo, exam title, date pinned top-right
@@ -6888,7 +6889,7 @@ function renderPreview() {
       html += `</div>`;
       html += `<div class="doc-meta">`;
       html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
-      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
+      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(roomBranch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
       html += `</div>`;
       html += `<table class="sheet"><thead><tr><th>Sl.No</th><th>Register Number</th><th>Name of the Student</th><th>Answer Booklet Sl.No</th><th>Signature</th></tr></thead><tbody>`;
       roomStudents.forEach((s) => {
@@ -6913,7 +6914,7 @@ function renderPreview() {
       html += `</div>`;
       html += `<div class="doc-meta">`;
       html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
-      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
+      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(roomBranch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
       html += `</div>`;
       html += `<div class="doc-title" style="font-size:15px;margin:14px 0 8px;">SEATING PLAN</div>`;
       html += seatTableHtml(rowsPerCol, cols);
@@ -6935,7 +6936,7 @@ function renderPreview() {
       html += `</div>`;
       html += `<div class="doc-meta">`;
       html += `<div class="doc-row"><span><b>Date of Exam:</b> ${escapeHtml(h.date)}</span><span><b>Room No:</b> ${escapeHtml(roomNo)}</span></div>`;
-      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(h.branch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
+      html += `<div class="doc-row"><span><b>Branch:</b> ${escapeHtml(roomBranch)}</span><span><b>Time:</b> ${escapeHtml(h.time)}</span></div>`;
       html += `<div><b>Course Code &amp; Title :</b> ${escapeHtml(h.courseCode)}</div>`;
       html += `</div>`;
       html += `<div class="doc-title seating-plan-heading" style="margin:14px 0 8px;">SEATING PLAN</div>`;
@@ -7025,7 +7026,7 @@ document.getElementById("exportAttendance").onclick = () => {
       [h.institution],
       [h.examTitle],
       [`Course Code & Title : ${h.courseCode}`],
-      [`Branch: ${h.branch}        Room No: ${room.roomNo}        Date: ${h.date}        Time: ${h.time}`],
+      [`Branch: ${roomBranchLabel(room.students)}        Room No: ${room.roomNo}        Date: ${h.date}        Time: ${h.time}`],
       [],
       ["Sl.No", "Register Number", "Name of the Student", "Answer Booklet Serial Number", "Signature of Student"],
     ];
@@ -7072,7 +7073,7 @@ document.getElementById("exportSeatingXlsx").onclick = () => {
       [`Room No : ${room.roomNo}`],
       [`Date:${h.date}`],
       [`Course Code & Title : ${h.courseCode}`],
-      [`Branch: ${h.branch}        Time: ${h.time}`],
+      [`Branch: ${roomBranchLabel(room.students)}        Time: ${h.time}`],
       ["SEATING PLAN"],
       [],
       headRow,
@@ -7149,7 +7150,7 @@ document.getElementById("exportSeatingPdf").onclick = () => {
     doc.setFontSize(10);
     doc.text(`Course Code & Title : ${h.courseCode}`, 40, 138);
     doc.setFont("helvetica", "bold");
-    doc.text(`Branch: ${h.branch}`, 40, 154);
+    doc.text(`Branch: ${roomBranchLabel(room.students)}`, 40, 154);
     doc.text(`Time: ${h.time}`, pageWidth - 40, 154, { align: "right" });
 
     doc.setFontSize(12);
@@ -7248,7 +7249,7 @@ document.getElementById("exportSeatingPlanXlsx").onclick = async () => {
     addMergedText("YAMNAMPET, GHATKESAR", { size: 10 });
     addMergedText(h.examTitle, { size: 13 });
     addMergedText(`Date of Exam: ${h.date}        Room No: ${room.roomNo}`, { align: "left" });
-    addMergedText(`Branch: ${h.branch}        Time: ${h.time}`, { align: "left" });
+    addMergedText(`Branch: ${roomBranchLabel(room.students)}        Time: ${h.time}`, { align: "left" });
     addMergedText(`Course Code & Title : ${h.courseCode}`, { align: "left" });
     addMergedText("SEATING PLAN", { size: 13, font: "Times New Roman" });
     ws.addRow([]);
@@ -7335,7 +7336,7 @@ document.getElementById("exportSeatingPlanPdf").onclick = () => {
     doc.setFontSize(10);
     doc.text(`Date of Exam: ${h.date}`, 40, 116);
     doc.text(`Room No: ${room.roomNo}`, pageWidth - 40, 116, { align: "right" });
-    doc.text(`Branch: ${h.branch}`, 40, 132);
+    doc.text(`Branch: ${roomBranchLabel(room.students)}`, 40, 132);
     doc.text(`Time: ${h.time}`, pageWidth - 40, 132, { align: "right" });
     doc.setFont("helvetica", "normal");
     doc.text(`Course Code & Title : ${h.courseCode}`, 40, 148);
