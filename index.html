@@ -1334,15 +1334,56 @@ function seeEntryLocked(){
    time-of-day), not just a date, so the window can open/close at a precise
    time of day rather than only at midnight. Leaving both unset (the
    default) means Practical Internal Test behaves exactly like before — no
-   window, always open. */
+   window, always open.
+
+   ON TOP of this per-course CC/HOD window, the Administrator can ALSO fix
+   one global window that applies to every section at once (App.state.
+   practicalInternalWindow / App.setPracticalWindow('pracInternal', ...) —
+   set from the Term Test Cycle admin page). Entry needs to be inside BOTH
+   windows wherever both are set — whichever is stricter wins — so nothing
+   already relying on the CC/HOD fields breaks; the Administrator's window
+   is just an additional, equally-enforced fence. The same pair of
+   functions is reused for SEE Practical (which has no per-course CC/HOD
+   fields at all — only the Administrator's global window applies there),
+   selected via the `windowState` param. */
+function adminWindowFor(kind){
+  return kind==='pracInternal' ? App.state.practicalInternalWindow : App.state.seePracticalWindow;
+}
 function pracInternalDeadlinePassed(course){
-  if(!course || !course.pracInternalDeadline) return false;
+  if(!course) return false;
+  const adminWin = adminWindowFor('pracInternal');
+  if(adminWin && adminWin.endDate){
+    const end = new Date(adminWin.endDate);
+    if(!isNaN(end.getTime()) && Date.now() > end.getTime()) return true;
+  }
+  if(!course.pracInternalDeadline) return false;
   const end = new Date(course.pracInternalDeadline);
   return !isNaN(end.getTime()) && Date.now() > end.getTime();
 }
 function pracInternalNotYetStarted(course){
-  if(!course || !course.pracInternalStart) return false;
+  if(!course) return false;
+  const adminWin = adminWindowFor('pracInternal');
+  if(adminWin && adminWin.startDate){
+    const start = new Date(adminWin.startDate);
+    if(!isNaN(start.getTime()) && Date.now() < start.getTime()) return true;
+  }
+  if(!course.pracInternalStart) return false;
   const start = new Date(course.pracInternalStart);
+  return !isNaN(start.getTime()) && Date.now() < start.getTime();
+}
+/* SEE Practical has no per-course CC/HOD fields (unlike Practical Internal
+   above) — only the Administrator's global window (if any) gates it. No
+   window set at all means no restriction, same default as everything else. */
+function seePracticalDeadlinePassed(){
+  const adminWin = adminWindowFor('seePractical');
+  if(!adminWin || !adminWin.endDate) return false;
+  const end = new Date(adminWin.endDate);
+  return !isNaN(end.getTime()) && Date.now() > end.getTime();
+}
+function seePracticalNotYetStarted(){
+  const adminWin = adminWindowFor('seePractical');
+  if(!adminWin || !adminWin.startDate) return false;
+  const start = new Date(adminWin.startDate);
   return !isNaN(start.getTime()) && Date.now() < start.getTime();
 }
 
@@ -2383,7 +2424,7 @@ function seedState(){
     { id:'note_seed2', forUserId:'cc1', courseId:'c1', title:"You're now Course Coordinator", body:"Dr. Suresh Menon assigned you as Course Coordinator for CS301 — Data Structures. This role is active immediately.", ts:t0, read:true },
   ];
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:null, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
 }
 
 /* ---------------- Supabase-backed persistence ----------------
@@ -2505,6 +2546,16 @@ async function fetchStateFromSupabase(){
 
   const termTestHistory = (ttHistoryR.data||[]).map(t=>({ id:t.id, ts:new Date(t.ts).getTime(), by:t.by_name, value:t.value, academicYear:t.academic_year||null, semester:t.semester||null, cycle:t.value }));
 
+  // Generic app_settings loader — unwraps the JSON.stringify() layer
+  // syncAppSetting() always writes, same as currentTermTest above.
+  const loadJsonSetting = (key) => {
+    const row = (settingsR.data||[]).find(r=>r.key===key);
+    if(!row || row.value===null || row.value===undefined) return null;
+    let v = row.value;
+    if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ /* leave as-is */ } }
+    return v;
+  };
+
   let currentTermTest = null;
   const ctRow = (settingsR.data||[]).find(r=>r.key==='current_term_test');
   if(ctRow && ctRow.value!==null && ctRow.value!==undefined){
@@ -2526,11 +2577,22 @@ async function fetchStateFromSupabase(){
     currentTermTest = (v && typeof v === 'object') ? v : (v ? { academicYear:null, semester:null, cycle:v } : null);
   }
 
+  // Admin-fixed marks-entry windows for Practical Internal Test and SEE
+  // Practical — each { startDate, endDate } (either optional), set from
+  // the same Term Test Cycle admin page. Independent of the TT1/2/3
+  // cycle selector above (these don't supersede one another) and
+  // independent of the legacy per-course CC/HOD deadline fields
+  // (course.pracInternalStart/pracInternalDeadline) — both gates apply,
+  // whichever is stricter, so nothing that already relied on the CC/HOD
+  // fields breaks.
+  const practicalInternalWindow = loadJsonSetting('practical_internal_window');
+  const seePracticalWindow = loadJsonSetting('see_practical_window');
+
   const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
   const studentDirectory = (studentDirR.data||[]).map(s=>({ id:s.id, rollNo:s.roll_no, name:s.name, email:s.email||'', branch:s.branch, batch:s.batch, semester:s.semester||'' }));
   const courseRegistrations = (courseRegR.data||[]).map(r=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||'', semester:r.semester||'', rollNo:r.roll_no, studentName:r.student_name, subjectName:r.subject_name, sectionCode:r.section_code||'', instructorName:r.instructor_name||'' }));
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, termTestHistory, subjects, studentDirectory, courseRegistrations };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, practicalInternalWindow, seePracticalWindow, termTestHistory, subjects, studentDirectory, courseRegistrations };
 }
 
 // Lightweight, pre-login fetch — just the public directory, used to
@@ -2904,7 +2966,7 @@ function itemViewerBackBtnHtml(course, ciBackView, ciBackParams, ciBackLabel){
 }
 
 const App = {
-  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
+  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
   ui: { view:'', params:{} },
   ready:false,
 
@@ -4101,6 +4163,42 @@ const App = {
     toast(`${label} closed — marks entry is locked.`, 'ok');
     renderContent();
     renderBell();
+  },
+
+  /* ---------- Admin-fixed marks-entry windows for Practical Internal Test
+     and SEE Practical — set from the same Term Test Cycle admin page as
+     setTermTest above, but independent of it: these two don't supersede
+     one another or the active TT cycle, they're just their own optional
+     start/end fences. Layered ON TOP of the legacy per-course CC/HOD
+     deadline (course.pracInternalStart/pracInternalDeadline for
+     Practical Internal) rather than replacing it — entry needs to pass
+     BOTH gates, so nothing already relying on the CC/HOD fields breaks;
+     this just gives the Administrator an equal (or stricter) say. ---------- */
+  setPracticalWindow(kind, startDate=null, endDate=null){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can fix this window.', 'err'); return; }
+    if(kind!=='pracInternal' && kind!=='seePractical'){ return; }
+    if(startDate && endDate && new Date(startDate).getTime() > new Date(endDate).getTime()){ toast('The end date/time must be after the start date/time.', 'err'); return; }
+    const value = { startDate: startDate||null, endDate: endDate||null };
+    const settingKey = kind==='pracInternal' ? 'practical_internal_window' : 'see_practical_window';
+    const label = kind==='pracInternal' ? 'Practical Internal Test' : 'SEE Practical';
+    if(kind==='pracInternal') this.state.practicalInternalWindow = value;
+    else this.state.seePracticalWindow = value;
+    syncAppSetting(settingKey, value);
+    const windowLabel = startDate || endDate ? ` Open ${startDate?fmtDate(new Date(startDate).getTime()):'now'} through ${endDate?fmtDate(new Date(endDate).getTime()):'further notice'}.` : ' No time restriction.';
+    toast(`${label} marks-entry window set.${windowLabel}`, 'ok');
+    renderContent();
+  },
+  clearPracticalWindow(kind){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can clear this window.', 'err'); return; }
+    if(kind!=='pracInternal' && kind!=='seePractical'){ return; }
+    const settingKey = kind==='pracInternal' ? 'practical_internal_window' : 'see_practical_window';
+    if(kind==='pracInternal') this.state.practicalInternalWindow = null;
+    else this.state.seePracticalWindow = null;
+    syncAppSetting(settingKey, null);
+    toast('Window cleared — no time restriction from the Administrator now.', 'ok');
+    renderContent();
   },
 
   /* ---------- Delay sweep: flags every course-section whose CI never
@@ -5549,12 +5647,22 @@ function studentNameCell(s){
 }
 
 /* Read-only combined table — used by CC / EA / HOD / Examination Branch / print / CSV export */
-function marksViewTable(course, editable){
+// Term Test slots (however the active Evaluation Type template names them)
+// excluded from the "View CIE Marks" / "View Total Marks" read-only pages
+// per the Admin's rule: those two views only ever show SIA, Regular Lab
+// Performance Assessment, Practical Internal Test, and any other non-Term
+// Test CIE component — Term Test 1/2/3 marks stay out of sight there
+// (they're still entered as normal on their own dedicated pages).
+const TERM_TEST_CIE_KEYS = ['tt1', 'tt2', 'tt3', 'termTest'];
+function nonTermTestCieComponents(template){
+  return (template && template.cie || []).filter(c => !TERM_TEST_CIE_KEYS.includes(c.key));
+}
+function marksViewTable(course, editable, hideTermTest){
   if(!course.evalType){
     return `<div class="empty-state"><div class="em-title">Evaluation Type not yet fixed</div>The Course Coordinator hasn't fixed an Evaluation Type for this section yet, so no marks components exist to display.</div>`;
   }
   const template = getCourseTemplate(course);
-  const cieComponents = template.cie;
+  const cieComponents = hideTermTest ? nonTermTestCieComponents(template) : template.cie;
   const seeComponents = seeDisplayComponents(template);
   const seeTotalMax = seeComponents.reduce((a,c)=>a+c.scaledMax,0);
   const grandMax = round1(CIE_MAX + seeTotalMax);
@@ -5574,26 +5682,30 @@ function marksViewTable(course, editable){
   const rows = course.students.map(s=>{
     const gt = computeGrandTotal(s, course);
     const cieCells = cieComponents.map(comp=>cellHtml(course, s, comp)).join('');
-    const seeCells = seeComponents.map(comp=>cellHtml(course, s, comp)).join('');
+    const seeCells = hideTermTest ? '' : seeComponents.map(comp=>cellHtml(course, s, comp)).join('');
+    const totalCells = hideTermTest ? '' : `
+      <td class="total-cell">${gt.cieTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
+      ${seeCells}
+      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>`;
     return `<tr>
       <td>${studentNameCell(s)}</td>
       ${cieCells}
-      <td class="total-cell">${gt.cieTotal} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${CIE_MAX}</span></td>
-      ${seeCells}
-      <td class="total-cell">${gt.total} <span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${grandMax}</span></td>
+      ${totalCells}
     </tr>`;
   }).join('');
   const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
-  const seeHead = seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const seeHead = hideTermTest ? '' : seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const totalsHead = hideTermTest ? '' : `<th>CIE Total</th>${seeHead}<th>Total</th>`;
   return `
     <div class="weight-inline">
       <div class="weight-track"><div class="weight-cie"></div><div class="weight-see"></div></div>
-      <span>Evaluation Type: <strong>${escapeHtml(template.label)}</strong> · CIE (${cieComponents.map(c=>c.label).join(', ')}) · SEE (${seeComponents.map(c=>c.label).join(', ')})</span>
+      <span>Evaluation Type: <strong>${escapeHtml(template.label)}</strong> · CIE (${cieComponents.map(c=>c.label).join(', ')})${hideTermTest ? '' : ` · SEE (${seeComponents.map(c=>c.label).join(', ')})`}</span>
     </div>
     ${editable ? `<p class="section-meta" style="margin-top:8px;color:var(--seal-red);">Edit mode — changes here are not saved until you press "Save Changes &amp; Notify CI" below.</p>` : ''}
+    ${hideTermTest ? `<p class="section-meta" style="margin-top:8px;">Term Test 1/2/3 marks are entered and viewed on their own dedicated pages, not here — this view only covers SIA, Regular Lab Performance Assessment, Practical Internal Test, and any other non-Term-Test component, so no CIE/Total column is shown (it would be incomplete without the Term Test scores).</p>` : ''}
     <div class="table-scroll">
       <table class="data-table" style="margin-top:14px;min-width:920px;">
-        <thead><tr><th>Student</th>${cieHead}<th>CIE Total</th>${seeHead}<th>Total</th></tr></thead>
+        <thead><tr><th>Student</th>${cieHead}${totalsHead}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -5668,20 +5780,6 @@ function marksEntryTabs(course){
   const showLabExtTab = labExtComps.length > 0;
   const showSeeTab = otherSee.length > 0;
 
-  const cieRows = course.students.map(s=>{
-    const cie = computeCIE(s, otherCie);
-    const cells = otherCie.map(comp=>{
-      const val = s.marks[comp.key];
-      const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
-      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
-        class="${overMax?'invalid':''}"
-        data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
-        data-markkey="${course.id}|${s.id}|${comp.key}"
-        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
-        onchange="onMarkChange(this)"></td>`;
-    }).join('');
-    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${cie.total}</td></tr>`;
-  }).join('');
   const cieHead = otherCie.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
 
   const seeRows = course.students.map(s=>{
@@ -5702,6 +5800,34 @@ function marksEntryTabs(course){
 
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const editable = course.status==='draft' || correctionMode;
+
+  // SIA and Regular Lab Performance Assessment only open up once Term Test
+  // 1 is fully HOD-approved (itemApproval stage 'done') — per the Admin's
+  // rule, these two specific "Other CIE" components stay locked until
+  // then, while every other Other-CIE component (Assignments, Tutorials,
+  // Skill/Project, etc.) keeps working exactly as before. If this
+  // Evaluation Type has no Term Test 1 slot at all, there's nothing to
+  // gate on, so nothing is locked.
+  const tt1Key = termTestComponentKey(template, 'TT1');
+  const tt1Done = tt1Key ? App.itemApproval(course.id, 'tt1').stage === 'done' : true;
+  const gatedEditable = editable && tt1Done;
+  const tt1LockNote = (!tt1Done) ? `<p class="section-meta" style="margin:8px 0;color:var(--seal-red);">Locked until Term Test 1 is approved by the HOD.</p>` : '';
+
+  const otherCieGatedRows = course.students.map(s=>{
+    const cie = computeCIE(s, otherCie);
+    const cells = otherCie.map(comp=>{
+      const val = s.marks[comp.key];
+      const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
+      const compEditable = comp.key==='regularLabPerf' ? gatedEditable : editable;
+      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        class="${overMax?'invalid':''}"
+        data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
+        data-markkey="${course.id}|${s.id}|${comp.key}"
+        value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}" ${compEditable?'':'disabled'}
+        onchange="onMarkChange(this)"></td>`;
+    }).join('');
+    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${cie.total}</td></tr>`;
+  }).join('');
 
   const tabs = [
     { key:'ttlab', label:'Term Test & Lab Internal' },
@@ -5726,9 +5852,11 @@ function marksEntryTabs(course){
       ${approvalGroupPanel(course, template, 'labext', labExtComps, editable)}
     </div>` : ''}
     <div id="tab-othercie" class="tab-panel ${activeMarksTab==='othercie'?'':'hidden'}">
-      ${siaComp ? siaEntryHtml(course, siaComp, editable) : ''}
+      ${siaComp ? tt1LockNote : ''}
+      ${siaComp ? siaEntryHtml(course, siaComp, gatedEditable) : ''}
       <p class="section-meta" style="margin-bottom:8px;margin-top:${siaComp?'16px':'0'};">No HOD approval needed here — scaled straight per the Evaluation Type as usual: ${otherCie.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ') || '— none for this Evaluation Type —'}.</p>
-      ${otherCie.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>Group Total</th></tr></thead><tbody>${cieRows}</tbody></table></div>` : ''}
+      ${otherCie.some(c=>c.key==='regularLabPerf') ? tt1LockNote : ''}
+      ${otherCie.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${cieHead}<th>Group Total</th></tr></thead><tbody>${otherCieGatedRows}</tbody></table></div>` : ''}
     </div>
     ${showSeeTab ? `<div id="tab-see" class="tab-panel ${activeMarksTab==='see'?'':'hidden'}">
       <p class="section-meta" style="margin-bottom:8px;">No HOD approval needed here: ${otherSee.map(c=>`${c.label} (/${c.rawMax}→/${c.scaledMax})`).join(', ')}. SEE Theory is entered and evaluated separately by the Examination Branch and no longer appears on this screen.</p>
@@ -8437,6 +8565,52 @@ function renderHODCCDetail(params){
   return wrap;
 }
 
+// Admin card for the Practical Internal Test / SEE Practical windows —
+// see App.setPracticalWindow/clearPracticalWindow. Independent of the
+// TT1/2/3 cycle selector above (both can be open at once) and layered on
+// top of the legacy per-course CC/HOD Practical Internal deadline rather
+// than replacing it (see approvalGroupPanel's pracLocked/seeLockedFinal).
+function practicalWindowsCardHtml(){
+  const toLocalInputValue = iso => { if(!iso) return ''; const d = new Date(iso); const pad = n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const windowCard = (kind, label, win) => {
+    const now = Date.now();
+    const startTs = win?.startDate ? new Date(win.startDate).getTime() : null;
+    const endTs = win?.endDate ? new Date(win.endDate).getTime() : null;
+    let badge = `<span class="status-pill status-draft">No restriction</span>`;
+    if(win && (startTs || endTs)){
+      if(startTs && now < startTs) badge = `<span class="status-pill status-draft">Upcoming — opens ${fmtDate(startTs)}</span>`;
+      else if(endTs && now > endTs) badge = `<span class="status-pill status-rejected">Closed — window ended ${fmtDate(endTs)}</span>`;
+      else badge = `<span class="status-pill status-approved">Open${endTs ? ` — until ${fmtDate(endTs)}` : ''}</span>`;
+    }
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:${kind==='pracInternal'?'0':'18px'};">
+        <div class="section-title" style="font-size:14px;">${label}</div>
+        ${badge}
+      </div>
+      <div class="config-grid" style="max-width:480px;margin-top:8px;">
+        <div class="config-field">
+          <label>Opens <span style="text-transform:none;">(optional)</span></label>
+          <input type="datetime-local" id="pw-start-${kind}" value="${toLocalInputValue(win?.startDate)}">
+        </div>
+        <div class="config-field">
+          <label>Closes <span style="text-transform:none;">(optional)</span></label>
+          <input type="datetime-local" id="pw-end-${kind}" value="${toLocalInputValue(win?.endDate)}">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn btn-sm" onclick="App.setPracticalWindow('${kind}', document.getElementById('pw-start-${kind}').value||null, document.getElementById('pw-end-${kind}').value||null)">Save</button>
+        ${win && (win.startDate || win.endDate) ? `<button class="btn btn-outline btn-sm" onclick="App.clearPracticalWindow('${kind}')">Clear</button>` : ''}
+      </div>`;
+  };
+  return `
+    <div class="card">
+      <div class="page-eyebrow" style="margin-bottom:2px;">Administrator</div>
+      <div class="section-title" style="font-size:15px;">Practical Internal Test &amp; SEE Practical windows</div>
+      <p class="section-meta" style="margin-top:4px;">Independent of the Term Test cycle above — both of these can be open at the same time as a Term Test, or on their own. Leave Opens/Closes blank for no restriction. Practical Internal Test also still respects any window the Course Coordinator has set on that section's Question Paper Setup page — both have to be open for the Course Instructor to enter marks.</p>
+      ${windowCard('pracInternal', 'Practical Internal Test', App.state.practicalInternalWindow)}
+      ${windowCard('seePractical', 'SEE Practical', App.state.seePracticalWindow)}
+    </div>`;
+}
 function renderHODTermTest(){
   const eyebrow = 'Administrator';
   const current = App.state.currentTermTest;
@@ -8502,6 +8676,7 @@ function renderHODTermTest(){
         ${current && curCycle ? `<button class="btn btn-red" onclick="if(confirm('Close ${escapeHtml(TERM_TEST_LABELS[curCycle])} now? Marks entry for it will lock immediately everywhere.')) App.closeTermTestCycle()">Close this cycle now</button>` : ''}
       </div>
     </div>
+    ${practicalWindowsCardHtml()}
     <div class="card">
       <div class="section-title" style="font-size:15px;">Cycle history</div>
       ${history.length===0 ? `<p style="margin-top:10px;color:var(--text-soft);font-size:13.5px;">No cycle has been fixed yet.</p>` : `
@@ -9972,17 +10147,36 @@ function renderCIComponentEntry(params){
   const seeLocked = section==='see' && seeEntryLocked();
   const pracNotStarted = comp.key==='pracInternal' && pracInternalNotYetStarted(course);
   const pracEnded = comp.key==='pracInternal' && pracInternalDeadlinePassed(course);
-  const pracLocked = pracNotStarted || pracEnded;
-  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci') && !seeLocked && !pracLocked;
+  // Administrator-fixed windows (App.setPracticalWindow) — independent of,
+  // and layered on top of, the gates above: entry needs every applicable
+  // gate to pass, whichever one is currently stricter.
+  const now = Date.now();
+  const adminPracWindow = App.state.practicalInternalWindow;
+  const adminPracNotStarted = comp.key==='pracInternal' && !!(adminPracWindow && adminPracWindow.startDate && now < new Date(adminPracWindow.startDate).getTime());
+  const adminPracEnded = comp.key==='pracInternal' && !!(adminPracWindow && adminPracWindow.endDate && now > new Date(adminPracWindow.endDate).getTime());
+  const adminSeeWindow = App.state.seePracticalWindow;
+  const adminSeeNotStarted = section==='see' && !!(adminSeeWindow && adminSeeWindow.startDate && now < new Date(adminSeeWindow.startDate).getTime());
+  const adminSeeEnded = section==='see' && !!(adminSeeWindow && adminSeeWindow.endDate && now > new Date(adminSeeWindow.endDate).getTime());
+  const seeLockedFinal = seeLocked || adminSeeNotStarted || adminSeeEnded;
+  const pracLocked = pracNotStarted || pracEnded || adminPracNotStarted || adminPracEnded;
+  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci') && !seeLockedFinal && !pracLocked;
   const note = itemKey
     ? `Has its own CI → CC → EA → HOD verification chain — see the status card below.`
     : `No approval chain here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
   const lockBannerHtml = seeLocked
     ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">Sem-End Exam entry is locked while <strong>${escapeHtml(TERM_TEST_LABELS[App.state.currentTermTest.cycle]||App.state.currentTermTest.cycle)}</strong> is the active Term Test cycle. It opens once the Administrator closes the Term Test cycle out.</p></div>`
+    : adminSeeNotStarted
+    ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">SEE Practical marks-entry hasn't opened yet — it starts at ${fmtDate(new Date(adminSeeWindow.startDate).getTime())} (set by the Administrator).</p></div>`
+    : adminSeeEnded
+    ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">SEE Practical marks-entry closed at ${fmtDate(new Date(adminSeeWindow.endDate).getTime())} (set by the Administrator) — entry is locked.</p></div>`
     : pracNotStarted
     ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">The Practical Internal Test marks-entry window hasn't opened yet — it starts at ${fmtDate(new Date(course.pracInternalStart).getTime())} (set by the Course Coordinator).</p></div>`
     : pracEnded
     ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">The Practical Internal Test marks-entry window closed at ${fmtDate(new Date(course.pracInternalDeadline).getTime())} (set by the Course Coordinator) — entry is locked.</p></div>`
+    : adminPracNotStarted
+    ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">Practical Internal Test marks-entry hasn't opened yet — it starts at ${fmtDate(new Date(adminPracWindow.startDate).getTime())} (set by the Administrator).</p></div>`
+    : adminPracEnded
+    ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">Practical Internal Test marks-entry closed at ${fmtDate(new Date(adminPracWindow.endDate).getTime())} (set by the Administrator) — entry is locked.</p></div>`
     : '';
 
   const bodyHtml = comp.key==='sia' ? siaEntryHtml(course, comp, editable) : (()=>{
@@ -10174,21 +10368,31 @@ function renderCISectionView(params){
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
   const section = params.section==='see' ? 'see' : params.section==='total' ? 'total' : 'cie';
   const pageTitle = section==='cie' ? 'CIE Marks — view only' : section==='see' ? 'SEE Marks — view only' : 'Total Marks — view only';
-  const bodyHtml = section==='total' ? marksViewTable(course) : (()=>{
+  // "View CIE Marks" and "View Total Marks" both hide Term Test 1/2/3 —
+  // per the Admin's rule, the CI only sees SIA / Regular Lab Performance
+  // Assessment / Practical Internal Test / any other non-Term-Test
+  // component here, and no combined total (a "CIE Total"/"Total" would be
+  // incomplete without the Term Test scores it's deliberately missing).
+  // "View SEE Marks" is untouched — Term Test is a CIE-side thing only.
+  const bodyHtml = section==='total' ? marksViewTable(course, false, true) : (()=>{
     const template = getCourseTemplate(course);
-    const comps = section==='cie' ? template.cie : seeDisplayComponents(template);
-    const sectionMax = section==='cie' ? CIE_MAX : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
+    const hideTermTest = section==='cie';
+    const comps = section==='cie' ? nonTermTestCieComponents(template) : seeDisplayComponents(template);
+    const sectionMax = section==='cie' ? null : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
     const rows = course.students.map(s=>{
-      const calc = computeCIE(s, comps);
+      const calc = hideTermTest ? null : computeCIE(s, comps);
       const cells = comps.map(comp=>{
         const v = s.marks[comp.key];
         const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
         return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
       }).join('');
-      return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td></tr>`;
+      const totalCell = hideTermTest ? '' : `<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td>`;
+      return `<tr><td>${studentNameCell(s)}</td>${cells}${totalCell}</tr>`;
     }).join('');
     const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
-    return comps.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}<th>${section==='cie'?'CIE':'SEE'} Total</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'CIE':'SEE'} components on this Evaluation Type.</p>`;
+    const totalHead = hideTermTest ? '' : `<th>${section==='cie'?'CIE':'SEE'} Total</th>`;
+    const note = hideTermTest ? `<p class="section-meta" style="margin-bottom:10px;">Term Test 1/2/3 marks are entered and viewed on their own dedicated pages, not here — this view only covers SIA, Regular Lab Performance Assessment, Practical Internal Test, and any other non-Term-Test component, so no CIE Total is shown (it would be incomplete without the Term Test scores).</p>` : '';
+    return comps.length ? `${note}<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}${totalHead}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'non-Term-Test CIE':'SEE'} components on this Evaluation Type.</p>`;
   })();
   wrap.innerHTML = `
     <div class="page-head">
@@ -10656,6 +10860,10 @@ function renderCCTermTestSetup(params){
   const pracComp = labInternalComponent(template);
   const pracDeadlinePassed = pracInternalDeadlinePassed(course);
   const pracNotYetStarted = pracInternalNotYetStarted(course);
+  const adminPracWindow = App.state.practicalInternalWindow;
+  const adminPracNote = adminPracWindow && (adminPracWindow.startDate || adminPracWindow.endDate)
+    ? `<p class="section-meta" style="margin-top:8px;">The Administrator has also fixed a window for Practical Internal Test: ${adminPracWindow.startDate?`opens ${fmtDate(new Date(adminPracWindow.startDate).getTime())}`:'open now'} ${adminPracWindow.endDate?`through ${fmtDate(new Date(adminPracWindow.endDate).getTime())}`:'until further notice'}. Both this window and the Administrator's have to be open for the Course Instructor to enter marks.</p>`
+    : '';
   const pracDeadlineHtml = pracComp ? `
     <div class="card">
       <div class="section-title" style="font-size:14px;">Practical Internal Test — marks-entry window</div>
@@ -10674,6 +10882,7 @@ function renderCCTermTestSetup(params){
       </div>
       ${course.pracInternalStart ? `<p class="section-meta" style="margin-top:8px;${pracNotYetStarted?'color:var(--warn);':''}">${pracNotYetStarted ? `Starting time (${fmtDate(new Date(course.pracInternalStart).getTime())}) hasn't arrived yet — Practical Internal Test entry is locked for the Course Instructor until then.` : `Opened from ${fmtDate(new Date(course.pracInternalStart).getTime())}.`}</p>` : ''}
       ${course.pracInternalDeadline ? `<p class="section-meta" style="margin-top:4px;${pracDeadlinePassed?'color:var(--seal-red);':''}">${pracDeadlinePassed ? `Ending time (${fmtDate(new Date(course.pracInternalDeadline).getTime())}) has passed — Practical Internal Test entry is now locked for the Course Instructor.` : `Currently closes at ${fmtDate(new Date(course.pracInternalDeadline).getTime())}.`}</p>` : ''}
+      ${adminPracNote}
     </div>` : '';
 
   const cycles = ['TT1','TT2'].filter(cycle=>termTestComponentKey(template, cycle));
