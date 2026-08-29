@@ -5875,7 +5875,11 @@ function marksViewTable(course, editable, hideTermTest){
         value="${v===undefined||v===null?'':v}" placeholder="/${rawScale}"
         onchange="onMarkChange(this)"></td>`;
     }
-    return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span></td>`;
+    // View-only: show the SCALED weight (e.g. SIA's raw /50 shown as its
+    // scaled /5, /10, /15... per this Evaluation Type) rather than the raw
+    // entry total — the raw total is still visible on the entry page itself.
+    const scaledVal = typeof v==='number' ? round1((Math.min(v,rawScale)/rawScale)*comp.scaledMax) : null;
+    return `<td>${scaledVal===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${scaledVal}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>`;
   };
   const rows = course.students.map(s=>{
     const gt = computeGrandTotal(s, course);
@@ -5891,8 +5895,8 @@ function marksViewTable(course, editable, hideTermTest){
       ${totalCells}
     </tr>`;
   }).join('');
-  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${componentRawScale(comp)}</span></th>`).join('');
-  const seeHead = hideTermTest ? '' : seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${editable ? componentRawScale(comp) : comp.scaledMax}</span></th>`).join('');
+  const seeHead = hideTermTest ? '' : seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${editable ? comp.rawMax : comp.scaledMax}</span></th>`).join('');
   const totalsHead = hideTermTest ? '' : `<th>CIE Total</th>${seeHead}<th>Total</th>`;
   return `
     <div class="weight-inline">
@@ -10788,12 +10792,17 @@ function renderCISectionView(params){
         const v = s.marks[comp.key];
         const rawScale = componentRawScale(comp);
         const overMax = typeof v==='number' && (v>rawScale || v<0);
-        return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span></td>`;
+        // View-only roll-up shows the SCALED weight (e.g. SIA's raw /50
+        // shown here as its scaled /5, /10, /15... whatever this
+        // Evaluation Type weights it to) rather than the raw entry total —
+        // the raw total is still visible on the component's own entry page.
+        const scaledVal = typeof v==='number' ? round1((Math.min(v,rawScale)/rawScale)*comp.scaledMax) : null;
+        return `<td>${scaledVal===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${scaledVal}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>`;
       }).join('');
       const totalCell = hideTermTest ? '' : `<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td>`;
       return `<tr><td>${studentNameCell(s)}</td>${cells}${totalCell}</tr>`;
     }).join('');
-    const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${componentRawScale(comp)}</span></th>`).join('');
+    const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.scaledMax}</span></th>`).join('');
     const totalHead = hideTermTest ? '' : `<th>${section==='cie'?'CIE':'SEE'} Total</th>`;
     const note = hideTermTest ? `<p class="section-meta" style="margin-bottom:10px;">Term Test 1/2/3 marks are entered and viewed on their own dedicated pages, not here — this view only covers SIA, Regular Lab Performance Assessment, Practical Internal Test, and any other non-Term-Test component, so no CIE Total is shown (it would be incomplete without the Term Test scores).</p>` : '';
     return comps.length ? `${note}<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}${totalHead}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'non-Term-Test CIE':'SEE'} components on this Evaluation Type.</p>`;
