@@ -1461,7 +1461,17 @@ function isItemCIFor(course, itemKey){
 function itemEntryStudents(course, itemKey){
   const all = course.students || [];
   const overrides = getItemRosterOverrides(course, itemKey);
-  if(!overrides.length) return all;
+  if(!overrides.length){
+    // Term Test 1/2 rosters are Admin-assigned only: unlike the other
+    // ITEM_FLOW_KEYS (Practical Internal, SEE Practical), Course
+    // Registration's full class list must NEVER show up here by default —
+    // student names/roll numbers stay hidden on the TT1/TT2 entry, review
+    // and remark pages until an Administrator has uploaded a roll-number
+    // list for this specific cycle via Roster Assignment. Everything else
+    // about the course is unaffected; this only narrows what tt1/tt2 shows.
+    if(itemKey==='tt1' || itemKey==='tt2') return [];
+    return all;
+  }
   const actor = App.currentUser();
   const mine = actor && overrides.find(o=>o.facultyUserId===actor.id);
   const rollSet = new Set((mine ? [mine] : overrides).flatMap(o=>o.rollNos));
@@ -1754,7 +1764,7 @@ function itemActionBarHtml(course, itemKey, editable){
    Forward/Send Back controls live separately in itemApprovalStatusHtml,
    which already checks ownership correctly. */
 function termTestActionBarHtml(course, itemKey, editable, periodFinished, ia){
-  const stillCIsTurn = ia.stage==='ci' && isCourseOwnerCI(course);
+  const stillCIsTurn = ia.stage==='ci' && isItemCIFor(course, itemKey);
   const correctionMode = course.status==='approved' && course.editUnlocked;
   const inCIWindow = course.status==='draft' || correctionMode;
   if(!stillCIsTurn || !inCIWindow || !(editable || periodFinished)) return '';
@@ -4504,8 +4514,13 @@ const App = {
     const actor = this.currentUser();
     const course = this.getCourse(courseId);
     if(!course){ toast('Course not found.', 'err'); return; }
-    const ciUser = getCourseCIUser(courseId);
-    if(ciUser?.id !== actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can enter Term Test marks.', 'err'); return; }
+    // Uses isItemCIFor (not a plain "is this the registered CI" check) so
+    // that once an Administrator has assigned a roll-number roster for
+    // this Term Test cycle to a specific faculty member, marks-entry
+    // permission follows THAT roster assignment rather than always
+    // falling back to Course Registration's own CI — see itemEntryStudents.
+    const ttItemKey = cycle==='TT1' ? 'tt1' : 'tt2';
+    if(!isItemCIFor(course, ttItemKey) && actor.systemRole!=='ADMIN'){ toast('Only the faculty assigned to this Term Test can enter marks.', 'err'); return; }
     if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked — Term Test marks can no longer be edited.', 'err'); return; }
     if(!isTTForwarded(course, cycle)){ toast('Your Course Coordinator hasn\'t forwarded the Question Paper Setup for this cycle yet.', 'err'); return; }
     const s = (course.students||[]).find(x=>x.id===studentId);
@@ -9279,11 +9294,12 @@ function ttExportTableData(course, cycle){
   const template = getCourseTemplate(course);
   const compKey = termTestComponentKey(template, cycle);
   const comp = template.cie.find(c=>c.key===compKey);
+  const itemKey = cycle==='TT1' ? 'tt1' : 'tt2';
   const header = ['Student', 'Roll No',
     ...TT_SHORT_KEYS.map(k=>`${k.toUpperCase()} (/${TT_SHORT_EACH_MAX})`), 'Part A Total',
     ...TT_ALL_LONG_QKEYS.map(qKey=>`${qKey.toUpperCase()} (/${getLongPairMax(qKey)})`), 'Part B Total',
     'Term Test Total', `${cycleLabel} Scaled (/${comp.scaledMax})`];
-  const rows = (course.students||[]).map(s=>{
+  const rows = itemEntryStudents(course, itemKey).map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
     const shortVals = TT_SHORT_KEYS.map(k=>ttNum(detail[k]));
@@ -10117,7 +10133,7 @@ function renderCITermTestEntry(params){
   // stage would see every mark box as editable (and be able to type into
   // them) instead of read-only, since the stage/window checks below don't
   // know WHO is looking, only what stage the item is at.
-  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && (sentBackForCorrection || (cycleIsActive && withinWindow));
+  const editable = isItemCIFor(course, itemKey) && (course.status==='draft' || correctionMode) && forwarded && ia.stage==='ci' && (sentBackForCorrection || (cycleIsActive && withinWindow));
   // The marks-entry PERIOD is considered finished once the window has
   // closed (endDate passed) or the Administrator has moved the active
   // cycle on — at that point the CI can no longer edit marks, but (if they
@@ -10154,7 +10170,8 @@ function renderCITermTestEntry(params){
   // Computed BEFORE the row-by-row table below because ttScriptUploadCell
   // needs autoPicks to decide which single row gets an enabled Upload
   // button for each of Best/Average/Lowest.
-  const scored = (course.students||[]).map(s=>{
+  const entryStudents = itemEntryStudents(course, itemKey);
+  const scored = entryStudents.map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     return { student: s, total: computeTermTestRaw(detail).total };
   }).filter(x=>x.total>0);
@@ -10175,14 +10192,14 @@ function renderCITermTestEntry(params){
   // one who's actually allowed to type into it — otherwise the very role
   // meant to add the FIRST remark would never see a box to add it in.
   // Empty + not-editable-by-this-viewer is the only case that's hidden.
-  const anyRemark = (role) => (course.students||[]).some(s=>!!((((s.marks||{}).ttRemarks||{})[cycle]||{})[role]));
+  const anyRemark = (role) => entryStudents.some(s=>!!((((s.marks||{}).ttRemarks||{})[cycle]||{})[role]));
   const showRemarkCol = {
     cc: anyRemark('cc') || canEditTTStudentRemark(course, itemKey, 'cc'),
     ea: anyRemark('ea') || canEditTTStudentRemark(course, itemKey, 'ea'),
     hod: anyRemark('hod') || canEditTTStudentRemark(course, itemKey, 'hod'),
   };
 
-  const rows = (course.students||[]).map(s=>{
+  const rows = entryStudents.map(s=>{
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
     const shortCells = TT_SHORT_KEYS.map(k=>{
@@ -10296,6 +10313,9 @@ function renderCITermTestEntry(params){
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     <div class="tt-fs-hide">${itemApprovalStatusHtml(course, itemKey)}</div>
     <div class="tt-fs-hide">${lockBannerHtml}</div>
+    ${!getItemRosterOverrides(course, itemKey).length ? `<div class="card tt-fs-hide" style="border-left:3px solid var(--warn);">
+      <p class="section-meta" style="margin:0;">No roll-number list has been assigned for ${escapeHtml(cycleLabel)} yet — student roll numbers are <strong>not</strong> pulled in from Course Registration here. ${App.currentUser().systemRole==='ADMIN' ? `An Administrator needs to upload the roster first: <button class="btn btn-outline btn-sm" style="margin-left:6px;" onclick="App.navigate('admin-roster-assignment',{courseId:'${course.id}', itemKey:'${itemKey}'})">Assign Roster</button>` : 'Ask an Administrator to upload the roster from Roster Assignment before marks can be entered here.'}</p>
+    </div>` : ''}
     <div class="card tt-fs-hide">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <button class="btn btn-outline btn-sm" style="pointer-events:none;">📊 ${escapeHtml(cycleLabel)} Analytics</button>
