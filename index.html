@@ -1267,6 +1267,17 @@ function seeDisplayComponents(template){
 function getCourseSeeComponents(course){ return seeDisplayComponents(getCourseTemplate(course)); }
 const CIE_MAX = 50;
 
+/* Canonical roll-number ordering — every marks table (Term Test 1/2/3, Lab
+   Internal/External, Other CIE, SIA, SEE, the read-only roll-ups, PDF/CSV
+   exports, Analytics, etc.) just iterates course.students directly, so
+   sorting here once is what keeps all of them roll-number-wise. Uses
+   {numeric:true} so embedded numbers compare naturally (…09 before …10)
+   instead of as plain text. */
+function sortStudentsByRollNo(students){
+  (students||[]).sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||'', undefined, {numeric:true, sensitivity:'base'}));
+  return students;
+}
+
 // ============================================================================
 // APPROVAL GROUPING — per the fixed institutional rule:
 //   • Term Test 1 + Term Test 2 + Lab Internal (Practical Internal Test) are
@@ -2479,7 +2490,7 @@ function seedState(){
     { id:'note_seed2', forUserId:'cc1', courseId:'c1', title:"You're now Course Coordinator", body:"Dr. Suresh Menon assigned you as Course Coordinator for CS301 — Data Structures. This role is active immediately.", ts:t0, read:true },
   ];
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:null, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:{ academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null }, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
 }
 
 /* ---------------- Supabase-backed persistence ----------------
@@ -2630,6 +2641,18 @@ async function fetchStateFromSupabase(){
     // {academicYear, semester, cycle} object — wrap it so every consumer can
     // always assume the object shape.
     currentTermTest = (v && typeof v === 'object') ? v : (v ? { academicYear:null, semester:null, cycle:v } : null);
+  }
+  // Fresh install — nobody has ever touched the Term Test Cycle page, so
+  // there's no 'current_term_test' row in app_settings at all yet. Default
+  // to TT1 active (no time window) instead of leaving every TT1/TT2/TT3
+  // "Enter" button disabled app-wide until an Admin happens to visit that
+  // page first. This only fires when the row is entirely missing — once an
+  // Admin explicitly fixes a cycle, or explicitly closes one (which also
+  // writes a row, just with a null value), that row exists from then on and
+  // this default is never applied again, so an intentional "Close this
+  // cycle now" is respected as the deliberate all-off state it is.
+  if(currentTermTest === null && !ctRow){
+    currentTermTest = { academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null };
   }
 
   // Admin-fixed marks-entry windows for Practical Internal Test and SEE
@@ -3042,6 +3065,14 @@ const App = {
     const { data, error } = await sb.from('students').select('*').eq('course_id', courseId);
     if(error){ toast('Could not load this section\'s roster: ' + (error.message||error), 'err'); return course; }
     course.students = (data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null, absent:!!s.absent }));
+    // Supabase returns rows in no particular order (insertion order in
+    // practice) — every marks table (Term Test 1/2/3, Lab Internal/External,
+    // Other CIE, SIA, SEE, the read-only roll-ups, Analytics, etc.) just
+    // iterates course.students directly, so without sorting here the list
+    // comes out in whatever order the rows happened to be created, not roll
+    // number. Sort once, right after loading, so every screen that reads
+    // this array is roll-number-wise automatically.
+    sortStudentsByRollNo(course.students);
     course.studentsLoaded = true;
     return course;
   },
@@ -3370,7 +3401,7 @@ const App = {
         const idPool = (course.students||[]).map(s=>s.id).concat(nextStudents.map(s=>s.id));
         nextStudents.push({ id: bizId('CST', [course.code, course.section||'nosec', r.rollNo], idPool), name:r.studentName, rollNo:r.rollNo, email: dir?dir.email:'', dirId: dir?dir.id:null, marks:{} });
       });
-      nextStudents.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+      sortStudentsByRollNo(nextStudents);
       course.students = nextStudents;
       course.studentsLoaded = true;
       loadedCount = nextStudents.length;
@@ -3433,7 +3464,7 @@ const App = {
         nextStudents.push({ id: bizId('CST', [course.code, course.section, dir.rollNo], (course.students||[]).map(s=>s.id)), name: dir.name, rollNo: dir.rollNo, email: dir.email, dirId: dir.id, marks:{} });
       }
     });
-    nextStudents.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+    sortStudentsByRollNo(nextStudents);
 
     const removed = (course.students||[]).filter(s=>!s.dirId || !wantedIds.has(s.dirId));
     course.students = nextStudents;
@@ -3494,7 +3525,7 @@ const App = {
         added++;
       }
     });
-    course.students.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+    sortStudentsByRollNo(course.students);
     course.students.forEach(s=>syncNewStudent(course.id, s));
 
     if(added+updated===0){
@@ -3705,7 +3736,8 @@ const App = {
       for(const comp of components){
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
-        if(v < 0 || v > comp.rawMax) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${comp.rawMax}.` };
+        const rawScale = componentRawScale(comp);
+        if(v < 0 || v > rawScale) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${rawScale}.` };
       }
     }
     return { ok:true };
@@ -3717,7 +3749,8 @@ const App = {
       for(const comp of components){
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
-        if(v < 0 || v > comp.rawMax) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${comp.rawMax}.` };
+        const rawScale = componentRawScale(comp);
+        if(v < 0 || v > rawScale) return { ok:false, msg:`${comp.label} score for ${s.name} exceeds the maximum of ${rawScale}.` };
       }
     }
     return { ok:true };
@@ -4035,7 +4068,7 @@ const App = {
       existingByRoll[rollNo] = newRow;
       newlyAdded.push(newRow);
     });
-    course.students.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+    sortStudentsByRollNo(course.students);
     newlyAdded.forEach(s=>syncNewStudent(course.id, s));
 
     syncCourse(course);
@@ -4860,7 +4893,7 @@ const App = {
         nextStudents.push({ id: bizId('CST', [course.code, course.section||'nosec', r.rollNo], idPool), name:r.studentName, rollNo:r.rollNo, email: dir?dir.email:'', dirId: dir?dir.id:null, marks:{} });
       }
     });
-    nextStudents.sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+    sortStudentsByRollNo(nextStudents);
     course.students = nextStudents;
     nextStudents.forEach(s=>syncNewStudent(course.id, s));
 
@@ -4911,13 +4944,28 @@ const App = {
 window.App = App;
 
 /* ---------------- small helpers ---------------- */
+// SIA is always entered as 5 unit columns of /10 each (50 raw total) via
+// siaEntryHtml's unit-wise widget, regardless of what rawMax a given
+// Evaluation Type template happens to declare for the 'sia' key — several
+// templates (ET1/ET2/ET3/ETP1/ETP2/ETS) declare 10, not 50, since that
+// number was only ever meant to pair with scaledMax for the maths, never to
+// be the actual entry ceiling. Every place that reads a component's raw
+// value against its "max" — to scale it, to validate/flag it, or to display
+// "raw/max" — must go through this instead of comp.rawMax directly, or a
+// SIA raw total (up to 50) gets compared against a far smaller denominator:
+// the scaled/CIE total silently caps out as soon as raw crosses 10, and
+// validateCIEComplete() wrongly rejects a perfectly normal SIA total as
+// "exceeding the maximum" and blocks the CI from submitting.
+const SIA_RAW_ENTRY_MAX = 50;
+function componentRawScale(comp){ return (comp && comp.key==='sia') ? SIA_RAW_ENTRY_MAX : (comp ? comp.rawMax : 0); }
 function computeCIE(student, components){
   components = components || [];
   let total = 0, complete = true;
   components.forEach(comp=>{
     const raw = student.marks[comp.key];
     if(typeof raw !== 'number'){ complete = false; return; }
-    total += (Math.min(raw, comp.rawMax)/comp.rawMax) * comp.scaledMax;
+    const rawScale = componentRawScale(comp);
+    total += (Math.min(raw, rawScale)/rawScale) * comp.scaledMax;
   });
   return { total: round1(total), complete };
 }
@@ -5802,16 +5850,17 @@ function marksViewTable(course, editable, hideTermTest){
   const grandMax = round1(CIE_MAX + seeTotalMax);
   const cellHtml = (course, s, comp) => {
     const v = s.marks[comp.key];
-    const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
+    const rawScale = componentRawScale(comp);
+    const overMax = typeof v==='number' && (v>rawScale || v<0);
     if(editable){
-      return `<td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+      return `<td><input type="number" min="0" max="${rawScale}" step="0.5"
         class="${overMax?'invalid':''}"
         data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
         data-markkey="${course.id}|${s.id}|${comp.key}"
-        value="${v===undefined||v===null?'':v}" placeholder="/${comp.rawMax}"
+        value="${v===undefined||v===null?'':v}" placeholder="/${rawScale}"
         onchange="onMarkChange(this)"></td>`;
     }
-    return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+    return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span></td>`;
   };
   const rows = course.students.map(s=>{
     const gt = computeGrandTotal(s, course);
@@ -5827,7 +5876,7 @@ function marksViewTable(course, editable, hideTermTest){
       ${totalCells}
     </tr>`;
   }).join('');
-  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+  const cieHead = cieComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${componentRawScale(comp)}</span></th>`).join('');
   const seeHead = hideTermTest ? '' : seeComponents.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
   const totalsHead = hideTermTest ? '' : `<th>CIE Total</th>${seeHead}<th>Total</th>`;
   return `
@@ -6010,7 +6059,7 @@ function siaEntryHtml(course, comp, editable){
   // entry works the same way across every Evaluation Type.
   const UNIT_COUNT = 5;
   const UNIT_MAX = 10;
-  const RAW_TOTAL_MAX = UNIT_COUNT * UNIT_MAX; // 50
+  const RAW_TOTAL_MAX = SIA_RAW_ENTRY_MAX; // 50 — see componentRawScale
   const rows = course.students.map(s=>{
     const detail = (s.marks.siaDetail)||{};
     const cells = Array.from({length:UNIT_COUNT}, (_,i)=>{
@@ -10581,7 +10630,7 @@ function renderCIAnalytics(params){
   const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
   const template = getCourseTemplate(course);
-  const scaledOf = (raw, comp) => (typeof raw==='number' && comp) ? round1((Math.min(raw,comp.rawMax)/comp.rawMax)*comp.scaledMax) : null;
+  const scaledOf = (raw, comp) => { if(typeof raw!=='number' || !comp) return null; const rawScale = componentRawScale(comp); return round1((Math.min(raw,rawScale)/rawScale)*comp.scaledMax); };
 
   // Which value column(s) this page shows, keyed the same way as the filter/sort state.
   let pageTitle = 'Analytics', columns = [];
@@ -10696,13 +10745,14 @@ function renderCISectionView(params){
       const calc = hideTermTest ? null : computeCIE(s, comps);
       const cells = comps.map(comp=>{
         const v = s.marks[comp.key];
-        const overMax = typeof v==='number' && (v>comp.rawMax || v<0);
-        return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.rawMax}</span></td>`;
+        const rawScale = componentRawScale(comp);
+        const overMax = typeof v==='number' && (v>rawScale || v<0);
+        return `<td>${v===undefined||v===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span></td>`;
       }).join('');
       const totalCell = hideTermTest ? '' : `<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td>`;
       return `<tr><td>${studentNameCell(s)}</td>${cells}${totalCell}</tr>`;
     }).join('');
-    const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th>`).join('');
+    const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${componentRawScale(comp)}</span></th>`).join('');
     const totalHead = hideTermTest ? '' : `<th>${section==='cie'?'CIE':'SEE'} Total</th>`;
     const note = hideTermTest ? `<p class="section-meta" style="margin-bottom:10px;">Term Test 1/2/3 marks are entered and viewed on their own dedicated pages, not here — this view only covers SIA, Regular Lab Performance Assessment, Practical Internal Test, and any other non-Term-Test component, so no CIE Total is shown (it would be incomplete without the Term Test scores).</p>` : '';
     return comps.length ? `${note}<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}${totalHead}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'non-Term-Test CIE':'SEE'} components on this Evaluation Type.</p>`;
