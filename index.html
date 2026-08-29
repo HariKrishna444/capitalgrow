@@ -9954,6 +9954,11 @@ function renderCISubjectDetail(params){
           if(App.itemApproval(course.id,'tt2')?.stage==='done') return verifiedBtn('Term Test 2', onclick);
           return activeCycle==='TT2' ? enterBtn('Enter Term Test 2', onclick) : disabledBtn('Enter Term Test 2', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
         }
+        // SEE Theory is entered and evaluated separately by the
+        // Examination Branch (see seeDisplayComponents) — it never opens
+        // for the CI here, so this stays a plain disabled button rather
+        // than a live link into a "Component not found" dead end.
+        if(comp.key==='seeTheory') return disabledBtn('Enter SEE Theory', 'SEE Theory is entered and evaluated separately by the Examination Branch — not open here.');
         // Practical Internal Test / SEE Practical carry the same
         // independent CI → CC → HOD chain as Term Test 1/2 (see
         // ITEM_FLOW_KEYS) — so they get the same green Verified state
