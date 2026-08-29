@@ -9861,11 +9861,31 @@ function renderCISubjectDetail(params){
     const enterBtn = (label, onclick) => `<button class="btn ${enterMode?'':'btn-outline'} btn-sm" style="white-space:nowrap;" onclick="${onclick}">${label}</button>`;
     const disabledBtn = (label, reason) => `<button class="btn btn-outline btn-sm" style="white-space:nowrap;opacity:.5;cursor:not-allowed;" disabled title="${escapeHtml(reason)}">${label}</button>`;
     const viewBtn = (label, onclick) => `<button class="btn btn-outline btn-sm" style="white-space:nowrap;border-color:var(--seal-red);color:var(--seal-red);" onclick="${onclick}">${label}</button>`;
+    // Shown in the Marks Entry column once an item's CI → CC → HOD chain
+    // has reached 'done' (fully approved/verified) — green, same as every
+    // other verified exam, replacing the plain "Enter ..." button. Stays
+    // clickable so the CI can still open the page to view what was entered.
+    const verifiedBtn = (label, onclick) => `<button class="btn btn-green btn-sm" style="white-space:nowrap;" onclick="${onclick}">✓ ${label} Verified</button>`;
     actions = {
       component(comp, section){
-        if(comp.key===tt1Key) return activeCycle==='TT1' ? enterBtn('Enter Term Test 1', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`) : disabledBtn('Enter Term Test 1', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
-        if(comp.key===tt2Key) return activeCycle==='TT2' ? enterBtn('Enter Term Test 2', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`) : disabledBtn('Enter Term Test 2', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
-        return enterBtn(`Enter ${escapeHtml(comp.label)}`, `App.navigate('ci-component-entry',{courseId:'${course.id}', section:'${section}', compKey:'${comp.key}'})`);
+        if(comp.key===tt1Key){
+          const onclick = `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`;
+          if(App.itemApproval(course.id,'tt1')?.stage==='done') return verifiedBtn('Term Test 1', onclick);
+          return activeCycle==='TT1' ? enterBtn('Enter Term Test 1', onclick) : disabledBtn('Enter Term Test 1', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
+        }
+        if(comp.key===tt2Key){
+          const onclick = `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`;
+          if(App.itemApproval(course.id,'tt2')?.stage==='done') return verifiedBtn('Term Test 2', onclick);
+          return activeCycle==='TT2' ? enterBtn('Enter Term Test 2', onclick) : disabledBtn('Enter Term Test 2', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
+        }
+        // Practical Internal Test / SEE Practical carry the same
+        // independent CI → CC → HOD chain as Term Test 1/2 (see
+        // ITEM_FLOW_KEYS) — so they get the same green Verified state
+        // once done, instead of staying a plain "Enter ..." button forever.
+        const chainItemKey = comp.key==='pracInternal' ? 'pracInternal' : (comp.key==='seePractical'||comp.key==='seePracticalProject') ? 'seePractical' : null;
+        const onclick = `App.navigate('ci-component-entry',{courseId:'${course.id}', section:'${section}', compKey:'${comp.key}'})`;
+        if(chainItemKey && App.itemApproval(course.id, chainItemKey)?.stage==='done') return verifiedBtn(escapeHtml(comp.label), onclick);
+        return enterBtn(`Enter ${escapeHtml(comp.label)}`, onclick);
       },
       cieTotal(){ return viewBtn('View CIE Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'cie'})`); },
       seeTotal(){ return viewBtn('View SEE Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'see'})`); },
@@ -10570,6 +10590,7 @@ function renderCIComponentEntry(params){
         <td>${studentNameCell(s)}</td>
         <td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
           class="${overMax?'invalid':''}"
+          data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
           data-markkey="${course.id}|${s.id}|${comp.key}"
           value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
           ${editable?'':'disabled'}
