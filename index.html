@@ -10691,8 +10691,9 @@ function renderCIComponentEntry(params){
       <div class="page-eyebrow">${section==='cie'?'CIE':'SEE'} · ${escapeHtml(comp.label)}</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}
-        ${!itemKey && noApprovalLocked ? `<span class="status-pill status-approved">Completed</span>` : ''}
+        ${!itemKey && noApprovalLocked ? `<span class="mono" style="color:var(--text-soft);font-size:11px;">· ${escapeHtml(comp.label)}:</span> <span class="status-pill status-approved">Completed</span>` : ''}
       </p>
+      ${!itemKey && noApprovalLocked ? `<p class="section-meta" style="margin-top:4px;">The overall record for ${escapeHtml(course.code)} is still <strong>InProgress</strong> until every component is entered and the whole record is submitted — <strong>Completed</strong> above only means ${escapeHtml(comp.label)} itself is done and locked.</p>` : ''}
     </div>
     ${itemKey ? itemApprovalStatusHtml(course, itemKey) : ''}
     ${lockBannerHtml}
