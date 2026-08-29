@@ -2583,7 +2583,7 @@ async function fetchStateFromSupabase(){
     return {
       id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch, semester:c.semester||'', regulation:c.regulation||'',
       status:c.status, sentBack:!!c.sent_back, lastRemark:c.last_remark||'', eaRemark:c.ea_remark||'',
-      evalType:c.eval_type || null, ciLoadType:c.ci_load_type || null, itemApprovals:c.item_approvals || {}, itemRosterOverrides:c.item_roster_overrides || {}, ebPublished:!!c.eb_published, ebPublishedAt:c.eb_published_at ? new Date(c.eb_published_at).getTime() : null, ebPublishedBy:c.eb_published_by || '',
+      evalType:c.eval_type || null, ciLoadType:c.ci_load_type || null, itemApprovals:c.item_approvals || {}, itemRosterOverrides:c.item_roster_overrides || {}, noApprovalSubmitted:c.no_approval_submitted || {}, ebPublished:!!c.eb_published, ebPublishedAt:c.eb_published_at ? new Date(c.eb_published_at).getTime() : null, ebPublishedBy:c.eb_published_by || '',
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
       etRequests: c.et_requests || [], ttPaperConfig: c.tt_paper_config || {},
@@ -2695,7 +2695,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, item_approvals:c.itemApprovals||{}, item_roster_overrides:c.itemRosterOverrides||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, prac_internal_deadline:c.pracInternalDeadline||null, prac_internal_start:c.pracInternalStart||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, item_approvals:c.itemApprovals||{}, item_roster_overrides:c.itemRosterOverrides||{}, no_approval_submitted:c.noApprovalSubmitted||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, prac_internal_deadline:c.pracInternalDeadline||null, prac_internal_start:c.pracInternalStart||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -10691,7 +10691,7 @@ function renderCIComponentEntry(params){
       <div class="page-eyebrow">${section==='cie'?'CIE':'SEE'} · ${escapeHtml(comp.label)}</div>
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}
-        ${!itemKey ? (noApprovalLocked ? `<span class="status-pill status-approved">Completed</span>` : `<span class="status-pill status-draft">InProgress</span>`) : ''}
+        ${!itemKey && noApprovalLocked ? `<span class="status-pill status-approved">Completed</span>` : ''}
       </p>
     </div>
     ${itemKey ? itemApprovalStatusHtml(course, itemKey) : ''}
