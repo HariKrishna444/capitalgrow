@@ -5276,7 +5276,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-subject-detail':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
 /* Defers a renderContent() rebuild to the next tick instead of running it
    synchronously inside an onchange handler. onchange fires the instant an
    input loses focus — i.e. mid-click, before the browser has finished
@@ -9990,6 +9990,32 @@ function renderCISubjectDetail(params){
     </div>
     ${sentBackBanner(course)}
     ${evalTypeTableHtml(course, actions)}
+    ${(()=>{
+      // The eval-type table above only ever covers individual components —
+      // it never showed a way to actually submit the WHOLE record once
+      // every one of them is green. Submitting is what starts the
+      // CI -> CC -> EA -> HOD chain (App.ciSubmit); add it right here so
+      // it's not stuck on a separate, unlinked page (ci-entry).
+      const editableRecord = course.status==='draft' || course.editUnlocked;
+      if(!course.evalType || !editableRecord) return '';
+      const correctionMode = course.status==='approved' && course.editUnlocked;
+      if(correctionMode) return ''; // correction flow lives on the ci-entry roll-up page itself
+      const check = App.validateComplete(course);
+      return `<div class="card" style="margin-top:16px;border-left:3px solid ${check.ok?'var(--ok, #2f7a3f)':'var(--warn)'};">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div class="section-title" style="margin-bottom:4px;">${check.ok ? 'Every component is done — ready to submit' : 'Not ready to submit yet'}</div>
+            <p class="section-meta" style="margin:0;">${check.ok
+              ? 'All CIE/SEE marks are entered and every approval-chain item (Term Test 1/2, Practical Internal Test, SEE Practical) has finished its own verification. Submitting locks the whole record and sends it to your Course Coordinator.'
+              : escapeHtml(check.msg || 'Finish every component above before this record can be submitted.')}</p>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-outline btn-sm" onclick="App.navigate('ci-entry',{courseId:'${course.id}'})">Review Full Record</button>
+            <button class="btn btn-green" ${check.ok?'':'disabled'} title="${check.ok?'':'Complete every component above first'}" onclick="if(confirm('Submit the whole record to your Course Coordinator? You won\\'t be able to edit it until it comes back.')) App.ciSubmit('${course.id}')">Submit for Review</button>
+          </div>
+        </div>
+      </div>`;
+    })()}
     ${actions ? (()=>{
       const t = getCourseTemplate(course);
       const has = k => k==='pracInternal' ? t.cie.some(c=>c.key==='pracInternal')
