@@ -3807,6 +3807,44 @@ const App = {
   },
   ciSaveDraft(courseId){ this.saveMarks(courseId); toast('InProgress saved.', 'ok'); },
 
+  /* ---------- No-approval component submit/lock (SIA, Regular Lab/Skill
+     Performance Assessment, Skill Certification, etc. — anything with no
+     CI -> CC -> HOD chain) — see componentFullyEntered/noApprovalLockedFor.
+     Marks are already saved live as they're typed (saveMarks/onMarkChange);
+     this only flips the lock + status flag once every student has a mark. ---------- */
+  submitNoApprovalComponent(courseId, compKey){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    if(!isCourseOwnerCI(course) && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Instructor can submit this.', 'err'); return; }
+    if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked.', 'err'); return; }
+    const template = getCourseTemplate(course);
+    const comp = (template.cie||[]).concat(seeDisplayComponents(template)).find(c=>c.key===compKey);
+    if(!comp){ toast('Component not found.', 'err'); return; }
+    if(!componentFullyEntered(course, comp)){ toast('Enter marks for every student before submitting.', 'err'); return; }
+    this.saveMarks(courseId);
+    course.noApprovalSubmitted = course.noApprovalSubmitted || {};
+    course.noApprovalSubmitted[compKey] = true;
+    syncCourse(course);
+    this.logHistory(course, `${comp.label} marks submitted by the Course Instructor and locked for editing`);
+    toast(`${comp.label} submitted — marks are now locked.`, 'ok');
+    scheduleRenderContent();
+  },
+  /* Admin-only escape hatch — reopens a single no-approval component for
+     correction without reopening the whole record (unlike editUnlocked,
+     which is HOD-only and reopens everything). */
+  reopenNoApprovalComponent(courseId, compKey){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can reopen a submitted component.', 'err'); return; }
+    const course = this.getCourse(courseId);
+    if(!course || !course.noApprovalSubmitted) return;
+    delete course.noApprovalSubmitted[compKey];
+    syncCourse(course);
+    this.logHistory(course, `A submitted component was reopened for editing by the Administrator (${compKey})`);
+    toast('Reopened for editing.', 'ok');
+    scheduleRenderContent();
+  },
+
   /* ---------- exam date, used to compute the 4-working-day evaluation
      deadline. Editable by whoever can currently edit this record. ---------- */
   setExamDate(courseId, dateStr){
@@ -4972,7 +5010,36 @@ window.App = App;
 // validateCIEComplete() wrongly rejects a perfectly normal SIA total as
 // "exceeding the maximum" and blocks the CI from submitting.
 const SIA_RAW_ENTRY_MAX = 50;
+const SIA_UNIT_COUNT = 5;
 function componentRawScale(comp){ return (comp && comp.key==='sia') ? SIA_RAW_ENTRY_MAX : (comp ? comp.rawMax : 0); }
+/* ---------- No-approval component completion / submit-lock ----------
+   SIA, Regular Lab/Skill Performance Assessment, Skill Certification, and
+   every other CIE/SEE component with no CI -> CC -> HOD chain (see
+   ITEM_FLOW_KEYS — these are NOT in that list) don't need anyone's
+   sign-off. Once the Course Instructor has entered a mark for every
+   non-absent student, they can Submit the component: it locks (goes
+   non-editable, same as an approved item) and its status flips from
+   InProgress to Completed — see App.submitNoApprovalComponent and
+   noApprovalLockedFor below. Storage: course.noApprovalSubmitted[compKey]. */
+function componentFullyEntered(course, comp){
+  const students = (course.students||[]).filter(s=>!s.absent);
+  if(!students.length) return false;
+  if(comp.key==='sia'){
+    return students.every(s=>{
+      const detail = (s.marks && s.marks.siaDetail) || {};
+      return Object.keys(detail).length>=SIA_UNIT_COUNT && Array.from({length:SIA_UNIT_COUNT},(_,i)=>detail['unit'+(i+1)]).every(v=>typeof v==='number');
+    });
+  }
+  return students.every(s=>typeof (s.marks||{})[comp.key]==='number');
+}
+/* True once the CI has submitted this no-approval component AND the record
+   isn't currently reopened for correction (correctionMode always wins —
+   same as every other lock in this app, so a HOD-reopened record can have
+   even a previously-submitted component corrected and resubmitted). */
+function noApprovalLockedFor(course, comp){
+  const correctionMode = course.status==='approved' && course.editUnlocked;
+  return !!(course.noApprovalSubmitted && course.noApprovalSubmitted[comp.key]) && !correctionMode;
+}
 function computeCIE(student, components){
   components = components || [];
   let total = 0, complete = true;
@@ -9870,6 +9937,11 @@ function renderCISubjectDetail(params){
     // other verified exam, replacing the plain "Enter ..." button. Stays
     // clickable so the CI can still open the page to view what was entered.
     const verifiedBtn = (label, onclick) => `<button class="btn btn-green btn-sm" style="white-space:nowrap;" onclick="${onclick}">✓ ${label} Verified</button>`;
+    // Same green treatment for no-approval components (SIA, Regular
+    // Lab/Skill Performance Assessment, Skill Certification, etc.) once
+    // the CI has Submitted them (see App.submitNoApprovalComponent) —
+    // "Completed" rather than "Verified" since nobody signs off on these.
+    const completedBtn = (label, onclick) => `<button class="btn btn-green btn-sm" style="white-space:nowrap;" onclick="${onclick}">✓ ${label} Completed</button>`;
     actions = {
       component(comp, section){
         if(comp.key===tt1Key){
@@ -9889,6 +9961,7 @@ function renderCISubjectDetail(params){
         const chainItemKey = comp.key==='pracInternal' ? 'pracInternal' : (comp.key==='seePractical'||comp.key==='seePracticalProject') ? 'seePractical' : null;
         const onclick = `App.navigate('ci-component-entry',{courseId:'${course.id}', section:'${section}', compKey:'${comp.key}'})`;
         if(chainItemKey && App.itemApproval(course.id, chainItemKey)?.stage==='done') return verifiedBtn(escapeHtml(comp.label), onclick);
+        if(!chainItemKey && noApprovalLockedFor(course, comp)) return completedBtn(escapeHtml(comp.label), onclick);
         return enterBtn(`Enter ${escapeHtml(comp.label)}`, onclick);
       },
       cieTotal(){ return viewBtn('View CIE Marks', `App.navigate('ci-section-view',{courseId:'${course.id}', section:'cie'})`); },
@@ -10565,7 +10638,14 @@ function renderCIComponentEntry(params){
   const adminSeeEnded = section==='see' && !!(adminSeeWindow && adminSeeWindow.endDate && now > new Date(adminSeeWindow.endDate).getTime());
   const seeLockedFinal = seeLocked || adminSeeNotStarted || adminSeeEnded;
   const pracLocked = pracNotStarted || pracEnded || adminPracNotStarted || adminPracEnded;
-  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci') && !seeLockedFinal && !pracLocked;
+  // No-approval components (no itemKey) can be Submitted by the CI once
+  // every student has a mark — that locks them, the same as an approved
+  // item, without ever going through a CI -> CC -> HOD chain (there isn't
+  // one). Doesn't apply to Term Test / Practical Internal / SEE Practical,
+  // which already have their own lock via the approval chain (ia.stage).
+  const noApprovalLocked = !itemKey && noApprovalLockedFor(course, comp);
+  const fullyEntered = !itemKey && componentFullyEntered(course, comp);
+  const editable = isCourseOwnerCI(course) && (course.status==='draft' || correctionMode) && (!itemKey || ia.stage==='ci') && !seeLockedFinal && !pracLocked && !noApprovalLocked;
   const note = itemKey
     ? `Has its own CI → CC → HOD verification chain — see the status card below.`
     : `No approval chain here — scaled straight into the ${section==='cie'?'CIE':'SEE'} total as soon as you enter it.`;
@@ -10610,7 +10690,9 @@ function renderCIComponentEntry(params){
       ${backBtn}
       <div class="page-eyebrow">${section==='cie'?'CIE':'SEE'} · ${escapeHtml(comp.label)}</div>
       <h2>${escapeHtml(course.name)}</h2>
-      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}</p>
+      <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} ${statusPill(course)} ${etPill(course)}
+        ${!itemKey ? (noApprovalLocked ? `<span class="status-pill status-approved">Completed</span>` : `<span class="status-pill status-draft">InProgress</span>`) : ''}
+      </p>
     </div>
     ${itemKey ? itemApprovalStatusHtml(course, itemKey) : ''}
     ${lockBannerHtml}
@@ -10619,10 +10701,27 @@ function renderCIComponentEntry(params){
         ${escapeHtml(comp.label)} — raw /${comp.rawMax} scaled to /${comp.scaledMax}. ${note}
       </p>
       ${bodyHtml}
-      ${itemKey ? itemActionBarHtml(course, itemKey, editable) : ''}
+      ${itemKey ? itemActionBarHtml(course, itemKey, editable) : noApprovalSubmitBarHtml(course, comp, editable, noApprovalLocked, fullyEntered)}
     </div>
   `;
   return wrap;
+}
+/* Submit/lock bar for no-approval components (SIA, Regular Lab/Skill
+   Performance Assessment, Skill Certification, etc.) — the counterpart to
+   itemActionBarHtml, but with no Forward step since there's no chain to
+   forward into: Submit just locks it once every student has a mark. */
+function noApprovalSubmitBarHtml(course, comp, editable, locked, fullyEntered){
+  if(locked){
+    return `<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;">
+      <span class="status-pill status-approved">✓ Submitted — locked for editing</span>
+      ${App.currentUser().systemRole==='ADMIN' ? `<button class="btn btn-outline btn-sm" onclick="App.reopenNoApprovalComponent('${course.id}','${comp.key}')">Reopen for Editing</button>` : ''}
+    </div>`;
+  }
+  if(!editable) return '';
+  return `<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;">
+    <button class="btn btn-green btn-sm" ${fullyEntered?'':'disabled'} title="${fullyEntered?'':'Enter marks for every student first'}" onclick="App.submitNoApprovalComponent('${course.id}','${comp.key}')">Submit</button>
+    ${!fullyEntered ? `<span class="section-meta" style="font-size:12px;">Enter marks for every student to enable Submit.</span>` : ''}
+  </div>`;
 }
 /* ---------- CI: read-only roll-up of one section (CIE, SEE, or the
    combined Total) — reached via "View CIE Marks" / "View SEE Marks" /
