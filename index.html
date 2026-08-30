@@ -919,14 +919,15 @@ const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Time
 // (CSE, CSE-SAP, CSE-CYS, CSE-AIML, CSE-DSC) keep all of the existing
 // section-numbering / regulation / subject-catalog machinery below, just
 // renamed from their old codes (AIML->CSE-AIML, SAP->CSE-SAP, CSD->CSE-DSC,
-// CSC->CSE-CYS). The other 7 (PHYSICS, EECE, ENGLISH, MATHEMATICS,
-// CHEMISTRY, EXAMINATION, SOE) are general/service departments — they're
-// selectable for faculty home branch, HOD assignment, etc., but deliberately
-// left out of REGULATION_BRANCHES/SECTION_RANGES/BATCH_BRANCHES below since
-// they don't have their own admitted student batches or section numbering.
-// ERP is kept only for backward compatibility with sections already tagged
-// 'ERP' in existing data — it has no equivalent in the new 12 and isn't
-// offered as a choice anywhere new (see ccCreatableBranches).
+// CSC->CSE-CYS; the old 'ERP' code was the same branch as 'SAP' under a
+// different name, so it's unified into CSE-SAP too — see SECTION_RANGES /
+// ccCreatableBranches below for the B4-only, outside-the-Subject-Catalog
+// handling that used to be ERP's alone). The other 7 (PHYSICS, EECE,
+// ENGLISH, MATHEMATICS, CHEMISTRY, EXAMINATION, SOE) are general/service
+// departments — they're selectable for faculty home branch, HOD
+// assignment, etc., but deliberately left out of
+// REGULATION_BRANCHES/SECTION_RANGES/BATCH_BRANCHES below since they don't
+// have their own admitted student batches or section numbering.
 const BRANCH_LABELS = {
   CSE:'CSE — Computer Science',
   'CSE-SAP':'CSE-SAP — Systems & Applications',
@@ -940,16 +941,19 @@ const BRANCH_LABELS = {
   CHEMISTRY:'CHEMISTRY — Chemistry',
   EXAMINATION:'EXAMINATION — Examination Branch',
   SOE:'SOE — School of Engineering',
-  ERP:'ERP — CSE (ERP), legacy',
 };
 /* Which branches each Regulation is actually offered to. R24 predates the
    3 newer CSE specializations, so it's CSE/AIML only. R25 added Cyber
-   Security, Data Science and ERP alongside CSE/AIML — 5 branches total.
+   Security, Data Science and SAP alongside CSE/AIML — 5 branches total.
+   ('ERP' and 'SAP' were previously two separate codes for the same branch —
+   they're unified as CSE-SAP now; see SECTION_RANGES/ccCreatableBranches
+   below for the B4-only, outside-the-Subject-Catalog handling that used to
+   be ERP's alone.)
    A Regulation not listed here (e.g. R26, until this is confirmed) has no
    restriction — every branch stays selectable. */
 const REGULATION_BRANCHES = {
   R24: ['CSE','CSE-AIML'],
-  R25: ['CSE','CSE-AIML','CSE-CYS','CSE-DSC','ERP'],
+  R25: ['CSE','CSE-AIML','CSE-CYS','CSE-DSC','CSE-SAP'],
 };
 // The 5 CSE-family branches that actually go through Course Coordinator
 // section-creation/regulation/subject-catalog flow — used as the fallback
@@ -963,29 +967,29 @@ function branchesForRegulation(regulation){
 /* Section numbering is fixed per Regulation and branch-group — not free
    text. R24 (CSE or AIML, taught separately): sections C1-C8. R25's 5
    branches split into 3 groups that each get their own section range:
-   CSE & CSC (Cyber Security) share the same subjects, sections B1-B3;
-   AIML & CSD (Data Science) share the same subjects, sections B5-B11;
-   ERP is its own thing — different subjects entirely, assigned directly by
-   the Administrator rather than through the Course Coordinator's
+   CSE & CSE-CYS (Cyber Security) share the same subjects, sections B1-B3;
+   CSE-AIML & CSE-DSC (Data Science) share the same subjects, sections B5-B11;
+   CSE-SAP is its own thing — different subjects entirely, assigned directly
+   by the Administrator rather than through the Course Coordinator's
    Subject Catalog flow, and only ever has one section, B4. */
 function rangeOf(prefix, start, end){ const out=[]; for(let i=start;i<=end;i++) out.push(prefix+i); return out; }
 const SECTION_RANGES = {
   R24: { CSE: rangeOf('C',1,8), 'CSE-AIML': rangeOf('C',1,8) },
-  R25: { CSE: rangeOf('B',1,3), 'CSE-CYS': rangeOf('B',1,3), ERP: ['B4'], 'CSE-AIML': rangeOf('B',5,11), 'CSE-DSC': rangeOf('B',5,11) },
+  R25: { CSE: rangeOf('B',1,3), 'CSE-CYS': rangeOf('B',1,3), 'CSE-SAP': ['B4'], 'CSE-AIML': rangeOf('B',5,11), 'CSE-DSC': rangeOf('B',5,11) },
 };
 function sectionOptionsFor(regulation, branch){
   return (SECTION_RANGES[regulation] && SECTION_RANGES[regulation][branch]) || [];
 }
 /* Which branches share a Subject Catalog entry with each other under R25 —
    a Course Coordinator whose subject is catalogued under CSE can also open
-   sections of it for CSC (same subjects), and likewise AIML <-> CSD. ERP
-   is deliberately excluded here: its subjects come from the Timetable
-   Incharge directly, not from this Coordinator flow. */
+   sections of it for CSE-CYS (same subjects), and likewise CSE-AIML <->
+   CSE-DSC. CSE-SAP is deliberately excluded here: its subjects come from
+   the Timetable Incharge directly, not from this Coordinator flow. */
 const R25_SHARED_BRANCH_GROUPS = { CSE:['CSE','CSE-CYS'], 'CSE-CYS':['CSE','CSE-CYS'], 'CSE-AIML':['CSE-AIML','CSE-DSC'], 'CSE-DSC':['CSE-AIML','CSE-DSC'] };
 /* The Subject Catalog only ever stores a subject under its ORIGINAL branch
-   (CSE or AIML) — never under CSC/CSD/ERP — so this looks up that original
-   branch for a given subject code, regardless of which branch's section
-   record happens to be passed around the app. */
+   (CSE or CSE-AIML) — never under CSE-CYS/CSE-DSC/CSE-SAP — so this looks
+   up that original branch for a given subject code, regardless of which
+   branch's section record happens to be passed around the app. */
 function catalogBranchForCode(code){
   const entry = SUBJECT_CATALOG.find(r=>normalizeCode(r.code)===normalizeCode(code));
   return entry ? entry.branch : null;
@@ -995,7 +999,7 @@ function catalogBranchForCode(code){
 function ccCreatableBranches(regulation, catalogBranch){
   if(regulation==='R25' && catalogBranch && R25_SHARED_BRANCH_GROUPS[catalogBranch]) return R25_SHARED_BRANCH_GROUPS[catalogBranch];
   if(catalogBranch) return [catalogBranch];
-  return branchesForRegulation(regulation).filter(b=>b!=='ERP');
+  return branchesForRegulation(regulation).filter(b=>b!=='CSE-SAP');
 }
 /* Whether the assigned Course Instructor is teaching the Lecture or the
    Practical component of this section — the CC picks this at assignment
@@ -7000,7 +7004,7 @@ const ROOM_SEQUENCE = [
    BRANCH / SECTION INFERENCE FROM REGISTER NUMBER
    Register format: YY 011 DEPT[SPEC] NNNN — e.g. 25011CSE0001 (core CSE),
    25011CSEAI0245 (CSE-AIML), 25011CSECS0024 (CSE-Cyber Security),
-   25011CSEDS0058 (CSE-Data Science), 25011CSERP0001 (CSE-ERP).
+   25011CSEDS0058 (CSE-Data Science), 25011CSERP0001 (CSE-SAP).
    YY is the admission year and doubles as the regulation (25 -> R25,
    24 -> R24, 26 -> R26...). R24 only ever has plain CSE and CSE (AIML).
    Used only for Room Allocation / Consolidated Seating Plan, where a
@@ -7008,7 +7012,7 @@ const ROOM_SEQUENCE = [
    sections and the branch shown needs to reflect who's actually seated
    there, not just the single branch typed into the header.
    ================================================================= */
-const REGISTER_SPEC_LABELS = { AI: "CSE-AIML", CS: "CYS", DS: "DS", RP: "ERP" };
+const REGISTER_SPEC_LABELS = { AI: "CSE-AIML", CS: "CYS", DS: "DS", RP: "SAP" };
 function branchFromRegister(register) {
   const m = /^(\d{2})011([A-Z]{3,5})(\d{3,4})$/.exec(String(register || "").trim().toUpperCase());
   if (!m) return null;
