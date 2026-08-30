@@ -8761,6 +8761,43 @@ function hodStatusPill(course){
   const label = course.status === 'draft' ? 'Pending' : STATUS_LABEL[course.status];
   return `<span class="status-pill ${STATUS_CLASS[course.status]}">${label}</span>`;
 }
+/* ---------- HOD: Term Test 1/2 items sitting at the HOD stage of the
+   independent CI -> CC -> HOD item chain (see App.forwardItem/itemApproval).
+   Previously, once the Course Coordinator forwarded a Term Test on to the
+   HOD, the only place that showed up was the "Verification Status" table —
+   the HOD had no direct call-to-action for it on "Pending Approval", their
+   own landing page right after login. Surfaced here instead, right at the
+   top of that page, so a Term Test that's reached the HOD's desk is
+   on-time priority instead of something the HOD has to go hunting for. */
+function pendingTermTestApprovalsHtml(){
+  const rows = [];
+  App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
+    const template = getCourseTemplate(c);
+    ['tt1','tt2'].forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      const ia = App.itemApproval(c.id, key);
+      if(ia && ia.stage==='hod') rows.push({ c, key });
+    });
+  });
+  if(!rows.length) return '';
+  return `
+    <div class="card" style="border-left:3px solid var(--seal-red);margin-bottom:16px;">
+      <div class="section-title" style="font-size:15px;">Term Test Approvals Awaiting You</div>
+      <p class="section-meta" style="margin-top:4px;">Forwarded by the Course Coordinator and waiting on your sign-off — verify the marks, then approve or send it back to the Course Instructor.</p>
+      ${rows.map(({c,key})=>`
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+          <div>
+            <div class="section-title" style="font-size:14px;">${escapeHtml(c.name)} — ${ITEM_FLOW_LABELS[key]}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'${key==='tt1'?'TT1':'TT2'}'})">Verify</button>
+            <button class="btn btn-sm btn-outline" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${c.id}','${key}', r);">Send Back</button>
+            <button class="btn btn-sm" onclick="App.forwardItem('${c.id}','${key}')">Approve</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
 function pendingApprovalGroupsHtml(){
   const courses = App.state.courses.filter(c=>c.branch && (c.ttLabApproval==='pending' || c.labExternalApproval==='pending'));
   if(!courses.length) return '';
@@ -8854,6 +8891,7 @@ function renderHODList(){
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
     ${termTestPeriodBannerHtml()}
+    ${pendingTermTestApprovalsHtml()}
     ${hodDashboardSummaryHtml(all)}
     ${pendingEtRequestsHtml()}
     ${pendingApprovalGroupsHtml()}
