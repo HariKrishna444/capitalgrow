@@ -852,7 +852,38 @@ input[type="number"]{
           <div id="login-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
           <button id="login-submit-btn" type="submit" class="btn" style="margin-top:4px;">Sign In</button>
           <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showForgotPasswordForm()">Forgot password?</button>
-          <p class="section-meta" style="color:var(--text-soft);">No account? Contact your System Administrator — accounts are issued by them, not self-registered.</p>
+          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showCreateAccountForm()">First time signing in? Set up your password</button>
+          <p class="section-meta" style="color:var(--text-soft);">No @suh.edu.in email at all? Contact your System Administrator.</p>
+        </form>
+
+        <!-- FIRST-TIME SETUP: for an @suh.edu.in faculty (or other staff)
+             member who has never signed in before — their department may
+             already know them (a "profiles" row can exist for their role),
+             but no Supabase Auth login/password has ever been created for
+             them, so "Forgot password" has nothing to send a reset link to.
+             This lets them choose their OWN password to create that login,
+             gated only by the @suh.edu.in domain — deliberately NOT usable
+             to overwrite an EXISTING account's password (that's what the
+             verified email-link "Forgot password" flow above is for; this
+             one is for accounts that don't have a password yet at all). -->
+        <form id="create-account-form" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+          <p class="section-meta" style="color:var(--text-soft);">First time here? Enter your @suh.edu.in email and choose a password to set up your login. You'll still need to already be listed in the department directory to access anything once you're signed in.</p>
+          <div class="config-field">
+            <label style="color:var(--text-soft);">Email</label>
+            <input id="create-account-email" type="email" autocomplete="username" placeholder="you@suh.edu.in" style="width:100%;">
+          </div>
+          <div class="config-field">
+            <label style="color:var(--text-soft);">Password</label>
+            <input id="create-account-password" type="password" autocomplete="new-password" placeholder="At least 8 characters" style="width:100%;">
+          </div>
+          <div class="config-field">
+            <label style="color:var(--text-soft);">Confirm password</label>
+            <input id="create-account-confirm" type="password" autocomplete="new-password" placeholder="Re-enter password" style="width:100%;">
+          </div>
+          <div id="create-account-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
+          <div id="create-account-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
+          <button id="create-account-submit-btn" type="submit" class="btn" style="margin-top:4px;">Set Up Password</button>
+          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
         </form>
 
         <!-- FORGOT PASSWORD: request a reset link, faculty (or any @suh.edu.in
@@ -2934,15 +2965,28 @@ function showSignInForm(){
   document.getElementById('login-form').classList.remove('hidden');
   document.getElementById('forgot-password-form').classList.add('hidden');
   document.getElementById('reset-password-form').classList.add('hidden');
+  document.getElementById('create-account-form').classList.add('hidden');
   const fErr = document.getElementById('forgot-error'); if(fErr){ fErr.classList.add('hidden'); fErr.textContent=''; }
   const fOk = document.getElementById('forgot-success'); if(fOk){ fOk.classList.add('hidden'); fOk.textContent=''; }
   const rErr = document.getElementById('reset-password-error'); if(rErr){ rErr.classList.add('hidden'); rErr.textContent=''; }
+  const cErr = document.getElementById('create-account-error'); if(cErr){ cErr.classList.add('hidden'); cErr.textContent=''; }
+  const cOk = document.getElementById('create-account-success'); if(cOk){ cOk.classList.add('hidden'); cOk.textContent=''; }
 }
 function showForgotPasswordForm(){
   document.getElementById('login-form').classList.add('hidden');
   document.getElementById('forgot-password-form').classList.remove('hidden');
   document.getElementById('reset-password-form').classList.add('hidden');
+  document.getElementById('create-account-form').classList.add('hidden');
   const emailEl = document.getElementById('forgot-email');
+  const loginEmailEl = document.getElementById('login-email');
+  if(emailEl && loginEmailEl && loginEmailEl.value) emailEl.value = loginEmailEl.value;
+}
+function showCreateAccountForm(){
+  document.getElementById('login-form').classList.add('hidden');
+  document.getElementById('forgot-password-form').classList.add('hidden');
+  document.getElementById('reset-password-form').classList.add('hidden');
+  document.getElementById('create-account-form').classList.remove('hidden');
+  const emailEl = document.getElementById('create-account-email');
   const loginEmailEl = document.getElementById('login-email');
   if(emailEl && loginEmailEl && loginEmailEl.value) emailEl.value = loginEmailEl.value;
 }
@@ -2951,10 +2995,76 @@ function showResetPasswordForm(){
   document.getElementById('shell').classList.add('hidden');
   document.getElementById('login-form').classList.add('hidden');
   document.getElementById('forgot-password-form').classList.add('hidden');
+  document.getElementById('create-account-form').classList.add('hidden');
   document.getElementById('reset-password-form').classList.remove('hidden');
 }
 window.showSignInForm = showSignInForm;
 window.showForgotPasswordForm = showForgotPasswordForm;
+window.showCreateAccountForm = showCreateAccountForm;
+
+/* First-time self sign-up — deliberately a DIFFERENT operation from
+   attemptPasswordReset below. signUp() only ever creates a brand-new
+   Supabase Auth user; for an email that's already registered it will
+   NOT touch the existing password (Supabase's anti-enumeration
+   behavior — it just doesn't create a duplicate). So this can never be
+   used to hijack someone else's already-set-up account, only to create
+   the login for an @suh.edu.in address that doesn't have one yet. */
+async function attemptCreateAccount(email, password, confirmPassword){
+  const errBox = document.getElementById('create-account-error');
+  const okBox = document.getElementById('create-account-success');
+  const btn = document.getElementById('create-account-submit-btn');
+  if(errBox){ errBox.classList.add('hidden'); errBox.textContent=''; }
+  if(okBox){ okBox.classList.add('hidden'); okBox.textContent=''; }
+  if(!email || !password || !confirmPassword){
+    if(errBox){ errBox.textContent = 'Fill in your email, password, and confirmation.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(!/@suh\.edu\.in$/i.test(email.trim())){
+    if(errBox){ errBox.textContent = 'Only @suh.edu.in email addresses can set up a login here.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(password.length < 8){
+    if(errBox){ errBox.textContent = 'Password must be at least 8 characters.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(password !== confirmPassword){
+    if(errBox){ errBox.textContent = 'Passwords do not match.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(authBusy) return;
+  authBusy = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Setting up…'; }
+  try{
+    const { data, error } = await sb.auth.signUp({ email: email.trim().toLowerCase(), password });
+    if(error) throw error;
+    // If the project has email confirmation switched off, signUp() logs
+    // the person straight in (a SIGNED_IN event fires and handleSignedIn
+    // takes it from there — same as normal sign-in, including the "not
+    // in the directory yet" check). If confirmation IS required, there's
+    // no session yet and they need to confirm via email first.
+    if(data && data.session){
+      if(okBox){ okBox.textContent = 'Login created — signing you in…'; okBox.classList.remove('hidden'); }
+    } else {
+      if(okBox){ okBox.textContent = `Login created for ${email.trim()}. Check your inbox to confirm your email if asked, then sign in.`; okBox.classList.remove('hidden'); }
+      document.getElementById('create-account-password').value = '';
+      document.getElementById('create-account-confirm').value = '';
+    }
+  }catch(e){
+    const msg = (e && e.message) ? e.message : String(e);
+    // Supabase's own message for an email that's already registered
+    // (wording varies by project settings) — steer them to the right
+    // flow instead of just showing a raw error.
+    if(/already registered|already exists|already in use/i.test(msg)){
+      if(errBox){ errBox.textContent = 'This email already has a login — use "Forgot password?" instead to reset it.'; errBox.classList.remove('hidden'); }
+    } else if(errBox){
+      errBox.textContent = 'Could not set up account: ' + msg; errBox.classList.remove('hidden');
+    }
+  }finally{
+    authBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Set Up Password'; }
+  }
+}
+
 
 async function attemptPasswordReset(email){
   const errBox = document.getElementById('forgot-error');
@@ -12248,6 +12358,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const submitForgot = ()=>attemptPasswordReset(document.getElementById('forgot-email').value.trim());
   if(forgotForm) forgotForm.addEventListener('submit', (e)=>{ e.preventDefault(); submitForgot(); });
   if(forgotBtn) forgotBtn.addEventListener('click', submitForgot);
+
+  const createForm = document.getElementById('create-account-form');
+  const createBtn = document.getElementById('create-account-submit-btn');
+  const submitCreate = ()=>attemptCreateAccount(document.getElementById('create-account-email').value.trim(), document.getElementById('create-account-password').value, document.getElementById('create-account-confirm').value);
+  if(createForm) createForm.addEventListener('submit', (e)=>{ e.preventDefault(); submitCreate(); });
+  if(createBtn) createBtn.addEventListener('click', submitCreate);
 
   const resetForm = document.getElementById('reset-password-form');
   const resetBtn = document.getElementById('reset-password-submit-btn');
