@@ -4254,6 +4254,10 @@ const App = {
       // visibility into the department's marks-entry progress. No EA step
       // in this chain, so the EA isn't notified here.
       this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} submitted by Course Instructor`, `${course.code} — ${label} marks have been submitted by the Course Instructor and forwarded to the Course Coordinator for verification.`, true, null, itemEntryLink(course, itemKey)));
+      // Term Test 1/2/3 only: check this section's average against every
+      // other section of the same subject right at the moment of
+      // forwarding — see checkTermTestSectionDeviation above.
+      this.checkTermTestSectionDeviation(course, itemKey);
     } else if(ia.stage==='cc'){
       const ccUser = getCourseCCUser(courseId);
       if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can forward this.', 'err'); return; }
@@ -4270,6 +4274,29 @@ const App = {
     syncCourse(course);
     toast(ia.stage==='done' ? `${label} approved.` : `${label} forwarded to ${ITEM_STAGE_LABELS[ia.stage]}.`, 'ok');
     renderContent();
+  },
+  /* ---------- CI: notify a Course Instructor if their just-forwarded Term
+     Test average is running behind their peers on the same subject ----------
+     Compares this section against every other FULLY-entered section of the
+     same subject code, for the same cycle only (TT1 vs TT1, etc, each out
+     of 50 — see termTestSiblingAverages/TERM_TEST_DEVIATION_MARGIN above).
+     Only fires once there's another section to compare against, and only
+     when this section is genuinely behind — never for the top section(s). */
+  checkTermTestSectionDeviation(course, itemKey){
+    const cycle = itemKey==='tt1' ? 'TT1' : itemKey==='tt2' ? 'TT2' : itemKey==='tt3' ? 'TT3' : null;
+    if(!cycle) return;
+    const rows = termTestSiblingAverages(course, cycle).filter(r=>r.count===r.total);
+    if(rows.length < 2) return;
+    const mine = rows.find(r=>r.course.id===course.id);
+    if(!mine) return;
+    const best = Math.max(...rows.map(r=>r.avg));
+    if(best - mine.avg <= TERM_TEST_DEVIATION_MARGIN) return;
+    const ciUser = getCourseCIUser(course.id);
+    if(!ciUser) return;
+    this.notifyUser(ciUser.id, course,
+      `${course.code} — ${TERM_TEST_LABELS[cycle]} running behind other sections`,
+      `Your ${TERM_TEST_LABELS[cycle]} average for ${course.code} — ${course.name} (Section ${course.section}) is ${mine.avg}/50, more than ${TERM_TEST_DEVIATION_MARGIN} marks below the strongest section's average of ${best}/50 for the same subject. Please review your evaluation for consistency.`,
+      true, null, { view:'ci-subject-detail', params:{ courseId: course.id } });
   },
   sendBackItem(courseId, itemKey, remark){
     const course = this.getCourse(courseId);
@@ -5942,6 +5969,70 @@ function deviationReportHtml(course){
       </span>`).join('')}
     </div>
     ${flagged.length ? `<p style="margin-top:8px;color:var(--seal-red);font-size:12.5px;">⚠ ${flagged.length} section${flagged.length===1?'':'s'} significantly deviate${flagged.length===1?'s':''} from the class mean — review before approving.</p>` : ''}
+  </div>`;
+}
+
+/* ============================================================
+   CI-facing Term Test cross-section comparison — when several Course
+   Instructors each teach a different section of the SAME subject
+   (matched by course code, e.g. Deep Learning across c1-c5), every one
+   of them should be able to see how their own Term Test 1/2/3 average
+   compares to their peers' on this same subject. Each cycle is out of
+   50 and compared independently — TT1 against TT1, TT2 against TT2,
+   TT3 against TT3, never mixed together. A section running more than 5
+   marks behind the strongest section for a cycle is flagged here, and
+   (see App.checkTermTestSectionDeviation, called from forwardItem) the
+   lagging Course Instructor is notified directly the moment they
+   forward that cycle to their Course Coordinator.
+   ============================================================ */
+/* Per-section average for one Term Test cycle, across every section of
+   the same subject — { course, ci, avg, count, total } per section,
+   only for sections that have that cycle's component on their template
+   at all. avg is null-filtered out already if nobody's entered marks. */
+function termTestSiblingAverages(course, cycle){
+  const siblings = App.state.courses.filter(c=>c.branch && normalizeCode(c.code)===normalizeCode(course.code));
+  return siblings.map(c=>{
+    if(!c.evalType) return null;
+    const key = termTestComponentKey(getCourseTemplate(c), cycle);
+    if(!key) return null;
+    const active = (c.students||[]).filter(s=>!isFullyAbsentFromCIE(c, s));
+    const entered = active.filter(s=>typeof s.marks[key]==='number');
+    if(!entered.length) return null;
+    const avg = round1(entered.reduce((sum,s)=>sum+s.marks[key],0)/entered.length);
+    return { course:c, ci:getCourseCIUser(c.id), avg, count:entered.length, total:active.length };
+  }).filter(Boolean);
+}
+/* The margin the department expects every section's Term Test average
+   to sit within, relative to the strongest section — a section more
+   than this many marks behind is flagged, on a 0-50 scale. */
+const TERM_TEST_DEVIATION_MARGIN = 5;
+/* Comparison card for the CI's own Subject Detail page — shows every
+   cycle that has more than one section reporting marks so far, this
+   CI's own section picked out, and flags anyone (including this CI)
+   running behind by more than TERM_TEST_DEVIATION_MARGIN. */
+function termTestComparisonHtml(course){
+  if(!course.evalType || !course.branch) return '';
+  const blocks = ['TT1','TT2','TT3'].map(cycle=>{
+    const rows = termTestSiblingAverages(course, cycle);
+    if(rows.length < 2) return '';
+    const best = Math.max(...rows.map(r=>r.avg));
+    const chips = rows.map(r=>{
+      const lagging = (best - r.avg) > TERM_TEST_DEVIATION_MARGIN;
+      const mine = r.course.id === course.id;
+      return `<span style="display:inline-block;margin:3px 8px 3px 0;padding:3px 9px;background:${lagging?'#FBEAEA':'#F3EEDD'};border:${mine?'2px solid var(--brass)':'1px solid var(--rule)'};border-radius:6px;font-size:12px;${lagging?'color:var(--seal-red);':''}">
+        Section ${escapeHtml(r.course.section)}${r.ci?` (${escapeHtml(r.ci.name)})`:''}${mine?' — you':''}: ${r.avg}/50${r.count<r.total?` (${r.count}/${r.total} entered)`:''}${lagging?' ⚠':''}
+      </span>`;
+    }).join('');
+    return `<div style="margin-top:10px;">
+      <div class="section-title" style="font-size:13px;">${TERM_TEST_LABELS[cycle]} — by section</div>
+      <div style="margin-top:6px;">${chips}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  if(!blocks) return '';
+  return `<div class="card">
+    <div class="section-title" style="font-size:14px;">Term Test Comparison — ${escapeHtml(course.code)}</div>
+    <p class="section-meta" style="margin-top:4px;">How this subject's Term Test 1/2/3 averages (each out of 50) compare across every section teaching it. A section more than ${TERM_TEST_DEVIATION_MARGIN} marks behind the strongest section is flagged.</p>
+    ${blocks}
   </div>`;
 }
 
@@ -10301,6 +10392,7 @@ function renderCISubjectDetail(params){
       ${deadlineBadge(course)}
     </div>
     ${sentBackBanner(course)}
+    ${termTestComparisonHtml(course)}
     ${evalTypeTableHtml(course, actions)}
     ${(()=>{
       // The eval-type table above only ever covers individual components —
