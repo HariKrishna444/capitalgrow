@@ -849,8 +849,42 @@ input[type="number"]{
             <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" style="width:100%;">
           </div>
           <div id="login-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
+          <div id="login-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
           <button id="login-submit-btn" type="submit" class="btn" style="margin-top:4px;">Sign In</button>
-          <p class="section-meta" style="color:var(--text-soft);">No account or forgotten password? Contact your System Administrator — accounts and passwords are issued by them, not self-registered.</p>
+          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showForgotPasswordForm()">Forgot password?</button>
+          <p class="section-meta" style="color:var(--text-soft);">No account? Contact your System Administrator — accounts are issued by them, not self-registered.</p>
+        </form>
+
+        <!-- FORGOT PASSWORD: request a reset link, faculty (or any @suh.edu.in
+             account) enters their email and Supabase Auth emails them a
+             recovery link back to this same page. -->
+        <form id="forgot-password-form" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+          <p class="section-meta" style="color:var(--text-soft);">Enter your @suh.edu.in email address and we'll send you a link to reset your password.</p>
+          <div class="config-field">
+            <label style="color:var(--text-soft);">Email</label>
+            <input id="forgot-email" type="email" autocomplete="username" placeholder="you@suh.edu.in" style="width:100%;">
+          </div>
+          <div id="forgot-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
+          <div id="forgot-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
+          <button id="forgot-submit-btn" type="submit" class="btn" style="margin-top:4px;">Send Reset Link</button>
+          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
+        </form>
+
+        <!-- RESET PASSWORD: shown automatically once the person clicks the
+             emailed reset link and lands back here with a recovery session
+             (see the PASSWORD_RECOVERY branch of sb.auth.onAuthStateChange). -->
+        <form id="reset-password-form" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+          <p class="section-meta" style="color:var(--text-soft);">Choose a new password for your account.</p>
+          <div class="config-field">
+            <label style="color:var(--text-soft);">New password</label>
+            <input id="reset-password-new" type="password" autocomplete="new-password" placeholder="At least 8 characters" style="width:100%;">
+          </div>
+          <div class="config-field">
+            <label style="color:var(--text-soft);">Confirm new password</label>
+            <input id="reset-password-confirm" type="password" autocomplete="new-password" placeholder="Re-enter new password" style="width:100%;">
+          </div>
+          <div id="reset-password-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
+          <button id="reset-password-submit-btn" type="submit" class="btn" style="margin-top:4px;">Set New Password</button>
         </form>
       </div>
     </section>
@@ -2816,8 +2850,10 @@ let authBusy = false;
 
 async function attemptPasswordLogin(email, password){
   const errBox = document.getElementById('login-error');
+  const successBox = document.getElementById('login-success');
   const btn = document.getElementById('login-submit-btn');
   if(errBox){ errBox.classList.add('hidden'); errBox.textContent = ''; }
+  if(successBox){ successBox.classList.add('hidden'); successBox.textContent = ''; }
   if(!email || !password){
     if(errBox){ errBox.textContent = 'Enter both email and password.'; errBox.classList.remove('hidden'); }
     return;
@@ -2869,10 +2905,131 @@ async function handleSignedIn(session){
 }
 
 sb.auth.onAuthStateChange((event, session) => {
-  if(session && !App.state.currentUserId && ['SIGNED_IN','INITIAL_SESSION','TOKEN_REFRESHED'].includes(event)){
+  // A recovery link (from "Forgot password?") lands back here already
+  // signed in via a short-lived recovery session — intercept that BEFORE
+  // the normal sign-in flow below would otherwise try to look up a
+  // profile and drop the person straight into the app. Show the "set a
+  // new password" form instead; only handleSignedIn() (normal sign-in)
+  // afterwards, once they log in fresh with the new password.
+  if(event === 'PASSWORD_RECOVERY'){
+    passwordRecoveryMode = true;
+    showResetPasswordForm();
+    return;
+  }
+  if(session && !App.state.currentUserId && !passwordRecoveryMode && ['SIGNED_IN','INITIAL_SESSION','TOKEN_REFRESHED'].includes(event)){
     handleSignedIn(session);
   }
 });
+
+/* ---------------- Forgot / reset password ----------------
+   Any @suh.edu.in account (faculty included — this was previously only
+   fixable by asking the System Administrator to reset it by hand) can
+   now request their own reset link from the login page, then set a new
+   password themselves once they click through from their email. Uses
+   Supabase Auth's built-in recovery flow — no server-side function of
+   ours is involved, so this works the same for every role. */
+let passwordRecoveryMode = false;
+function showSignInForm(){
+  passwordRecoveryMode = false;
+  document.getElementById('login-form').classList.remove('hidden');
+  document.getElementById('forgot-password-form').classList.add('hidden');
+  document.getElementById('reset-password-form').classList.add('hidden');
+  const fErr = document.getElementById('forgot-error'); if(fErr){ fErr.classList.add('hidden'); fErr.textContent=''; }
+  const fOk = document.getElementById('forgot-success'); if(fOk){ fOk.classList.add('hidden'); fOk.textContent=''; }
+  const rErr = document.getElementById('reset-password-error'); if(rErr){ rErr.classList.add('hidden'); rErr.textContent=''; }
+}
+function showForgotPasswordForm(){
+  document.getElementById('login-form').classList.add('hidden');
+  document.getElementById('forgot-password-form').classList.remove('hidden');
+  document.getElementById('reset-password-form').classList.add('hidden');
+  const emailEl = document.getElementById('forgot-email');
+  const loginEmailEl = document.getElementById('login-email');
+  if(emailEl && loginEmailEl && loginEmailEl.value) emailEl.value = loginEmailEl.value;
+}
+function showResetPasswordForm(){
+  document.getElementById('login-view').classList.remove('hidden');
+  document.getElementById('shell').classList.add('hidden');
+  document.getElementById('login-form').classList.add('hidden');
+  document.getElementById('forgot-password-form').classList.add('hidden');
+  document.getElementById('reset-password-form').classList.remove('hidden');
+}
+window.showSignInForm = showSignInForm;
+window.showForgotPasswordForm = showForgotPasswordForm;
+
+async function attemptPasswordReset(email){
+  const errBox = document.getElementById('forgot-error');
+  const okBox = document.getElementById('forgot-success');
+  const btn = document.getElementById('forgot-submit-btn');
+  if(errBox){ errBox.classList.add('hidden'); errBox.textContent=''; }
+  if(okBox){ okBox.classList.add('hidden'); okBox.textContent=''; }
+  if(!email){
+    if(errBox){ errBox.textContent = 'Enter your email address.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(!/@suh\.edu\.in$/i.test(email.trim())){
+    if(errBox){ errBox.textContent = 'Only @suh.edu.in email addresses can reset a password here.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(authBusy) return;
+  authBusy = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  try{
+    // Sends the person back to this same page (whatever it's hosted at)
+    // with a recovery session in the URL — the PASSWORD_RECOVERY branch
+    // of onAuthStateChange above picks it up from there.
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo });
+    if(error) throw error;
+    if(okBox){ okBox.textContent = `If an account exists for ${email.trim()}, a password reset link has been sent — check your inbox.`; okBox.classList.remove('hidden'); }
+  }catch(e){
+    const msg = (e && e.message) ? e.message : String(e);
+    if(errBox){ errBox.textContent = 'Could not send reset link: ' + msg; errBox.classList.remove('hidden'); }
+  }finally{
+    authBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Send Reset Link'; }
+  }
+}
+
+async function attemptSetNewPassword(newPassword, confirmPassword){
+  const errBox = document.getElementById('reset-password-error');
+  const btn = document.getElementById('reset-password-submit-btn');
+  if(errBox){ errBox.classList.add('hidden'); errBox.textContent=''; }
+  if(!newPassword || !confirmPassword){
+    if(errBox){ errBox.textContent = 'Enter and confirm your new password.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(newPassword.length < 8){
+    if(errBox){ errBox.textContent = 'Password must be at least 8 characters.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(newPassword !== confirmPassword){
+    if(errBox){ errBox.textContent = 'Passwords do not match.'; errBox.classList.remove('hidden'); }
+    return;
+  }
+  if(authBusy) return;
+  authBusy = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Setting password…'; }
+  try{
+    const { error } = await sb.auth.updateUser({ password: newPassword });
+    if(error) throw error;
+    // Done with the recovery session — sign out and drop them back on the
+    // normal sign-in form so they log in fresh with the new password,
+    // exactly the enter-new-password / confirm / then-log-in sequence.
+    await sb.auth.signOut();
+    passwordRecoveryMode = false;
+    document.getElementById('reset-password-new').value = '';
+    document.getElementById('reset-password-confirm').value = '';
+    showSignInForm();
+    const successBox = document.getElementById('login-success');
+    if(successBox){ successBox.textContent = 'Password updated — sign in with your new password.'; successBox.classList.remove('hidden'); }
+  }catch(e){
+    const msg = (e && e.message) ? e.message : String(e);
+    if(errBox){ errBox.textContent = 'Could not update password: ' + msg; errBox.classList.remove('hidden'); }
+  }finally{
+    authBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Set New Password'; }
+  }
+}
 
 /* ---------------- Admin-only: account & password provisioning ----------------
    These call a Supabase Edge Function (admin-manage-user) using the
@@ -3232,6 +3389,7 @@ const App = {
     const pwEl = document.getElementById('login-password');
     if(emailEl) emailEl.value = '';
     if(pwEl) pwEl.value = '';
+    showSignInForm();
     closeNotifPanel();
   },
   navigate(view, params={}){
@@ -12084,6 +12242,18 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const loginBtn = document.getElementById('login-submit-btn');
   if(loginForm) loginForm.addEventListener('submit', (e)=>{ e.preventDefault(); App.submitLogin(); });
   if(loginBtn) loginBtn.addEventListener('click', ()=>App.submitLogin());
+
+  const forgotForm = document.getElementById('forgot-password-form');
+  const forgotBtn = document.getElementById('forgot-submit-btn');
+  const submitForgot = ()=>attemptPasswordReset(document.getElementById('forgot-email').value.trim());
+  if(forgotForm) forgotForm.addEventListener('submit', (e)=>{ e.preventDefault(); submitForgot(); });
+  if(forgotBtn) forgotBtn.addEventListener('click', submitForgot);
+
+  const resetForm = document.getElementById('reset-password-form');
+  const resetBtn = document.getElementById('reset-password-submit-btn');
+  const submitReset = ()=>attemptSetNewPassword(document.getElementById('reset-password-new').value, document.getElementById('reset-password-confirm').value);
+  if(resetForm) resetForm.addEventListener('submit', (e)=>{ e.preventDefault(); submitReset(); });
+  if(resetBtn) resetBtn.addEventListener('click', submitReset);
 });
 </script>
 </body>
