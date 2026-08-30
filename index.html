@@ -10659,8 +10659,8 @@ function renderCITermTestEntry(params){
     const cieScaled = round1((Math.min(calc.total, comp.rawMax)/comp.rawMax) * comp.scaledMax);
     const searchHay = `${s.name||''} ${s.rollNo||''}`.toLowerCase();
     return `<tr data-tt-search="${escapeHtml(searchHay)}"${absentHere?' style="opacity:.55;"':''}>
-      ${absentCell}
       <td>${studentNameCell(s)}</td>
+      ${absentCell}
       ${shortCells}
       <td class="total-cell hl-total">${absentHere?'—':calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
       ${longCells}
