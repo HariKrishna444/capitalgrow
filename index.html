@@ -9635,6 +9635,16 @@ function ttExportTableData(course, cycle){
     ...TT_ALL_LONG_QKEYS.map(qKey=>`${qKey.toUpperCase()} (/${getLongPairMax(qKey)})`), 'Part B Total',
     'Term Test Total', `${cycleLabel} Scaled (/${comp.scaledMax})`];
   const rows = itemEntryStudents(course, itemKey).map(s=>{
+    const absentHere = isAbsentForComponent(s, compKey);
+    if(absentHere){
+      // Mirror the on-screen "Absent" template exactly: each Part A/Part B
+      // question cell reads "Absent" and every total column shows "—",
+      // instead of exporting blank/zeroed cells for a student who didn't
+      // sit this Term Test.
+      return [s.name, s.rollNo || '',
+        ...TT_SHORT_KEYS.map(()=>'Absent'), '—',
+        ...TT_ALL_LONG_QKEYS.map(()=>'Absent'), '—', '—', '—'];
+    }
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
     const shortVals = TT_SHORT_KEYS.map(k=>ttNum(detail[k]));
