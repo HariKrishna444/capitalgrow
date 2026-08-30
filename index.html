@@ -2281,6 +2281,20 @@ function groupedHeaderRows(items){
 }
 function getLongPairForQKey(qKey){ return TT_LONG_PAIRS.find(p=>p.a===qKey||p.b===qKey); }
 function getLongPairMax(qKey){ const p = getLongPairForQKey(qKey); return p ? p.max : TT_SHORT_EACH_MAX; }
+/* Default Unit-per-question for each Term Test cycle, so a Term Test's
+   question paper is fully set up (Part A + Part B, unit-mapped) the moment
+   its cycle exists — no CC action required. TT1 covers Units 1-3; TT2
+   covers Units 4-5 plus a revisit of Unit 3 (mirrors TT1's Q1/Q2->first
+   unit, Q3/Q4->second unit, Q5->third unit pattern for Part A, and the same
+   grouping for Part B's Q6/Q7, Q8/Q9, Q10/Q11 pairs). A CC can still
+   override any individual question's Unit — that saved choice always wins
+   over this default (see getQuestionConfig below). */
+const TT_DEFAULT_UNITS = {
+  TT1: { q1:'Unit 1', q2:'Unit 1', q3:'Unit 2', q4:'Unit 2', q5:'Unit 3',
+         q6:'Unit 1', q7:'Unit 1', q8:'Unit 2', q9:'Unit 2', q10:'Unit 3', q11:'Unit 3' },
+  TT2: { q1:'Unit 4', q2:'Unit 4', q3:'Unit 5', q4:'Unit 5', q5:'Unit 3',
+         q6:'Unit 4', q7:'Unit 4', q8:'Unit 5', q9:'Unit 5', q10:'Unit 3', q11:'Unit 3' },
+};
 function getQuestionConfig(course, cycle, qKey){
   const cfg = (((course.ttPaperConfig||{})[cycle]||{})[qKey]) || {};
   const pair = getLongPairForQKey(qKey);
@@ -2290,7 +2304,8 @@ function getQuestionConfig(course, cycle, qKey){
   // complete Part B answer (e.g. 16 marks), not the old 8+8 half split.
   // Once a CC explicitly picks a split for a question, that saved choice
   // always wins; this default only applies to never-configured questions.
-  return { unit: cfg.unit || '', split: cfg.split || fullValue, pairMax: pair ? pair.max : null, fullValue, halfValue };
+  const defaultUnit = (TT_DEFAULT_UNITS[cycle] || {})[qKey] || '';
+  return { unit: cfg.unit || defaultUnit, split: cfg.split || fullValue, pairMax: pair ? pair.max : null, fullValue, halfValue };
 }
 const TT_ALL_LONG_QKEYS = TT_LONG_PAIRS.flatMap(p=>[p.a,p.b]);
 /* Short answers (Q1-Q5) also carry a Unit — set here, alongside the
@@ -2361,12 +2376,14 @@ function termTestComponentKey(template, cycle){
    Previously the Course Coordinator had to manually open Question Paper
    Setup, pick a Unit for every question (Q1-Q11), and forward it before
    the Course Instructor could enter any Term Test marks. That's still
-   possible (and still the only way to pick real Units), but as a
-   convenience a default setup — every question fixed to Unit 1 — is now
+   possible (and still the only way to override the Units), but as a
+   convenience the standard template — see TT_DEFAULT_UNITS — is now
    applied and forwarded automatically for Term Test 1 and Term Test 2 the
    moment a Course Instructor is assigned, so marks entry is never blocked
-   waiting on this step. The Coordinator can still reopen either cycle
-   (Question Paper Setup → Edit) at any time to correct the real Units;
+   waiting on this step. Part A (Q1-Q5) and Part B (Q6-Q11) both follow the
+   same 3-unit grouping: TT1 uses Units 1/2/3, TT2 uses Units 4/5/3. The
+   Coordinator can still reopen either cycle (Question Paper Setup → Edit)
+   at any time to correct the real Units;
    reopening unlocks it for editing exactly as before. Skips a cycle
    entirely if the Evaluation Type has no Term Test component for it, or if
    that cycle already has a real setup in progress/forwarded (so this never
@@ -2382,7 +2399,7 @@ function applyDefaultTTPaperConfig(course){
     const alreadyStarted = existing && (existing.__forwarded || TT_ALL_QKEYS.some(qKey=>!!(existing[qKey]||{}).unit));
     if(alreadyStarted) return;
     const cfg = { __forwarded: true };
-    TT_ALL_QKEYS.forEach(qKey=>{ cfg[qKey] = { unit: TT_UNIT_OPTIONS[0] }; });
+    TT_ALL_QKEYS.forEach(qKey=>{ cfg[qKey] = { unit: (TT_DEFAULT_UNITS[cycle]||{})[qKey] || TT_UNIT_OPTIONS[0] }; });
     course.ttPaperConfig[cycle] = cfg;
     defaulted.push(cycle);
   });
@@ -3508,15 +3525,15 @@ const App = {
       nextStudents.forEach(s=>syncNewStudent(course.id, s));
     }
 
-    // Auto-apply a default (Unit 1) Question Paper Setup for Term Test 1 &
-    // 2 so the new Course Instructor isn't blocked on the Coordinator
-    // doing that separately — see applyDefaultTTPaperConfig.
+    // Auto-apply the default Question Paper Setup (see TT_DEFAULT_UNITS)
+    // for Term Test 1 & 2 so the new Course Instructor isn't blocked on
+    // the Coordinator doing that separately — see applyDefaultTTPaperConfig.
     const defaultedCycles = evalType ? applyDefaultTTPaperConfig(course) : [];
     await syncCourse(course);
     this.logHistory(course, `Course Instructor assigned: ${ciUser.name} (${ciUser.email})`
       + (loadedCount ? ` · ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registration import` : ''));
-    if(defaultedCycles.length) this.logHistory(course, `Default Question Paper Setup (Unit 1) auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
-    this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).${evalType ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ' The Evaluation Type for this section is not fixed yet — check with your Coordinator.'} This role is active immediately — no separate approval step is needed.${defaultedCycles.length ? ` A default Question Paper Setup (every question set to Unit 1) has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away — your Coordinator may still update the real Units later.` : ''}`, true, actor.email);
+    if(defaultedCycles.length) this.logHistory(course, `Default Question Paper Setup auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
+    this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section} · ${branchLabel(course.branch)}).${evalType ? ` The Evaluation Type for this section is fixed as "${evalTypeLabel(evalType)}" — enter marks only for the components shown.` : ' The Evaluation Type for this section is not fixed yet — check with your Coordinator.'} This role is active immediately — no separate approval step is needed.${defaultedCycles.length ? ` A default Question Paper Setup has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away — your Coordinator may still update the Units later.` : ''}`, true, actor.email);
     toast(loadedCount
       ? `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section} — ${loadedCount} student${loadedCount===1?'':'s'} auto-loaded from Course Registrations.`
       : `${ciUser.name} is now Course Instructor for ${course.code} · Section ${course.section}. No matching Course Registration rows were found, so the roster is empty — add students from the roster page, or import the registration sheet first.`, 'ok');
@@ -3775,16 +3792,16 @@ const App = {
       course.code = subj.code;
       course.name = subj.name;
       course.ciLoadType = loadType || null;
-      // Auto-apply a default (Unit 1) Question Paper Setup for Term Test
-      // 1 & 2 so the new Course Instructor isn't blocked on the
-      // Coordinator doing that separately — see applyDefaultTTPaperConfig.
+      // Auto-apply the default Question Paper Setup (see TT_DEFAULT_UNITS)
+      // for Term Test 1 & 2 so the new Course Instructor isn't blocked on
+      // the Coordinator doing that separately — see applyDefaultTTPaperConfig.
       defaultedCycles = applyDefaultTTPaperConfig(course);
       syncCourse(course);
       etNote = ` · Subject fixed as: ${subj.code} — ${subj.name} (${evalTypeLabel(subj.abbr)})${loadType ? ` · ${LOAD_TYPE_LABELS[loadType]}` : ''}`;
     }
     this.logHistory(course, `${roleLabel} assigned: ${user.name} (${user.email})${etNote}`);
-    if(defaultedCycles.length) this.logHistory(course, `Default Question Paper Setup (Unit 1) auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
-    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.${defaultedCycles.length ? ` A default Question Paper Setup (every question set to Unit 1) has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away — your Coordinator may still update the real Units later.` : ''}`, true, actor.email);
+    if(defaultedCycles.length) this.logHistory(course, `Default Question Paper Setup auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
+    this.notifyUser(user.id, course, `You're now ${roleLabel}`, `${actor.name} assigned you as ${roleLabel} for ${course.code} — ${course.name}.${type==='CI' ? ` The subject and Evaluation Type for this section are fixed as "${subj.code} — ${subj.name}" (${evalTypeLabel(subj.abbr)}) — enter marks only for the components shown.` : ''} This role is active immediately — no separate approval step is needed.${defaultedCycles.length ? ` A default Question Paper Setup has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away — your Coordinator may still update the Units later.` : ''}`, true, actor.email);
     toast(`${user.name} is now ${roleLabel} for ${course.code}.${etNote}`, 'ok');
     closeModal();
     renderSidebar();
