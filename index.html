@@ -2250,7 +2250,11 @@ function getQuestionConfig(course, cycle, qKey){
   const pair = getLongPairForQKey(qKey);
   const fullValue = pair ? String(pair.max) : '';
   const halfValue = pair ? `${pair.max/2}+${pair.max/2}` : '';
-  return { unit: cfg.unit || '', split: cfg.split || halfValue, pairMax: pair ? pair.max : null, fullValue, halfValue };
+  // Default (nothing chosen by the CC yet) is now the FULL value — one
+  // complete Part B answer (e.g. 16 marks), not the old 8+8 half split.
+  // Once a CC explicitly picks a split for a question, that saved choice
+  // always wins; this default only applies to never-configured questions.
+  return { unit: cfg.unit || '', split: cfg.split || fullValue, pairMax: pair ? pair.max : null, fullValue, halfValue };
 }
 const TT_ALL_LONG_QKEYS = TT_LONG_PAIRS.flatMap(p=>[p.a,p.b]);
 /* Short answers (Q1-Q5) also carry a Unit — set here, alongside the
@@ -2586,7 +2590,7 @@ async function fetchStateFromSupabase(){
       evalType:c.eval_type || null, ciLoadType:c.ci_load_type || null, itemApprovals:c.item_approvals || {}, itemRosterOverrides:c.item_roster_overrides || {}, noApprovalSubmitted:c.no_approval_submitted || {}, ebPublished:!!c.eb_published, ebPublishedAt:c.eb_published_at ? new Date(c.eb_published_at).getTime() : null, ebPublishedBy:c.eb_published_by || '',
       editRequestStatus:c.edit_request_status || null, editRequestRemark:c.edit_request_remark||'', editUnlocked:!!c.edit_unlocked,
       ttLabApproval:c.tt_lab_approval || null, labExternalApproval:c.lab_external_approval || null,
-      etRequests: c.et_requests || [], ttPaperConfig: c.tt_paper_config || {},
+      etRequests: c.et_requests || [], ttPaperConfig: c.tt_paper_config || {}, subSections: c.sub_sections || [],
       // Roster/marks are NOT fetched here — only a lightweight count +
       // completion flags from the view. Call App.ensureCourseStudentsLoaded
       // (courseId) before any page needs the real per-student data; that
@@ -2695,7 +2699,7 @@ async function fetchProfilesOnly(){
 /* ---------------- granular row sync (replaces the old full-state dump) ---------------- */
 const rowOf = {
   profile:(u)=>({ id:u.id, name:u.name, email:u.email, system_role:u.systemRole, home_branch:u.homeBranch||null }),
-  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, item_approvals:c.itemApprovals||{}, item_roster_overrides:c.itemRosterOverrides||{}, no_approval_submitted:c.noApprovalSubmitted||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, prac_internal_deadline:c.pracInternalDeadline||null, prac_internal_start:c.pracInternalStart||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
+  course:(c)=>({ id:c.id, code:c.code, name:c.name, section:c.section, branch:c.branch||null, semester:c.semester||null, regulation:c.regulation||null, status:c.status, sent_back:!!c.sentBack, last_remark:c.lastRemark||'', ea_remark:c.eaRemark||'', eval_type:c.evalType||null, ci_load_type:c.ciLoadType||null, edit_request_status:c.editRequestStatus||null, edit_request_remark:c.editRequestRemark||'', edit_unlocked:!!c.editUnlocked, tt_lab_approval:c.ttLabApproval||null, lab_external_approval:c.labExternalApproval||null, et_requests:c.etRequests||[], tt_paper_config:c.ttPaperConfig||{}, sub_sections:c.subSections||[], item_approvals:c.itemApprovals||{}, item_roster_overrides:c.itemRosterOverrides||{}, no_approval_submitted:c.noApprovalSubmitted||{}, eb_published:!!c.ebPublished, eb_published_at:c.ebPublishedAt ? new Date(c.ebPublishedAt).toISOString() : null, eb_published_by:c.ebPublishedBy||'', exam_date:c.examDate||null, prac_internal_deadline:c.pracInternalDeadline||null, prac_internal_start:c.pracInternalStart||null, scrutiny_remark:c.scrutinyRemark||'', frozen_at:c.frozenAt ? new Date(c.frozenAt).toISOString() : null, frozen_by:c.frozenBy||'', script_uploads:c.scriptUploads||{}, ci_acknowledged_at:c.ciAcknowledgedAt ? new Date(c.ciAcknowledgedAt).toISOString() : null }),
   student:(courseId,s)=>({ id:s.id, course_id:courseId, name:s.name, marks:s.marks||{}, roll_no:s.rollNo||null, email:s.email||null, dir_id:s.dirId||null, absent:!!s.absent }),
   assignment:(a)=>({
     id:a.id, type:a.type, course_id:a.courseId, user_id:a.userId, assigned_by:a.assignedBy||null,
@@ -2877,6 +2881,56 @@ function parseRegistrationCell(raw){
     if(idx===-1) return { sectionCode:'', instructor: part.trim() };
     return { sectionCode: part.slice(0,idx).trim(), instructor: part.slice(idx+1).trim() };
   }).filter(p=>p.instructor || p.sectionCode);
+}
+
+/* ---------------- Practical sub-sections (B1/B2 lab batches) ----------------
+   A Practical subject's section (e.g. Section B5) is very often actually
+   taught as two lab batches with two different faculty — the imported
+   Course Registration sheet already carries this: each student's own
+   subject cell names THEIR instructor (see parseRegistrationCell above),
+   so when a "single" section really has two distinct instructor names
+   across its registered students, that split IS the B1/B2 boundary — no
+   separate sheet format or convention is needed. suggestSubSectionsFromRegistrations
+   finds that split (if any) for a given course, ordered by each group's
+   lowest roll number so B1 always ends up the earlier roll-number half. */
+function suggestSubSectionsFromRegistrations(course){
+  if(!course) return [];
+  const norm = s => String(s||'').trim().toLowerCase();
+  const rows = (App.state.courseRegistrations||[]).filter(r=>
+    r.branch===course.branch && norm(r.sectionCode)===norm(course.section) && norm(r.subjectName)===norm(course.name));
+  if(!rows.length) return [];
+  const distinctInstructors = [...new Set(rows.map(r=>r.instructorName).filter(Boolean))];
+  if(distinctInstructors.length < 2) return [];
+  const groups = distinctInstructors.map(name=>{
+    const rollNos = [...new Set(rows.filter(r=>r.instructorName===name).map(r=>r.rollNo))].sort();
+    return { instructorName:name, rollNos };
+  }).filter(g=>g.rollNos.length);
+  groups.sort((a,b)=>(a.rollNos[0]||'').localeCompare(b.rollNos[0]||''));
+  return groups.map((g,i)=>({ code:'B'+(i+1), instructorName:g.instructorName, rollNos:g.rollNos }));
+}
+/* Whenever a Practical section's sub-sections have a faculty member
+   assigned, mirror that split into the existing item-roster-override
+   mechanism (see getItemRosterOverrides above) for Practical Internal Test
+   and SEE Practical — the two item flows a lab batch's own faculty
+   actually enters marks for. This is what makes the CC Dashboard's
+   sub-section assignment functionally real (each faculty only sees/enters
+   their own batch's marks), not just a label. Deliberately a no-op until
+   at least one sub-section has a faculty assigned, so a course that has
+   never used sub-sections is never touched, and any Admin-set roster
+   override on it is left alone. */
+function syncSubSectionItemOverrides(course){
+  if(!course || !course.subSections || !course.subSections.length) return;
+  const template = getCourseTemplate(course);
+  ['pracInternal','seePractical'].forEach(itemKey=>{
+    if(!itemFlowApplicable(template, itemKey)) return;
+    const batches = course.subSections.filter(s=>s.facultyUserId && s.rollNos && s.rollNos.length).map(s=>({
+      facultyUserId:s.facultyUserId, facultyEmail:s.facultyEmail, facultyName:s.facultyName,
+      rollNos:[...s.rollNos], subSectionCode:s.code, importedAt:Date.now()
+    }));
+    if(!batches.length) return;
+    course.itemRosterOverrides = course.itemRosterOverrides || {};
+    course.itemRosterOverrides[itemKey] = batches;
+  });
 }
 
 /* ---------------- app state ---------------- */
@@ -3483,6 +3537,105 @@ const App = {
     removed.forEach(s=>deleteStudent(s.id));
 
     toast(`Roster saved for ${course.code} — ${nextStudents.length} student${nextStudents.length===1?'':'s'}.`, 'ok');
+    this.navigate('cc-roster', { courseId });
+  },
+
+  /* ---------- CC: Practical sub-sections (B1/B2 lab batches) ----------
+     A Practical subject's Course Coordinator can split their section into
+     lab batches, each with its own faculty — see renderSubSectionsCard for
+     the CC Dashboard UI and syncSubSectionItemOverrides above for how a
+     sub-section's faculty ends up actually seeing/entering marks for only
+     their own batch (Practical Internal Test + SEE Practical). */
+  ccOwnsCourse(course){
+    const actor = this.currentUser();
+    if(!course || !actor) return false;
+    return getCourseCCUser(course.id)?.id === actor.id || actor.systemRole==='ADMIN';
+  },
+  autoMapSubSections(courseId){
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    if(!this.ccOwnsCourse(course)){ toast('Only this section\'s Course Coordinator can manage its sub-sections.', 'err'); return; }
+    const template = getCourseTemplate(course);
+    if(!itemFlowApplicable(template, 'pracInternal')){ toast('Sub-sections are only for Practical subjects.', 'err'); return; }
+    const suggestions = suggestSubSectionsFromRegistrations(course);
+    if(!suggestions.length){ toast('No two-instructor split found in the Course Registration data for this section — add sub-sections manually below, or import/correct the registration sheet first.', 'err'); return; }
+    const norm = s => String(s||'').trim().toLowerCase();
+    course.subSections = suggestions.map(s=>{
+      const matches = this.state.users.filter(u=>u.systemRole==='FACULTY' && norm(u.name)===norm(s.instructorName));
+      const faculty = matches.length===1 ? matches[0] : null;
+      return { code:s.code, facultyUserId: faculty ? faculty.id : null, facultyEmail: faculty ? faculty.email : '', facultyName: faculty ? faculty.name : s.instructorName, rollNos:s.rollNos, matchedFromRegistration:true };
+    });
+    syncSubSectionItemOverrides(course);
+    syncCourse(course);
+    const unmatched = course.subSections.filter(s=>!s.facultyUserId);
+    toast(`Mapped ${course.subSections.length} sub-section${course.subSections.length===1?'':'s'} from Course Registration (${course.subSections.map(s=>`${s.code}: ${s.rollNos.length}`).join(', ')})${unmatched.length ? ` — ${unmatched.map(s=>s.facultyName||'an instructor').join(', ')} couldn't be matched to a faculty account by name; assign manually below.` : '.'}`, unmatched.length ? 'err' : 'ok');
+    this.navigate('cc-roster', { courseId });
+  },
+  autoSplitSubSectionRoster(courseId){
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    if(!this.ccOwnsCourse(course)){ toast('Only this section\'s Course Coordinator can manage its sub-sections.', 'err'); return; }
+    const template = getCourseTemplate(course);
+    if(!itemFlowApplicable(template, 'pracInternal')){ toast('Sub-sections are only for Practical subjects.', 'err'); return; }
+    if(!course.subSections || !course.subSections.length){
+      course.subSections = [{ code:'B1', facultyUserId:null, facultyEmail:'', facultyName:'', rollNos:[] }, { code:'B2', facultyUserId:null, facultyEmail:'', facultyName:'', rollNos:[] }];
+    }
+    const rolls = [...(course.students||[])].sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||'')).map(s=>s.rollNo).filter(Boolean);
+    if(!rolls.length){ toast('This section has no roster yet — import or add students first.', 'err'); return; }
+    const n = course.subSections.length;
+    const per = Math.ceil(rolls.length / n);
+    course.subSections.forEach((ss,i)=>{ ss.rollNos = rolls.slice(i*per, (i+1)*per); });
+    syncSubSectionItemOverrides(course);
+    syncCourse(course);
+    toast(`Split ${rolls.length} students evenly across ${n} sub-sections (${course.subSections.map(s=>`${s.code}=${s.rollNos.length}`).join(', ')}).`, 'ok');
+    this.navigate('cc-roster', { courseId });
+  },
+  addSubSection(courseId, rawCode){
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    if(!this.ccOwnsCourse(course)){ toast('Only this section\'s Course Coordinator can manage its sub-sections.', 'err'); return; }
+    const code = String(rawCode||'').trim().toUpperCase();
+    if(!code){ toast('Enter a sub-section code, e.g. B1.', 'err'); return; }
+    course.subSections = course.subSections || [];
+    if(course.subSections.some(s=>s.code===code)){ toast(`Sub-section ${code} already exists.`, 'err'); return; }
+    course.subSections.push({ code, facultyUserId:null, facultyEmail:'', facultyName:'', rollNos:[] });
+    syncCourse(course);
+    toast(`Sub-section ${code} added — assign a faculty member and roster below.`, 'ok');
+    this.navigate('cc-roster', { courseId });
+  },
+  removeSubSection(courseId, code){
+    const course = this.getCourse(courseId);
+    if(!course || !course.subSections) return;
+    if(!this.ccOwnsCourse(course)){ toast('Only this section\'s Course Coordinator can manage its sub-sections.', 'err'); return; }
+    course.subSections = course.subSections.filter(s=>s.code!==code);
+    syncCourse(course);
+    toast(`Sub-section ${code} removed.`, 'err');
+    this.navigate('cc-roster', { courseId });
+  },
+  setSubSectionFaculty(courseId, code, facultyEmail){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course || !course.subSections) return;
+    if(!this.ccOwnsCourse(course)){ toast('Only this section\'s Course Coordinator can manage its sub-sections.', 'err'); return; }
+    const ss = course.subSections.find(s=>s.code===code);
+    if(!ss){ toast('Sub-section not found.', 'err'); return; }
+    const email = (facultyEmail||'').trim().toLowerCase();
+    if(!email){
+      ss.facultyUserId = null; ss.facultyEmail = ''; ss.facultyName = '';
+      syncCourse(course);
+      toast(`Faculty cleared for ${code}.`, 'err');
+      this.navigate('cc-roster', { courseId });
+      return;
+    }
+    const faculty = this.state.users.find(u=>u.systemRole==='FACULTY' && (u.email||'').toLowerCase()===email);
+    if(!faculty){ toast('No faculty account found with that email.', 'err'); return; }
+    const already = course.subSections.find(s=>s.code!==code && s.facultyUserId===faculty.id);
+    if(already){ toast(`${faculty.name} is already assigned to Sub-Section ${already.code} — pick a different faculty member for ${code}.`, 'err'); return; }
+    ss.facultyUserId = faculty.id; ss.facultyEmail = faculty.email; ss.facultyName = faculty.name;
+    syncSubSectionItemOverrides(course);
+    syncCourse(course);
+    this.notifyUser(faculty.id, course, `Assigned to ${course.code} · Sub-Section ${code}`, `${actor.name} assigned you as faculty for Sub-Section ${code} (${ss.rollNos.length} student${ss.rollNos.length===1?'':'s'}) under Section ${course.section} — ${course.name}.`, true, actor.email);
+    toast(`${faculty.name} assigned to Sub-Section ${code}.`, 'ok');
     this.navigate('cc-roster', { courseId });
   },
 
@@ -8428,7 +8581,7 @@ function renderAdminRosterAssignment(params){
       <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
         <div>
           <div class="section-title" style="font-size:13.5px;">${escapeHtml(o.facultyName)}</div>
-          <div class="section-meta">${escapeHtml(o.facultyEmail)} · ${o.rollNos.length} student${o.rollNos.length===1?'':'s'}${o.fileName ? ' · '+escapeHtml(o.fileName) : ''}</div>
+          <div class="section-meta">${escapeHtml(o.facultyEmail)} · ${o.rollNos.length} student${o.rollNos.length===1?'':'s'}${o.subSectionCode ? ' · Sub-Section '+escapeHtml(o.subSectionCode) : ''}${o.fileName ? ' · '+escapeHtml(o.fileName) : ''}</div>
           <div class="section-meta mono" style="font-size:11px;margin-top:4px;">${o.rollNos.map(escapeHtml).join(', ')}</div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="if(confirm('Remove this assignment?')) App.removeItemRosterOverride('${course.id}','${itemKey}','${o.facultyUserId}')">Remove</button>
@@ -11299,6 +11452,7 @@ function renderCCBranchGroupsHtml(ccCourses, term){
               ${c.evalType && ['TT1','TT2'].some(cycle=>termTestComponentKey(getCourseTemplate(c), cycle)) ? `<button class="btn btn-outline btn-sm" onclick="App.navigate('cc-termtest-setup',{courseId:'${c.id}'})">Question Paper Setup</button>` : ''}
             </div>
           </div>
+          ${(c.subSections && c.subSections.length) ? `<div class="section-meta" style="margin-top:8px;">Section ${escapeHtml(c.section)} → ${c.subSections.map(s=>`${escapeHtml(s.code)} → ${s.facultyName ? escapeHtml(s.facultyName) : 'Not assigned'}`).join(', ')}</div>` : ''}
           ${lightweightCompletionChipsHtml(c)}
         </div>`;
       }).join('')}
@@ -11312,6 +11466,51 @@ function updateCCBranchGroups(term){
   if(target) target.innerHTML = renderCCBranchGroupsHtml(ccCourses.filter(c=>c.branch), term);
 }
 window.updateCCBranchGroups = updateCCBranchGroups;
+
+/* ---------- CC: Practical Sub-Sections card (B1/B2 lab batches) ----------
+   Shown at the top of the Roster page for any section whose Evaluation
+   Type has a Practical Internal Test component. Lets the CC either
+   auto-map sub-sections + their faculty straight from the imported Course
+   Registration data (suggestSubSectionsFromRegistrations), auto-split the
+   current roster evenly across whatever sub-sections already exist (e.g.
+   60 students -> B1=30, B2=30), or add/remove/assign sub-sections by
+   hand. See App.autoMapSubSections / App.autoSplitSubSectionRoster /
+   App.addSubSection / App.removeSubSection / App.setSubSectionFaculty. */
+function renderSubSectionsCard(course){
+  const subSections = course.subSections || [];
+  const facultyUsers = App.state.users.filter(u=>u.systemRole==='FACULTY').slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const facultyOptionsHtml = ss => `<option value="">— Select faculty —</option>${facultyUsers.map(u=>`<option value="${escapeHtml(u.email)}" ${ss.facultyUserId===u.id?'selected':''}>${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`).join('')}`;
+  const rowsHtml = subSections.map(s=>`
+    <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div class="section-title" style="font-size:13.5px;">Sub-Section ${escapeHtml(s.code)}</div>
+        <div class="section-meta">${s.rollNos.length} student${s.rollNos.length===1?'':'s'}${s.matchedFromRegistration ? ' · matched from Course Registration' : ''}${s.facultyName ? ' · '+escapeHtml(s.facultyName) : ''}</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select style="min-width:220px;" onchange="App.setSubSectionFaculty('${course.id}','${escapeHtml(s.code)}', this.value)">${facultyOptionsHtml(s)}</select>
+        <button class="btn btn-outline btn-sm" onclick="if(confirm('Remove Sub-Section ${escapeHtml(s.code)}?')) App.removeSubSection('${course.id}','${escapeHtml(s.code)}')">Remove</button>
+      </div>
+    </div>`).join('');
+  const mappingLine = subSections.length
+    ? `Section ${escapeHtml(course.section)} → ${subSections.map(s=>`${escapeHtml(s.code)} → ${s.facultyName ? escapeHtml(s.facultyName) : '<span style="color:var(--seal-red);">Not assigned</span>'} (${s.rollNos.length})`).join(', ')}`
+    : '';
+  const newCodeInputId = `new-subsec-${course.id}`;
+  return `
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Practical Sub-Sections</div>
+      <p class="section-meta" style="margin-top:4px;">This is a Practical section — split Section ${escapeHtml(course.section)} into lab batches (e.g. B1, B2) and assign a different faculty member to each. Practical Internal Test and SEE Practical marks entry then follow each sub-section's own faculty, for their own students only.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn btn-sm" onclick="App.autoMapSubSections('${course.id}')">Auto-map from Course Registration</button>
+        <button class="btn btn-outline btn-sm" onclick="App.autoSplitSubSectionRoster('${course.id}')">Auto-split roster evenly</button>
+      </div>
+      ${rowsHtml || `<p class="section-meta" style="margin-top:10px;">No sub-sections yet — auto-map from Course Registration, auto-split the roster, or add one manually below.</p>`}
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-top:14px;padding-top:14px;border-top:1px solid var(--rule-light);flex-wrap:wrap;">
+        <div class="config-field" style="max-width:160px;"><label>New sub-section code</label><input id="${newCodeInputId}" type="text" placeholder="e.g. B3"></div>
+        <button class="btn btn-outline btn-sm" onclick="App.addSubSection('${course.id}', document.getElementById('${newCodeInputId}').value); document.getElementById('${newCodeInputId}').value='';">Add sub-section</button>
+      </div>
+      ${mappingLine ? `<p class="section-meta" style="margin-top:12px;font-weight:600;">${mappingLine}</p>` : ''}
+    </div>`;
+}
 
 function renderCCRoster(params){
   const user = App.currentUser();
@@ -11329,6 +11528,8 @@ function renderCCRoster(params){
   const byBatch = {};
   directoryForBranch.forEach(s=>{ (byBatch[s.batch] = byBatch[s.batch] || []).push(s); });
   const roster = [...(course.students||[])].sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||''));
+  const template = course.evalType ? getCourseTemplate(course) : null;
+  const isPracticalCourse = !!template && itemFlowApplicable(template, 'pracInternal');
 
   wrap.innerHTML = `
     <div class="page-head">
@@ -11336,6 +11537,7 @@ function renderCCRoster(params){
       <h2>Roster — ${escapeHtml(course.code)} · Section ${escapeHtml(course.section)} · ${branchLabel(course.branch)}</h2>
       <p>${locked ? 'This course is approved, so the roster is locked — view only.' : 'Import this section\'s students directly from a spreadsheet — whoever\'s on the roster below is who the Course Instructor sees and enters marks for.'}</p>
     </div>
+    ${isPracticalCourse ? renderSubSectionsCard(course) : ''}
     ${locked ? `<div class="card" style="border-color:var(--warn,#c8850a);"><div class="section-meta" style="font-weight:600;">Approved · locked — roster can no longer be changed. Contact an Administrator if this needs to be corrected.</div></div>` : `
     <div class="card">
       <div class="section-title" style="font-size:15px;">Import roster from Excel / CSV</div>
