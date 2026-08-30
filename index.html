@@ -3664,6 +3664,46 @@ const App = {
   },
 
   /* ---------- marks workflow ---------- */
+  /* Per-exam absence — replaces the old course-wide toggleStudentAbsent,
+     which wiped a student's ENTIRE s.marks the moment they were marked
+     absent for even one exam (e.g. missing Term Test 1 used to also erase
+     their already-entered SIA, Regular Lab Performance, Skill
+     Certification, Term Test 2 marks — everything). Called from a
+     per-student "Absent" checkbox right on each exam's own entry page
+     (Term Test 1/2, SIA, generic component, Practical Internal, SEE
+     Practical) — compKey is that exam's own component key, so only ITS
+     marks get cleared here; every other exam for the same student is
+     untouched. Unchecking just clears the flag; marks aren't restored
+     (there's nothing to restore — they were never kept), the CI re-enters
+     them normally. */
+  setComponentAbsent(courseId, studentId, compKey, checked){
+    const actor = this.currentUser();
+    const course = this.getCourse(courseId);
+    if(!course){ toast('Course not found.', 'err'); return; }
+    const chainItemKey = (compKey==='tt1'||compKey==='tt2') ? compKey : compKey==='pracInternal' ? 'pracInternal' : (compKey==='seePractical'||compKey==='seePracticalProject') ? 'seePractical' : null;
+    const permitted = chainItemKey ? isItemCIFor(course, chainItemKey) : isCourseOwnerCI(course);
+    if(!permitted && actor.systemRole!=='ADMIN'){ toast('Only the faculty assigned to this exam can mark attendance here.', 'err'); return; }
+    if(course.status!=='draft' && !course.editUnlocked){ toast('This record is locked.', 'err'); return; }
+    const s = (course.students||[]).find(x=>x.id===studentId);
+    if(!s) return;
+    s.marks = s.marks || {};
+    s.marks.absent = s.marks.absent || {};
+    if(checked){
+      s.marks.absent[compKey] = true;
+      // Clear only THIS exam's own stored marks/detail — every other
+      // component's data on this student is left completely alone.
+      delete s.marks[compKey];
+      if(compKey==='sia') delete s.marks.siaDetail;
+      if(compKey==='tt1' && s.marks.ttDetail) delete s.marks.ttDetail.TT1;
+      if(compKey==='tt2' && s.marks.ttDetail) delete s.marks.ttDetail.TT2;
+      if(compKey==='termTest' && s.marks.ttDetail){ delete s.marks.ttDetail.TT1; delete s.marks.ttDetail.TT2; }
+    } else {
+      delete s.marks.absent[compKey];
+    }
+    syncStudent(courseId, s);
+    toast(checked ? `${s.name} marked absent for this exam — only this exam's marks were cleared.` : `${s.name} marked present again.`, 'ok');
+    scheduleRenderContent();
+  },
   saveMarks(courseId){
     const course = this.getCourse(courseId);
     if(!course) return;
@@ -3734,16 +3774,12 @@ const App = {
   validateCIEComplete(course){
     const components = getCourseComponents(course);
     for(const s of course.students){
-      if(s.absent){
-        // Checkpoint C: attendance/marks consistency — an absent student
-        // must carry no marks at all (App.toggleStudentAbsent already
-        // clears these when Absent is checked, but this catches any stale
-        // data from before that flag existed).
-        const hasAny = components.some(comp=>typeof s.marks[comp.key]==='number');
-        if(hasAny) return { ok:false, msg:`${s.name} is marked Absent but still has marks entered — clear them or unmark Absent.` };
-        continue;
-      }
       for(const comp of components){
+        // Absence is per-exam now (s.marks.absent[compKey], set on that
+        // exam's own entry page) — skip only THIS component for THIS
+        // student, not every component, the way the old global s.absent
+        // flag used to.
+        if(isAbsentForComponent(s, comp.key)) continue;
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
         const rawScale = componentRawScale(comp);
@@ -3755,8 +3791,8 @@ const App = {
   validateSEEComplete(course){
     const components = getCourseSeeComponents(course);
     for(const s of course.students){
-      if(s.absent) continue;
       for(const comp of components){
+        if(isAbsentForComponent(s, comp.key)) continue;
         const v = s.marks[comp.key];
         if(v===undefined || v===null || v==='' || isNaN(v)) return { ok:false, msg:`Missing ${comp.label} score for ${s.name}.` };
         const rawScale = componentRawScale(comp);
@@ -5012,6 +5048,29 @@ window.App = App;
 const SIA_RAW_ENTRY_MAX = 50;
 const SIA_UNIT_COUNT = 5;
 function componentRawScale(comp){ return (comp && comp.key==='sia') ? SIA_RAW_ENTRY_MAX : (comp ? comp.rawMax : 0); }
+/* ---------- Per-exam absence ----------
+   Attendance used to be a single "Absent" checkbox for the WHOLE student
+   (App.toggleStudentAbsent, on the Review Full Record page) — checking it
+   wiped s.marks entirely, clearing every exam's marks even if the student
+   only missed, say, Term Test 1. That's the bug this replaces: absence is
+   now tracked separately per component/exam in s.marks.absent[compKey],
+   set via App.setComponentAbsent right on that exam's own entry page.
+   Marking a student absent for one exam only clears THAT exam's marks (and
+   its own detail — ttDetail[cycle], siaDetail) and leaves every other
+   exam's marks for that student completely untouched. */
+function isAbsentForComponent(student, compKey){
+  return !!(student && student.marks && student.marks.absent && student.marks.absent[compKey]);
+}
+/* Derived "fully absent" — true only once a student is marked absent on
+   EVERY CIE component of this course, not just one. Used purely for
+   summary stats/averages that used to read the old global s.absent flag;
+   actual completion checks (validateCIEComplete etc.) always go through
+   isAbsentForComponent per-component instead. */
+function isFullyAbsentFromCIE(course, s){
+  const comps = course.evalType ? getCourseComponents(course) : [];
+  if(!comps.length) return false;
+  return comps.every(comp=>isAbsentForComponent(s, comp.key));
+}
 /* ---------- No-approval component completion / submit-lock ----------
    SIA, Regular Lab/Skill Performance Assessment, Skill Certification, and
    every other CIE/SEE component with no CI -> CC -> HOD chain (see
@@ -5022,7 +5081,7 @@ function componentRawScale(comp){ return (comp && comp.key==='sia') ? SIA_RAW_EN
    InProgress to Completed — see App.submitNoApprovalComponent and
    noApprovalLockedFor below. Storage: course.noApprovalSubmitted[compKey]. */
 function componentFullyEntered(course, comp){
-  const students = (course.students||[]).filter(s=>!s.absent);
+  const students = (course.students||[]).filter(s=>!isAbsentForComponent(s, comp.key));
   if(!students.length) return false;
   if(comp.key==='sia'){
     return students.every(s=>{
@@ -5529,22 +5588,15 @@ function deadlineBadge(course){
 }
 
 /* ============================================================
-   CHECKPOINT C (part) — attendance/marks consistency: a student
-   marked Absent for this section should carry no marks. Toggling
-   Absent clears any marks already entered for that student so the
-   two can never disagree.
+   CHECKPOINT C (part) — attendance/marks consistency, now PER EXAM.
+   This replaces the old toggleStudentAbsent(courseId, studentId, checked),
+   which set a single course-wide s.absent flag and wiped s.marks = {}
+   entirely — so marking a student absent for Term Test 1 was silently
+   erasing their SIA, Regular Lab Performance, Skill Certification, Term
+   Test 2, every other component's marks too. See setComponentAbsent below
+   (App.setComponentAbsent) — it only clears the ONE component's own
+   marks/detail, leaving every other exam for that student untouched.
    ============================================================ */
-function toggleStudentAbsent(courseId, studentId, checked){
-  const course = App.getCourse(courseId);
-  if(!course) return;
-  const s = (course.students||[]).find(x=>x.id===studentId);
-  if(!s) return;
-  s.absent = !!checked;
-  if(s.absent) s.marks = {}; // absent students carry no marks — checkpoint C consistency rule
-  syncStudent(courseId, s);
-  renderContent();
-}
-window.toggleStudentAbsent = toggleStudentAbsent;
 
 /* ============================================================
    CHECKPOINT A — Evaluation Completion Status, computed per section.
@@ -5573,9 +5625,9 @@ function completionStatsChipsLite(course){
 function getCourseCompletionStats(course){
   const students = course.students || [];
   const total = students.length;
-  const absent = students.filter(s=>s.absent).length;
+  const absent = students.filter(s=>isFullyAbsentFromCIE(course, s)).length;
   const evaluated = students.filter(s=>{
-    if(s.absent) return false;
+    if(isFullyAbsentFromCIE(course, s)) return false;
     const check = App.validateCIEComplete ? App.validateCIEComplete({ ...course, students:[s] }) : { ok:true };
     return check.ok;
   }).length;
@@ -5636,7 +5688,7 @@ function studentEnteredTotal(s){
   return sum;
 }
 function courseSectionAverage(course){
-  const active = (course.students||[]).filter(s=>!s.absent);
+  const active = (course.students||[]).filter(s=>!isFullyAbsentFromCIE(course, s));
   if(!active.length) return null;
   const total = active.reduce((sum,s)=>sum+studentEnteredTotal(s), 0);
   return round1(total/active.length);
@@ -6147,8 +6199,11 @@ function siaEntryHtml(course, comp, editable){
   const UNIT_MAX = 10;
   const RAW_TOTAL_MAX = SIA_RAW_ENTRY_MAX; // 50 — see componentRawScale
   const rows = course.students.map(s=>{
+    const absentHere = isAbsentForComponent(s, comp.key);
     const detail = (s.marks.siaDetail)||{};
-    const cells = Array.from({length:UNIT_COUNT}, (_,i)=>{
+    const cells = absentHere
+      ? `<td colspan="${UNIT_COUNT}" class="mono" style="color:var(--text-soft);font-size:12px;text-align:center;">Absent</td>`
+      : Array.from({length:UNIT_COUNT}, (_,i)=>{
       const idx = i+1;
       const val = detail['unit'+idx];
       const overMax = typeof val==='number' && (val>UNIT_MAX || val<0);
@@ -6160,7 +6215,10 @@ function siaEntryHtml(course, comp, editable){
     }).join('');
     const rawTotal = typeof s.marks[comp.key]==='number' ? s.marks[comp.key] : 0;
     const scaled = round1((Math.min(rawTotal, RAW_TOTAL_MAX)/RAW_TOTAL_MAX) * comp.scaledMax);
-    return `<tr><td>${studentNameCell(s)}</td>${cells}<td class="total-cell">${rawTotal}/${RAW_TOTAL_MAX}</td><td class="total-cell">${scaled}/${comp.scaledMax}</td></tr>`;
+    const absentCell = `<td style="text-align:center;"><input type="checkbox" ${absentHere?'checked':''} ${editable?'':'disabled'}
+      title="Absent for ${escapeHtml(comp.label)} only — clears just this exam's marks"
+      onchange="if(confirm(this.checked ? 'Mark ${escapeHtml(s.name)} absent for ${escapeHtml(comp.label)}? This clears only this exam\\'s marks.' : 'Mark ${escapeHtml(s.name)} present again for ${escapeHtml(comp.label)}?')) App.setComponentAbsent('${course.id}','${s.id}','${comp.key}',this.checked); else this.checked=!this.checked;"></td>`;
+    return `<tr${absentHere?' style="opacity:.55;"':''}><td>${studentNameCell(s)}</td>${absentCell}${cells}<td class="total-cell">${absentHere?'—':`${rawTotal}/${RAW_TOTAL_MAX}`}</td><td class="total-cell">${absentHere?'—':`${scaled}/${comp.scaledMax}`}</td></tr>`;
   }).join('');
   const unitHead = Array.from({length:UNIT_COUNT}, (_,i)=>{
     const label = TT_UNIT_OPTIONS[i] || `Unit ${i+1}`;
@@ -6170,7 +6228,7 @@ function siaEntryHtml(course, comp, editable){
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">${escapeHtml(comp.label)} — unit-wise entry</div>
     <p class="section-meta" style="margin-top:4px;">Enter each unit's score out of ${UNIT_MAX} (${UNIT_COUNT} units = ${RAW_TOTAL_MAX} raw), automatically scaled down to /${comp.scaledMax} for the CIE total.</p>
-    <div class="table-scroll" style="margin-top:8px;"><table class="data-table"><thead><tr><th>Student</th>${unitHead}<th>Raw Total</th><th>Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="table-scroll" style="margin-top:8px;"><table class="data-table"><thead><tr><th>Student</th><th>Absent</th>${unitHead}<th>Raw Total</th><th>Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
 function switchMarksTab(tab){
@@ -10328,18 +10386,23 @@ function renderCITermTestEntry(params){
   };
 
   const rows = entryStudents.map(s=>{
+    const absentHere = isAbsentForComponent(s, compKey);
+    const rowEditable = editable && !absentHere;
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
-    const shortCells = TT_SHORT_KEYS.map(k=>{
+    const absentCell = `<td style="text-align:center;"><input type="checkbox" ${absentHere?'checked':''} ${editable?'':'disabled'}
+      title="Absent for ${escapeHtml(cycleLabel)} only — clears just this exam's marks"
+      onchange="if(confirm(this.checked ? 'Mark ${escapeHtml(s.name)} absent for ${escapeHtml(cycleLabel)}? This clears only this exam\\'s marks.' : 'Mark ${escapeHtml(s.name)} present again for ${escapeHtml(cycleLabel)}?')) App.setComponentAbsent('${course.id}','${s.id}','${compKey}',this.checked); else this.checked=!this.checked;"></td>`;
+    const shortCells = absentHere ? `<td colspan="${TT_SHORT_KEYS.length}" class="mono" style="color:var(--text-soft);font-size:12px;text-align:center;">Absent</td>` : TT_SHORT_KEYS.map(k=>{
       const v = detail[k];
       const overMax = typeof v==='number' && (v>TT_SHORT_EACH_MAX || v<0);
       return `<td><input type="number" min="0" max="${TT_SHORT_EACH_MAX}" step="0.5" style="width:56px;"
         class="${overMax?'invalid':''}"
         data-markkey="${course.id}|${s.id}|${cycle}_${k}"
-        value="${ttNum(v)}" ${editable?'':'disabled'}
+        value="${ttNum(v)}" ${rowEditable?'':'disabled'}
         onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${k}',null,this.value)"></td>`;
     }).join('');
-    const longCells = TT_LONG_PAIRS.map(({a,b,max})=>{
+    const longCells = absentHere ? `<td colspan="${TT_LONG_PAIRS.length*2}" class="mono" style="color:var(--text-soft);font-size:12px;text-align:center;">Absent</td>` : TT_LONG_PAIRS.map(({a,b,max})=>{
       const da = detail[a]||{}, db = detail[b]||{};
       const totalA = (typeof da.a==='number'?da.a:0)+(typeof da.b==='number'?da.b:0);
       const totalB = (typeof db.a==='number'?db.a:0)+(typeof db.b==='number'?db.b:0);
@@ -10358,7 +10421,7 @@ function renderCITermTestEntry(params){
               <input type="number" min="0" max="${max}" step="0.5" style="width:56px;text-align:center;" placeholder="/${max}"
                 class="${aOverMax?'invalid':''}"
                 data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_a"
-                value="${ttNum(av)}" ${editable ? '' : 'disabled'}
+                value="${ttNum(av)}" ${rowEditable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
             </td>`
           : `<td class="mono"${winMark} style="white-space:nowrap;text-align:center;">
@@ -10366,12 +10429,12 @@ function renderCITermTestEntry(params){
               <input type="number" min="0" max="${half}" step="0.5" style="width:44px;text-align:center;" placeholder="a/${half}"
                 class="${aOverMax?'invalid':''}"
                 data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_a"
-                value="${ttNum(av)}" ${editable ? '' : 'disabled'}
+                value="${ttNum(av)}" ${rowEditable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','a',this.value)">
               <input type="number" min="0" max="${half}" step="0.5" style="width:44px;text-align:center;" placeholder="b/${half}"
                 class="${bOverMax?'invalid':''}"
                 data-markkey="${course.id}|${s.id}|${cycle}_${qKey}_b"
-                value="${ttNum(bv)}" ${editable ? '' : 'disabled'}
+                value="${ttNum(bv)}" ${rowEditable ? '' : 'disabled'}
                 onchange="App.setTermTestMark('${course.id}','${s.id}','${cycle}','${qKey}','b',this.value)">
             </td>`;
       };
@@ -10379,15 +10442,16 @@ function renderCITermTestEntry(params){
     }).join('');
     const cieScaled = round1((Math.min(calc.total, comp.rawMax)/comp.rawMax) * comp.scaledMax);
     const searchHay = `${s.name||''} ${s.rollNo||''}`.toLowerCase();
-    return `<tr data-tt-search="${escapeHtml(searchHay)}">
+    return `<tr data-tt-search="${escapeHtml(searchHay)}"${absentHere?' style="opacity:.55;"':''}>
+      ${absentCell}
       <td>${studentNameCell(s)}</td>
       ${shortCells}
-      <td class="total-cell hl-total">${calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
+      <td class="total-cell hl-total">${absentHere?'—':calc.shortTotal}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_SHORT_TOTAL_MAX}</span></td>
       ${longCells}
-      <td class="total-cell hl-total">${calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
-      <td class="total-cell hl-total">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
-      <td class="total-cell" style="font-weight:700;">${cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
-      <td>${ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
+      <td class="total-cell hl-total">${absentHere?'—':calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
+      <td class="total-cell hl-total">${absentHere?'—':calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
+      <td class="total-cell" style="font-weight:700;">${absentHere?'—':cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
+      <td>${absentHere?'—':ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
       ${showRemarkCol.cc ? ttStudentRemarkCell(course, itemKey, cycle, s, 'cc') : ''}
       ${showRemarkCol.ea ? ttStudentRemarkCell(course, itemKey, cycle, s, 'ea') : ''}
       ${showRemarkCol.hod ? ttStudentRemarkCell(course, itemKey, cycle, s, 'hod') : ''}
@@ -10486,6 +10550,7 @@ function renderCITermTestEntry(params){
           <thead>
             <tr>
               <th rowspan="3" style="vertical-align:middle;">Student</th>
+              <th rowspan="3" style="vertical-align:middle;">Absent</th>
               <th colspan="${TT_SHORT_KEYS.length}" style="text-align:center;background:var(--brass);color:#fff;">Part A</th>
               <th rowspan="3" class="hl-total" style="vertical-align:middle;">Part A<br>Total</th>
               <th colspan="${TT_ALL_LONG_QKEYS.length}" style="text-align:center;background:var(--brass);color:#fff;">Part B</th>
@@ -10698,22 +10763,26 @@ function renderCIComponentEntry(params){
 
   const bodyHtml = comp.key==='sia' ? siaEntryHtml(course, comp, editable) : (()=>{
     const rows = course.students.map(s=>{
+      const absentHere = isAbsentForComponent(s, comp.key);
       const val = s.marks[comp.key];
       const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
       const scaled = typeof val==='number' ? round1((Math.min(val,comp.rawMax)/comp.rawMax)*comp.scaledMax) : '—';
-      return `<tr>
+      return `<tr${absentHere?' style="opacity:.55;"':''}>
         <td>${studentNameCell(s)}</td>
-        <td><input type="number" min="0" max="${comp.rawMax}" step="0.5"
+        <td style="text-align:center;"><input type="checkbox" ${absentHere?'checked':''} ${editable?'':'disabled'}
+          title="Absent for ${escapeHtml(comp.label)} only — clears just this exam's marks"
+          onchange="if(confirm(this.checked ? 'Mark ${escapeHtml(s.name)} absent for ${escapeHtml(comp.label)}? This clears only this exam\\'s marks.' : 'Mark ${escapeHtml(s.name)} present again for ${escapeHtml(comp.label)}?')) App.setComponentAbsent('${course.id}','${s.id}','${comp.key}',this.checked); else this.checked=!this.checked;"></td>
+        <td>${absentHere ? '<span class="mono" style="color:var(--text-soft);font-size:12px;">Absent</span>' : `<input type="number" min="0" max="${comp.rawMax}" step="0.5"
           class="${overMax?'invalid':''}"
           data-course="${course.id}" data-student="${s.id}" data-field="${comp.key}"
           data-markkey="${course.id}|${s.id}|${comp.key}"
           value="${val===undefined||val===null?'':val}" placeholder="/${comp.rawMax}"
           ${editable?'':'disabled'}
-          onchange="onMarkChange(this)"></td>
-        <td class="total-cell">${scaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
+          onchange="onMarkChange(this)">`}</td>
+        <td class="total-cell">${absentHere?'—':scaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
       </tr>`;
     }).join('');
-    return `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th><th>${escapeHtml(comp.label)}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th><th>Scaled<br><span style="text-transform:none;">max ${comp.scaledMax}</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th><th>Absent</th><th>${escapeHtml(comp.label)}<br><span style="text-transform:none;">max ${comp.rawMax}</span></th><th>Scaled<br><span style="text-transform:none;">max ${comp.scaledMax}</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   })();
 
   wrap.innerHTML = `
@@ -10992,7 +11061,7 @@ function renderCIEntry(params){
       </div>
     </div>` : ''}
     ${editable ? scriptUploadsEditHtml(course) : scriptUploadsViewHtml(course)}
-    ${editable ? absentManagementHtml(course) : ''}
+    ${attendanceSummaryHtml(course)}
     <div class="card">
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;" class="no-print">
         <button class="btn btn-outline btn-sm" onclick="exportCSV('${course.id}')">Export CSV</button>
@@ -11016,23 +11085,28 @@ function renderCIEntry(params){
   `;
   return wrap;
 }
-/* Compact absent-students box — checkpoint C's "attendance/marks
-   consistency" rule (absent students carry no marks) is enforced in
-   App.toggleStudentAbsent, which clears any marks the moment a student
-   is marked absent. */
-function absentManagementHtml(course){
+/* Read-only attendance summary — replaces the old global "mark absent"
+   checkbox box (which wiped s.marks entirely; see the note above
+   toggleStudentAbsent's removal). Absence is now set per exam, right on
+   that exam's own entry page (App.setComponentAbsent) — this box is just
+   a read-only look at who's absent from what, for a quick check before
+   submitting. Only students absent from at least one component show up. */
+function attendanceSummaryHtml(course){
   const students = course.students || [];
-  if(!students.length) return '';
+  const comps = course.evalType ? getCourseComponents(course).concat(getCourseSeeComponents(course)) : [];
+  if(!students.length || !comps.length) return '';
+  const rows = students.map(s=>{
+    const absentFrom = comps.filter(comp=>isAbsentForComponent(s, comp.key));
+    if(!absentFrom.length) return null;
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:12.5px;border:1px solid var(--rule);border-radius:6px;padding:4px 9px;">
+      <strong>${escapeHtml(s.name)}</strong> — absent: ${absentFrom.map(c=>escapeHtml(c.label)).join(', ')}
+    </div>`;
+  }).filter(Boolean);
+  if(!rows.length) return '';
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">Attendance</div>
-    <p class="section-meta" style="margin-top:4px;">Mark any student who was absent for this evaluation — their marks fields are cleared and skipped from completion checks.</p>
-    <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;">
-      ${students.map(s=>`
-        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;border:1px solid var(--rule);border-radius:6px;padding:4px 9px;">
-          <input type="checkbox" ${s.absent?'checked':''} onchange="toggleStudentAbsent('${course.id}','${s.id}', this.checked)">
-          ${escapeHtml(s.name)}
-        </label>`).join('')}
-    </div>
+    <p class="section-meta" style="margin-top:4px;">Marked per exam on that exam's own entry page — this is a read-only summary of who's absent from what.</p>
+    <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;">${rows.join('')}</div>
   </div>`;
 }
 
