@@ -881,10 +881,23 @@ input[type="number"]{
             <input id="create-account-confirm" type="password" autocomplete="new-password" placeholder="Re-enter password" style="width:100%;">
           </div>
           <div id="create-account-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
-          <div id="create-account-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
           <button id="create-account-submit-btn" type="submit" class="btn" style="margin-top:4px;">Set Up Password</button>
           <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
         </form>
+
+        <!-- CHECK YOUR EMAIL: replaces the create-account form entirely once
+             sign-up succeeds but Supabase requires the person to confirm
+             their address before the login is actually usable (see the
+             data.session check in attemptCreateAccount). Showing empty,
+             greyed-out password boxes underneath a success line read as
+             broken — this is a clean, dedicated "go check your inbox" state
+             instead. -->
+        <div id="confirm-email-notice" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center;">
+          <div style="font-size:34px;line-height:1;">📩</div>
+          <div class="section-title" style="font-size:16px;">Confirm your email</div>
+          <p class="section-meta" style="color:var(--text-soft);">We've sent a confirmation link to <strong id="confirm-email-address" style="color:var(--ink);"></strong>. Open your email app, find the message, and tap the link to confirm — then come back here and sign in.</p>
+          <button type="button" class="ghost-btn" style="padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
+        </div>
 
         <!-- FORGOT PASSWORD: request a reset link, faculty (or any @suh.edu.in
              account) enters their email and Supabase Auth emails them a
@@ -2966,17 +2979,18 @@ function showSignInForm(){
   document.getElementById('forgot-password-form').classList.add('hidden');
   document.getElementById('reset-password-form').classList.add('hidden');
   document.getElementById('create-account-form').classList.add('hidden');
+  document.getElementById('confirm-email-notice').classList.add('hidden');
   const fErr = document.getElementById('forgot-error'); if(fErr){ fErr.classList.add('hidden'); fErr.textContent=''; }
   const fOk = document.getElementById('forgot-success'); if(fOk){ fOk.classList.add('hidden'); fOk.textContent=''; }
   const rErr = document.getElementById('reset-password-error'); if(rErr){ rErr.classList.add('hidden'); rErr.textContent=''; }
   const cErr = document.getElementById('create-account-error'); if(cErr){ cErr.classList.add('hidden'); cErr.textContent=''; }
-  const cOk = document.getElementById('create-account-success'); if(cOk){ cOk.classList.add('hidden'); cOk.textContent=''; }
 }
 function showForgotPasswordForm(){
   document.getElementById('login-form').classList.add('hidden');
   document.getElementById('forgot-password-form').classList.remove('hidden');
   document.getElementById('reset-password-form').classList.add('hidden');
   document.getElementById('create-account-form').classList.add('hidden');
+  document.getElementById('confirm-email-notice').classList.add('hidden');
   const emailEl = document.getElementById('forgot-email');
   const loginEmailEl = document.getElementById('login-email');
   if(emailEl && loginEmailEl && loginEmailEl.value) emailEl.value = loginEmailEl.value;
@@ -2985,10 +2999,22 @@ function showCreateAccountForm(){
   document.getElementById('login-form').classList.add('hidden');
   document.getElementById('forgot-password-form').classList.add('hidden');
   document.getElementById('reset-password-form').classList.add('hidden');
+  document.getElementById('confirm-email-notice').classList.add('hidden');
   document.getElementById('create-account-form').classList.remove('hidden');
   const emailEl = document.getElementById('create-account-email');
   const loginEmailEl = document.getElementById('login-email');
   if(emailEl && loginEmailEl && loginEmailEl.value) emailEl.value = loginEmailEl.value;
+}
+/* Swaps the create-account form out for the "check your inbox" panel —
+   used once sign-up succeeds but a confirmation click is still needed. */
+function showConfirmEmailNotice(email){
+  document.getElementById('login-form').classList.add('hidden');
+  document.getElementById('forgot-password-form').classList.add('hidden');
+  document.getElementById('reset-password-form').classList.add('hidden');
+  document.getElementById('create-account-form').classList.add('hidden');
+  document.getElementById('confirm-email-notice').classList.remove('hidden');
+  const addrEl = document.getElementById('confirm-email-address');
+  if(addrEl) addrEl.textContent = email;
 }
 function showResetPasswordForm(){
   document.getElementById('login-view').classList.remove('hidden');
@@ -2996,11 +3022,13 @@ function showResetPasswordForm(){
   document.getElementById('login-form').classList.add('hidden');
   document.getElementById('forgot-password-form').classList.add('hidden');
   document.getElementById('create-account-form').classList.add('hidden');
+  document.getElementById('confirm-email-notice').classList.add('hidden');
   document.getElementById('reset-password-form').classList.remove('hidden');
 }
 window.showSignInForm = showSignInForm;
 window.showForgotPasswordForm = showForgotPasswordForm;
 window.showCreateAccountForm = showCreateAccountForm;
+
 
 /* First-time self sign-up — deliberately a DIFFERENT operation from
    attemptPasswordReset below. signUp() only ever creates a brand-new
@@ -3011,10 +3039,8 @@ window.showCreateAccountForm = showCreateAccountForm;
    the login for an @suh.edu.in address that doesn't have one yet. */
 async function attemptCreateAccount(email, password, confirmPassword){
   const errBox = document.getElementById('create-account-error');
-  const okBox = document.getElementById('create-account-success');
   const btn = document.getElementById('create-account-submit-btn');
   if(errBox){ errBox.classList.add('hidden'); errBox.textContent=''; }
-  if(okBox){ okBox.classList.add('hidden'); okBox.textContent=''; }
   if(!email || !password || !confirmPassword){
     if(errBox){ errBox.textContent = 'Fill in your email, password, and confirmation.'; errBox.classList.remove('hidden'); }
     return;
@@ -3037,17 +3063,17 @@ async function attemptCreateAccount(email, password, confirmPassword){
   try{
     const { data, error } = await sb.auth.signUp({ email: email.trim().toLowerCase(), password });
     if(error) throw error;
+    document.getElementById('create-account-password').value = '';
+    document.getElementById('create-account-confirm').value = '';
     // If the project has email confirmation switched off, signUp() logs
     // the person straight in (a SIGNED_IN event fires and handleSignedIn
     // takes it from there — same as normal sign-in, including the "not
-    // in the directory yet" check). If confirmation IS required, there's
-    // no session yet and they need to confirm via email first.
-    if(data && data.session){
-      if(okBox){ okBox.textContent = 'Login created — signing you in…'; okBox.classList.remove('hidden'); }
-    } else {
-      if(okBox){ okBox.textContent = `Login created for ${email.trim()}. Check your inbox to confirm your email if asked, then sign in.`; okBox.classList.remove('hidden'); }
-      document.getElementById('create-account-password').value = '';
-      document.getElementById('create-account-confirm').value = '';
+    // in the directory yet" check), so the form just stays put briefly
+    // while that happens. If confirmation IS required, there's no
+    // session yet — swap straight to the "check your inbox" panel
+    // instead of leaving empty password boxes sitting under a message.
+    if(!(data && data.session)){
+      showConfirmEmailNotice(email.trim());
     }
   }catch(e){
     const msg = (e && e.message) ? e.message : String(e);
@@ -3055,6 +3081,7 @@ async function attemptCreateAccount(email, password, confirmPassword){
     // (wording varies by project settings) — steer them to the right
     // flow instead of just showing a raw error.
     if(/already registered|already exists|already in use/i.test(msg)){
+
       if(errBox){ errBox.textContent = 'This email already has a login — use "Forgot password?" instead to reset it.'; errBox.classList.remove('hidden'); }
     } else if(errBox){
       errBox.textContent = 'Could not set up account: ' + msg; errBox.classList.remove('hidden');
