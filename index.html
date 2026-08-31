@@ -249,6 +249,15 @@ input,select,textarea{font-family:inherit;}
   transition:border-color 0.15s ease, background 0.15s ease;
 }
 .login-card .pill-btn:hover{border-color:#E1670F;background:#FFF8EE;}
+.login-card .google-btn{
+  width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+  background:#FFFFFF;border:1.5px solid #DDE2E7;color:#3A424B !important;
+  font-family:'Inter', sans-serif;font-weight:600;font-size:14px;
+  padding:11px 16px;border-radius:11px;cursor:pointer;
+  transition:border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.login-card .google-btn:hover{border-color:#B9C0C7;box-shadow:0 2px 8px rgba(15,23,42,0.08);}
+.login-card .google-btn:disabled{opacity:0.6;cursor:default;}
 .login-card .text-link-btn{
   background:none;border:none;padding:0;color:#8B96A1 !important;
   font-family:'Inter', sans-serif;font-size:12.5px;text-decoration:underline;cursor:pointer;
@@ -906,6 +915,11 @@ input[type="number"]{
           <div id="login-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
           <div id="login-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
           <button id="login-submit-btn" type="submit" class="btn" style="margin-top:4px;">Sign In</button>
+          <div class="login-divider">or</div>
+          <button type="button" id="google-signin-btn" class="google-btn" onclick="signInWithGoogle()">
+            <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.98v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.98A9 9 0 0 0 0 9c0 1.45.35 2.83.98 4.03l2.97-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .98 4.97L3.95 7.3C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
+            <span>Continue with Google</span>
+          </button>
           <div class="login-divider">new here?</div>
           <button type="button" class="pill-btn" onclick="showForgotPasswordForm()">Forgot password?</button>
           <button type="button" class="pill-btn" onclick="showCreateAccountForm()">🆕 First time signing in? Set up your password</button>
@@ -2981,6 +2995,16 @@ async function attemptPasswordLogin(email, password){
 async function handleSignedIn(session){
   const email = (session.user.email || '').toLowerCase();
   if(!email) return;
+  // Applies to every sign-in path, including Google — password sign-in
+  // and self sign-up already enforce the @suh.edu.in domain before ever
+  // reaching here, but an OAuth provider can hand back ANY email the
+  // person owns, so it's checked again right here before anything else.
+  if(!/@suh\.edu\.in$/i.test(email)){
+    const errBox = document.getElementById('login-error');
+    if(errBox){ errBox.textContent = `${email} is not a @suh.edu.in address. Please sign in with your college Google account.`; errBox.classList.remove('hidden'); }
+    await sb.auth.signOut();
+    return;
+  }
   // first login for this address: claim the matching profiles row
   await warnOnError(
     sb.from('profiles').update({ auth_id: session.user.id }).is('auth_id', null).eq('email', email),
@@ -3148,6 +3172,40 @@ async function attemptCreateAccount(email, password, confirmPassword){
   }
 }
 
+
+/* ---------------- Google sign-in ----------------
+   Lets an @suh.edu.in account (already registered here, or set up via
+   the self sign-up flow above) log in with one tap, no password typed
+   at all. Domain-restricted two ways: `hd` narrows Google's own account
+   picker to the college domain as a convenience, and handleSignedIn()
+   above hard-rejects anything that isn't actually @suh.edu.in once
+   Google hands the session back — the hd hint is not itself a security
+   boundary, so that second check is the one that actually matters. */
+async function signInWithGoogle(){
+  const btn = document.getElementById('google-signin-btn');
+  const errBox = document.getElementById('login-error');
+  if(errBox){ errBox.classList.add('hidden'); errBox.textContent=''; }
+  if(authBusy) return;
+  authBusy = true;
+  if(btn){ btn.disabled = true; }
+  try{
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo, queryParams: { hd: 'suh.edu.in', prompt: 'select_account' } }
+    });
+    if(error) throw error;
+    // On success the browser navigates away to Google now, so nothing
+    // further happens here — control comes back via onAuthStateChange
+    // once the redirect completes.
+  }catch(e){
+    const msg = (e && e.message) ? e.message : String(e);
+    if(errBox){ errBox.textContent = 'Could not start Google sign-in: ' + msg; errBox.classList.remove('hidden'); }
+    authBusy = false;
+    if(btn){ btn.disabled = false; }
+  }
+}
+window.signInWithGoogle = signInWithGoogle;
 
 async function attemptPasswordReset(email){
   const errBox = document.getElementById('forgot-error');
