@@ -146,17 +146,29 @@ input,select,textarea{font-family:inherit;}
   align-items:center;
   justify-content:center;
   padding:32px;
-  background:var(--ink);
+  background:radial-gradient(circle at 20% 0%, #F0FFF7 0%, rgba(240,255,247,0) 45%),
+             radial-gradient(circle at 100% 10%, #FFF6EA 0%, rgba(255,246,234,0) 50%),
+             #FDFEFF;
 }
 .login-card{
-  max-width:480px;
+  max-width:440px;
   width:100%;
-  color:#E8ECF3;
-  background:transparent;
-  border:none;
-  border-radius:0;
-  padding:8px 4px;
-  box-shadow:none;
+  color:var(--login-text, #4B5A63);
+  background:#FFFFFF;
+  border:2px solid #E7893A;
+  border-radius:22px;
+  padding:38px 34px 32px;
+  box-shadow:0 18px 40px -18px rgba(196,110,20,0.28), 0 2px 10px rgba(15,23,42,0.04);
+  text-align:center;
+}
+.login-logo-row{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+}
+.login-logo-mark{
+  width:42px;height:42px;border-radius:12px;
+  background:linear-gradient(135deg,#F0A83C,#E1670F);
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;box-shadow:0 6px 14px -6px rgba(225,103,15,0.55);
 }
 .eyebrow{
   display:inline-flex;
@@ -171,37 +183,76 @@ input,select,textarea{font-family:inherit;}
   border-radius:20px;
 }
 .login-card h1{
-  color:#F7F9FC;
-  font-family:Georgia, 'Times New Roman', serif;
-  font-weight:700;
-  font-size:clamp(28px,4vw,34px);
-  margin-top:18px;
-  line-height:1.18;
-  letter-spacing:0;
+  color:#20242B;
+  font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight:800;
+  font-size:clamp(24px,3.6vw,29px);
+  margin-top:0;
+  line-height:1.2;
+  letter-spacing:-0.01em;
+}
+.login-card h1 .login-accent{color:#E1670F;}
+.login-tagline{
+  margin-top:6px;
+  font-family:'IBM Plex Mono', monospace;
+  font-size:10.5px;
+  letter-spacing:0.22em;
+  text-transform:uppercase;
+  color:#93A0AB;
 }
 .login-sub{
-  margin-top:12px;
-  color:#C6D0E2;
-  font-family:Georgia, 'Times New Roman', serif;
-  font-size:15px;
-  line-height:1.5;
-  max-width:46ch;
+  margin-top:14px;
+  color:#5B6672;
+  font-family:'Inter', sans-serif;
+  font-size:13.5px;
+  line-height:1.55;
+  max-width:40ch;
+  margin-left:auto;margin-right:auto;
 }
-.login-card .config-field label{color:#E0A94E !important;}
+.login-card .config-field{text-align:left;}
+.login-card .config-field label{color:#B4700F !important;letter-spacing:0.08em;}
 .login-card .config-field input{
-  background:#FFFFFF;color:#1E293B;border:1px solid rgba(255,255,255,0.15);
+  background:#FFFCF6;color:#20242B;border:1.5px solid #F1DFC2;border-radius:11px;
+  padding:12px 14px;font-size:14.5px;
 }
-.login-card .config-field input::placeholder{color:#8A94A6;}
-.login-card .config-field input:focus{outline:none;border-color:#E0A94E;box-shadow:0 0 0 3px rgba(224,169,78,0.22);}
-.login-card #login-submit-btn{
-  width:100%;background:#131D33;border:1px solid #232F4B;color:#fff;
-  padding:13px 18px;font-size:14.5px;
+.login-card .config-field input::placeholder{color:#B7BFC7;}
+.login-card .config-field input:focus{outline:none;border-color:#E1670F;box-shadow:0 0 0 3px rgba(225,103,15,0.16);}
+.login-card #login-submit-btn,
+.login-card #forgot-submit-btn,
+.login-card #reset-password-submit-btn,
+.login-card #create-account-submit-btn{
+  width:100%;background:#E1670F;border:1px solid #C6570A;color:#fff;
+  padding:13px 18px;font-size:14.5px;border-radius:11px;
+  box-shadow:0 8px 18px -8px rgba(225,103,15,0.55);
 }
-.login-card #login-submit-btn:hover{background:#1B2A47;}
+.login-card #login-submit-btn:hover,
+.login-card #forgot-submit-btn:hover,
+.login-card #reset-password-submit-btn:hover,
+.login-card #create-account-submit-btn:hover{background:#C6570A;box-shadow:0 8px 18px -8px rgba(198,87,10,0.6);}
 .login-card .section-meta{
-  color:#9FADC4 !important;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:1.6;
+  color:#8B96A1 !important;font-family:'Inter',sans-serif;font-size:12px;line-height:1.6;
 }
-.login-card #login-error.section-meta{color:#FF8A80 !important;}
+.login-card #login-error.section-meta,
+.login-card #forgot-error.section-meta,
+.login-card #reset-password-error.section-meta,
+.login-card #create-account-error.section-meta{color:#D64545 !important;font-weight:600;}
+.login-divider{
+  display:flex;align-items:center;gap:12px;margin:4px 0 2px;
+  font-family:'IBM Plex Mono', monospace;font-size:10.5px;letter-spacing:0.1em;
+  text-transform:lowercase;color:#B4BCC4;
+}
+.login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:#EEE3D4;}
+.login-card .pill-btn{
+  width:100%;background:#FFFFFF;border:1.5px solid #EFE1CC;color:#3A424B !important;
+  font-family:'Inter', sans-serif;font-weight:600;font-size:13.5px;
+  padding:12px 16px;border-radius:11px;cursor:pointer;text-decoration:none !important;
+  transition:border-color 0.15s ease, background 0.15s ease;
+}
+.login-card .pill-btn:hover{border-color:#E1670F;background:#FFF8EE;}
+.login-card .text-link-btn{
+  background:none;border:none;padding:0;color:#8B96A1 !important;
+  font-family:'Inter', sans-serif;font-size:12.5px;text-decoration:underline;cursor:pointer;
+}
 .persona-list{
   margin-top:26px;
   display:flex;
@@ -837,9 +888,13 @@ input[type="number"]{
     <!-- LOGIN VIEW -->
     <section id="login-view" class="login-view">
       <div class="login-card">
-        <h1>Continuous Internal Evaluation (CIE)</h1>
+        <div class="login-logo-row">
+          <div class="login-logo-mark">🎓</div>
+        </div>
+        <h1 style="margin-top:16px;">Continuous Internal<br>Evaluation <span class="login-accent">(CIE)</span></h1>
+        <div class="login-tagline">Faculty &amp; Admin Portal</div>
         <p class="login-sub">Sign in with the email and password issued to you by the System Administrator.</p>
-        <form id="login-form" class="login-form" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+        <form id="login-form" class="login-form" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
             <input id="login-email" type="email" autocomplete="username" placeholder="you@suh.edu.in" style="width:100%;">
@@ -851,9 +906,10 @@ input[type="number"]{
           <div id="login-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
           <div id="login-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
           <button id="login-submit-btn" type="submit" class="btn" style="margin-top:4px;">Sign In</button>
-          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showForgotPasswordForm()">Forgot password?</button>
-          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showCreateAccountForm()">First time signing in? Set up your password</button>
-          <p class="section-meta" style="color:var(--text-soft);">No @suh.edu.in email at all? Contact your System Administrator.</p>
+          <div class="login-divider">new here?</div>
+          <button type="button" class="pill-btn" onclick="showForgotPasswordForm()">Forgot password?</button>
+          <button type="button" class="pill-btn" onclick="showCreateAccountForm()">🆕 First time signing in? Set up your password</button>
+          <p class="section-meta" style="color:var(--text-soft);margin-top:2px;">No @suh.edu.in email at all? Contact your System Administrator.</p>
         </form>
 
         <!-- FIRST-TIME SETUP: for an @suh.edu.in faculty (or other staff)
@@ -866,7 +922,7 @@ input[type="number"]{
              to overwrite an EXISTING account's password (that's what the
              verified email-link "Forgot password" flow above is for; this
              one is for accounts that don't have a password yet at all). -->
-        <form id="create-account-form" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+        <form id="create-account-form" class="login-form hidden" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <p class="section-meta" style="color:var(--text-soft);">First time here? Enter your @suh.edu.in email and choose a password to set up your login. You'll still need to already be listed in the department directory to access anything once you're signed in.</p>
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
@@ -882,7 +938,7 @@ input[type="number"]{
           </div>
           <div id="create-account-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
           <button id="create-account-submit-btn" type="submit" class="btn" style="margin-top:4px;">Set Up Password</button>
-          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
+          <button type="button" class="text-link-btn" onclick="showSignInForm()">← Back to sign in</button>
         </form>
 
         <!-- CHECK YOUR EMAIL: replaces the create-account form entirely once
@@ -892,17 +948,17 @@ input[type="number"]{
              greyed-out password boxes underneath a success line read as
              broken — this is a clean, dedicated "go check your inbox" state
              instead. -->
-        <div id="confirm-email-notice" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center;">
+        <div id="confirm-email-notice" class="login-form hidden" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center;">
           <div style="font-size:34px;line-height:1;">📩</div>
           <div class="section-title" style="font-size:16px;">Confirm your email</div>
           <p class="section-meta" style="color:var(--text-soft);">We've sent a confirmation link to <strong id="confirm-email-address" style="color:var(--ink);"></strong>. Open your email app, find the message, and tap the link to confirm — then come back here and sign in.</p>
-          <button type="button" class="ghost-btn" style="padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
+          <button type="button" class="text-link-btn" onclick="showSignInForm()">← Back to sign in</button>
         </div>
 
         <!-- FORGOT PASSWORD: request a reset link, faculty (or any @suh.edu.in
              account) enters their email and Supabase Auth emails them a
              recovery link back to this same page. -->
-        <form id="forgot-password-form" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+        <form id="forgot-password-form" class="login-form hidden" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <p class="section-meta" style="color:var(--text-soft);">Enter your @suh.edu.in email address and we'll send you a link to reset your password.</p>
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
@@ -911,13 +967,13 @@ input[type="number"]{
           <div id="forgot-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
           <div id="forgot-success" class="section-meta hidden" style="color:#2f7a3f;"></div>
           <button id="forgot-submit-btn" type="submit" class="btn" style="margin-top:4px;">Send Reset Link</button>
-          <button type="button" class="ghost-btn" style="align-self:flex-start;padding:0;border:none;background:none;text-decoration:underline;color:var(--text-soft);cursor:pointer;" onclick="showSignInForm()">← Back to sign in</button>
+          <button type="button" class="text-link-btn" onclick="showSignInForm()">← Back to sign in</button>
         </form>
 
         <!-- RESET PASSWORD: shown automatically once the person clicks the
              emailed reset link and lands back here with a recovery session
              (see the PASSWORD_RECOVERY branch of sb.auth.onAuthStateChange). -->
-        <form id="reset-password-form" class="login-form hidden" style="margin-top:30px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
+        <form id="reset-password-form" class="login-form hidden" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <p class="section-meta" style="color:var(--text-soft);">Choose a new password for your account.</p>
           <div class="config-field">
             <label style="color:var(--text-soft);">New password</label>
