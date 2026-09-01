@@ -3014,9 +3014,11 @@ async function handleSignedIn(session){
     const state = await fetchStateFromSupabase();
     const me = state.users.find(u => u.email.toLowerCase() === email);
     if(!me){
-      const errBox = document.getElementById('login-error');
-      if(errBox){ errBox.textContent = `Signed in as ${email}, but no matching profile exists in the directory. Ask your Admin to add you.`; errBox.classList.remove('hidden'); }
       await sb.auth.signOut();
+      toast(`${email} isn't in the faculty directory yet with a password set up. Use "First time signing in?" below to set one.`, 'err');
+      showCreateAccountForm();
+      const createEmailInput = document.getElementById('create-account-email');
+      if(createEmailInput) createEmailInput.value = email;
       return;
     }
     state.currentUserId = me.id;
