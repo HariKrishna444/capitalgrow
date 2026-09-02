@@ -900,7 +900,9 @@ input[type="number"]{
         <div class="login-logo-row">
           <div class="login-logo-mark">🎓</div>
         </div>
-        <h1 style="margin-top:16px;">Continuous Internal Evaluation<span class="login-accent">(CIE)</span></h1>
+        <h1 style="margin-top:16px;">Continuous Internal<br>Evaluation <span class="login-accent">(CIE)</span></h1>
+        <div class="login-tagline">Faculty &amp; Admin Portal</div>
+        <p class="login-sub">Sign in with the email and password issued to you by the System Administrator.</p>
         <form id="login-form" class="login-form" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
@@ -3344,6 +3346,55 @@ function parseRegistrationCell(raw){
   }).filter(p=>p.instructor || p.sectionCode);
 }
 
+/* ---------------- fuzzy faculty-name matching ----------------
+   The Course Registration sheets only ever carry an instructor's NAME
+   (never an email), and that name is typed by hand into the sheet each
+   term — so it rarely matches a faculty account's stored name byte for
+   byte. Three specific mismatches account for nearly all of it, so this
+   is checked in order from strictest to loosest, taking the first (and
+   for the loosest tier, only) hit rather than picking a "best" fuzzy
+   score, so a wrong guess never silently links the wrong person to a
+   student's marks:
+     1. exact match once honorifics (Dr./Mr./Mrs./Ms./Prof.) and extra
+        whitespace/punctuation are stripped
+     2. same as #1 but with spaces removed entirely too, which collapses
+        a merged/split surname like "Ravi Kumar" vs "Ravikumar"
+     3. same tokens in a different order, e.g. "Ravi Pallam" vs
+        "Pallam Ravi" — only accepted when exactly one faculty account
+        matches that token set, since two different people could
+        otherwise share the same set of words
+   Returns the matched user, or null if nothing safe was found — callers
+   fall back to their existing "ask a human" behavior in that case. */
+function normalizeNameForMatch(s){
+  return String(s||'')
+    .replace(/\b(dr|mr|mrs|ms|prof|professor|smt|shri)\.?\b/gi, ' ')
+    .replace(/[.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+function matchFacultyByName(rawName, users){
+  const pool = (users||[]).filter(u=>u.systemRole==='FACULTY' && u.name);
+  if(!rawName || !pool.length) return null;
+  const targetNorm = normalizeNameForMatch(rawName);
+  const targetSquash = targetNorm.replace(/\s+/g, '');
+  const targetSorted = targetNorm.split(' ').filter(Boolean).sort().join(' ');
+
+  const exact = pool.filter(u=>normalizeNameForMatch(u.name)===targetNorm);
+  if(exact.length===1) return exact[0];
+
+  const squash = pool.filter(u=>normalizeNameForMatch(u.name).replace(/\s+/g,'')===targetSquash);
+  if(squash.length===1) return squash[0];
+
+  const tokenOrder = pool.filter(u=>{
+    const n = normalizeNameForMatch(u.name).split(' ').filter(Boolean).sort().join(' ');
+    return n===targetSorted;
+  });
+  if(tokenOrder.length===1) return tokenOrder[0];
+
+  return null;
+}
+
 /* ---------------- Practical sub-sections (B1/B2 lab batches) ----------------
    A Practical subject's section (e.g. Section B5) is very often actually
    taught as two lab batches with two different faculty — the imported
@@ -4021,10 +4072,8 @@ const App = {
     if(!itemFlowApplicable(template, 'pracInternal')){ toast('Sub-sections are only for Practical subjects.', 'err'); return; }
     const suggestions = suggestSubSectionsFromRegistrations(course);
     if(!suggestions.length){ toast('No two-instructor split found in the Course Registration data for this section — add sub-sections manually below, or import/correct the registration sheet first.', 'err'); return; }
-    const norm = s => String(s||'').trim().toLowerCase();
     course.subSections = suggestions.map(s=>{
-      const matches = this.state.users.filter(u=>u.systemRole==='FACULTY' && norm(u.name)===norm(s.instructorName));
-      const faculty = matches.length===1 ? matches[0] : null;
+      const faculty = matchFacultyByName(s.instructorName, this.state.users);
       return { code:s.code, facultyUserId: faculty ? faculty.id : null, facultyEmail: faculty ? faculty.email : '', facultyName: faculty ? faculty.name : s.instructorName, rollNos:s.rollNos, matchedFromRegistration:true };
     });
     syncSubSectionItemOverrides(course);
@@ -5558,9 +5607,11 @@ const App = {
      Student Directory so the CI sees these students under "My Subjects"
      right away. Deliberately does NOT invent a faculty login from a bare
      name — the instructor must already exist as a FACULTY account (added
-     via Manage System Accounts or the Faculty Directory) with a name that
-     matches the sheet exactly, otherwise this can't safely resolve who to
-     assign. If the subject isn't found by name in "Courses Applicable", the
+     via Manage System Accounts or the Faculty Directory). matchFacultyByName()
+     tolerates honorifics, merged/split surnames, and word-order differences
+     between the sheet and the stored name, but still refuses to guess when
+     more than one account could plausibly match. If the subject isn't found
+     by name in "Courses Applicable", the
      section is still created and the CI assigned, but the Evaluation Type
      is left unfixed — marks entry stays blocked until a Coordinator (or
      Admin) fixes one, same as any freshly created section. */
@@ -5580,10 +5631,8 @@ const App = {
     if(instructorNames.length>1){ toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return; }
     const instructorName = instructorNames[0];
 
-    const matches = this.state.users.filter(u=>u.systemRole==='FACULTY' && norm(u.name)===norm(instructorName));
-    if(matches.length===0){ toast(`No faculty account named "${instructorName}" was found. Add them first — Manage System Accounts or the Faculty Directory — with the name spelled exactly as in the sheet, then activate again.`, 'err'); return; }
-    if(matches.length>1){ toast(`More than one faculty account is named "${instructorName}" (${matches.map(m=>m.email).join(', ')}) — rename one to disambiguate, or assign the Course Instructor manually from Manage Coordinators.`, 'err'); return; }
-    const ciUser = matches[0];
+    const ciUser = matchFacultyByName(instructorName, this.state.users);
+    if(!ciUser){ toast(`No faculty account matching "${instructorName}" was found. Add them first — Manage System Accounts or the Faculty Directory — then activate again.`, 'err'); return; }
 
     const subj = (this.state.subjects||[]).find(s=>norm(s.name)===norm(subject));
     const code = subj ? subj.code : bizId('SUBJ', [subject], []).replace(/^SUBJ-/,'');
