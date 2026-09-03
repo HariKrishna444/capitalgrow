@@ -5833,7 +5833,21 @@ const App = {
     const subj = (this.state.subjects||[]).find(s=>norm(s.name)===norm(subject));
     const code = subj ? subj.code : bizId('SUBJ', [subject], []).replace(/^SUBJ-/,'');
     const name = subj ? subj.name : subject;
-    const evalType = subj ? subj.abbr : null;
+    // Practical companion sections registered as "<Subject> (P)" in the
+    // sheet — a standalone practical roster/section, separate from the
+    // combined theory course, with its own code/section/instructor —
+    // usually have no matching row of their own in Courses Applicable
+    // (only the theory subject is listed there), so the exact-name match
+    // above misses them and they'd sit on "ET: Not fixed yet" forever,
+    // waiting on an Admin to fix each one by hand. The "(P)" suffix is
+    // specifically how this registrar's export marks that case, so
+    // default those straight to the "EP — Practical" Evaluation Type
+    // instead — same as an Admin picking it manually, just automatic.
+    // Re-running "Re-assign / Refresh Roster" on any section already
+    // stuck on "Not fixed yet" backfills this too (see the `else` branch
+    // just below), no re-import needed.
+    const isPracticalCompanion = /\(P\)\s*$/i.test(String(subject||'').trim());
+    let evalType = subj ? subj.abbr : (isPracticalCompanion ? 'EP' : null);
     const sec = section==='—' ? '' : section;
 
     let course = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && c.section===sec && c.branch===branch);
@@ -5924,7 +5938,8 @@ const App = {
       if(!evalType){
         toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded. No matching subject was found in "Courses Applicable", so the Evaluation Type isn't fixed yet — a Coordinator (or you, as Admin) will need to set one before marks can be entered.`, 'ok');
       } else {
-        toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} auto-matched${defaultedCycles.length ? `, Question Paper Setup auto-forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}` : ''}.`, 'ok');
+        const etSource = subj ? 'auto-matched' : (isPracticalCompanion ? 'auto-set as a standalone Practical section — no "(P)" row was found in Courses Applicable' : 'auto-matched');
+        toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} ${etSource}${defaultedCycles.length ? `, Question Paper Setup auto-forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}` : ''}.`, 'ok');
       }
     }
     renderSidebar();
