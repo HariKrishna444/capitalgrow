@@ -1602,6 +1602,57 @@ const ITEM_FLOW_KEYS = ['tt1','tt2','tt3','pracInternal','seePractical'];
 const ITEM_FLOW_LABELS = { tt1:'Term Test 1', tt2:'Term Test 2', tt3:'Term Test 3', pracInternal:'Practical Internal Test', seePractical:'SEE Practical' };
 const ITEM_STAGE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator', hod:'HOD', done:'Approved' };
 const ITEM_NEXT_STAGE = { ci:'cc', cc:'hod', hod:'done' };
+/* Every item-flow (Term Test 1/2/3, Practical Internal, SEE Practical)
+   action currently sitting at THIS user's stage — as Course Instructor on
+   their own sections, or as Course Coordinator on sections they
+   coordinate. This used to only surface inside "Verification Status"
+   (an at-a-glance table you had to scan/click through) or by drilling
+   into a specific subject — nothing collected them into a single
+   to-do list. Used by both the "Pending Approval" page and its nav badge.
+   Term Test 1/2/3 are further restricted to whichever cycle the
+   Administrator currently has fixed as active (App.state.currentTermTest)
+   — entry/forwarding for a non-active TT cycle is disabled everywhere
+   else in the app (see the "Enter Term Test" buttons on My Subjects), so
+   listing it here as something to act on right now would be misleading.
+   Practical Internal Test / SEE Practical have no such single "active
+   cycle" concept — they're gated by their own separate window instead —
+   so they're unaffected by this filter. */
+function myPendingItemActions(user){
+  const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+  const activeCycle = App.state.currentTermTest?.cycle || null;
+  const activeTTKey = activeCycle==='TT1' ? 'tt1' : activeCycle==='TT2' ? 'tt2' : activeCycle==='TT3' ? 'tt3' : null;
+  const isTTKey = key => key==='tt1' || key==='tt2' || key==='tt3';
+  const out = [];
+  ciCourses.forEach(c=>{
+    const template = c.evalType ? getCourseTemplate(c) : null;
+    if(!template) return;
+    ITEM_FLOW_KEYS.forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      if(isTTKey(key) && key!==activeTTKey) return;
+      const ia = App.itemApproval(c.id, key) || { stage:'ci' };
+      if(ia.stage==='ci' && isItemCIFor(c, key)) out.push({ course:c, itemKey:key, role:'ci' });
+    });
+  });
+  ccCourses.forEach(c=>{
+    const template = c.evalType ? getCourseTemplate(c) : null;
+    if(!template) return;
+    ITEM_FLOW_KEYS.forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      if(isTTKey(key) && key!==activeTTKey) return;
+      const ia = App.itemApproval(c.id, key) || { stage:'ci' };
+      if(ia.stage==='cc') out.push({ course:c, itemKey:key, role:'cc' });
+    });
+  });
+  return out;
+}
+function itemActionNavigateAttr(course, itemKey){
+  if(itemKey==='tt1' || itemKey==='tt2') return `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'${itemKey==='tt1'?'TT1':'TT2'}'})`;
+  const template = getCourseTemplate(course);
+  const section = itemKey==='pracInternal' ? 'cie' : 'see';
+  const list = section==='cie' ? template.cie : seeDisplayComponents(template);
+  const comp = itemKey==='pracInternal' ? list.find(x=>x.key==='pracInternal') : list.find(x=>x.key==='seePractical'||x.key==='seePracticalProject');
+  return comp ? `App.navigate('ci-component-entry',{courseId:'${course.id}', section:'${section}', compKey:'${comp.key}'})` : '';
+}
 /* ---------- Admin Roster Assignment override ----------
    Normally "who is responsible for entering/forwarding one of the 5 item
    flows above" is simply this section's registered Course Instructor
@@ -1635,25 +1686,25 @@ function isItemCIFor(course, itemKey){
   return isCourseOwnerCI(course);
 }
 /* Which of course.students belong on THIS item's entry/verification page
-   for the CURRENT viewer. No overrides -> the whole roster, exactly as
-   before. With overrides -> a faculty member who owns one of the uploaded
-   slices sees only THEIR OWN roll numbers (so two examiners splitting one
-   Term Test never see or touch each other's rows); anyone else looking at
-   the page (Admin, the assigned CC, HOD at their own stage, or even the
-   section's own ordinary CI if the item was fully handed off to others)
-   sees the combined pool across every uploaded slice, for verification. */
+   for the CURRENT viewer. No overrides -> nothing shown for any of the 5
+   ITEM_FLOW_KEYS (Term Test 1/2/3, Practical Internal, SEE Practical) —
+   student names/roll numbers stay hidden until an Administrator has
+   uploaded a roll-number list for that specific item via Roster
+   Assignment; Course Registration's full class list must never show up
+   here by default for ANY of them. Every other component on the course
+   (every non-item CIE/SEE field, the Overall record) is completely
+   unaffected — this only narrows what these 5 pages show. With overrides
+   -> a faculty member who owns one of the uploaded slices sees only THEIR
+   OWN roll numbers (so two examiners splitting one item never see or
+   touch each other's rows); anyone else looking at the page (Admin, the
+   assigned CC, HOD at their own stage, or even the section's own ordinary
+   CI if the item was fully handed off to others) sees the combined pool
+   across every uploaded slice, for verification. */
 function itemEntryStudents(course, itemKey){
   const all = course.students || [];
   const overrides = getItemRosterOverrides(course, itemKey);
   if(!overrides.length){
-    // Term Test 1/2 rosters are Admin-assigned only: unlike the other
-    // ITEM_FLOW_KEYS (Practical Internal, SEE Practical), Course
-    // Registration's full class list must NEVER show up here by default —
-    // student names/roll numbers stay hidden on the TT1/TT2 entry, review
-    // and remark pages until an Administrator has uploaded a roll-number
-    // list for this specific cycle via Roster Assignment. Everything else
-    // about the course is unaffected; this only narrows what tt1/tt2 shows.
-    if(itemKey==='tt1' || itemKey==='tt2') return [];
+    if(ITEM_FLOW_KEYS.includes(itemKey)) return [];
     return all;
   }
   const actor = App.currentUser();
@@ -3538,8 +3589,29 @@ function linkifyNotifBody(body){
 // separately by completeLogin() reading the hash once at sign-in time.
 window.addEventListener('hashchange', ()=>{
   if(!App.state.currentUserId) return;
+  if(_navigatingFromHistory) return; // popstate's own listener below handles this case
   const r = parseHashRoute();
   if(r) App.navigate(r.view, r.params);
+});
+// Browser Back/Forward: the browser has already moved the history pointer
+// and updated window.location.hash by the time this fires — just render
+// whatever's now there. _navigatingFromHistory tells App.navigate() not to
+// push (or duplicate) a history entry for this render, since one wasn't
+// created by the user clicking anything in-app.
+let _navigatingFromHistory = false;
+window.addEventListener('popstate', ()=>{
+  if(!App.state.currentUserId) return;
+  const r = parseHashRoute();
+  _navigatingFromHistory = true;
+  try{
+    if(r) App.navigate(r.view, r.params);
+    else{
+      const fallback = getNavForUser(App.currentUser())[0];
+      App.navigate(fallback ? fallback.v : 'faculty-empty');
+    }
+  } finally {
+    _navigatingFromHistory = false;
+  }
 });
 
 /* ---------------- access control for deep links ----------------
@@ -3726,7 +3798,21 @@ const App = {
       params = {};
     }
     this.ui = { view, params };
-    try{ history.replaceState(null, '', buildHashFragment(view, params)); }catch(e){ /* hash update is best-effort */ }
+    // Every in-app navigation gets its own history entry (pushState) so the
+    // browser's own Back button steps back through app screens one at a
+    // time, the way it would on any other site — previously this used
+    // replaceState, which never grows history at all, so Back had nothing
+    // of the app's to go to and left the site entirely on the first press.
+    // The one exception is _navigatingFromHistory: when THIS call was
+    // triggered by the user already pressing Back/Forward (see the
+    // popstate listener below), the browser has already moved the history
+    // pointer itself — pushing again here would insert a duplicate entry
+    // and make Back need two presses per screen.
+    try{
+      const frag = buildHashFragment(view, params);
+      if(_navigatingFromHistory || window.location.hash === frag) history.replaceState(null, '', frag);
+      else history.pushState(null, '', frag);
+    }catch(e){ /* history update is best-effort */ }
     renderSidebar();
     renderContent();
     window.scrollTo({top:0, behavior:'smooth'});
@@ -5700,9 +5786,15 @@ const App = {
      section is still created and the CI assigned, but the Evaluation Type
      is left unfixed — marks entry stays blocked until a Coordinator (or
      Admin) fixes one, same as any freshly created section. */
-  async activateCourseRegistrationGroup(key){
+  /* `silent` is used by App.bulkActivateCourseRegistrationGroups (the
+     Admin "Bulk Assign All as Course Instructor" button) to run this over
+     many sections in a loop without a toast popping up — and without a
+     page navigate() firing — after every single one. Returns true on
+     success / false on failure either way, so the bulk runner can tally
+     an accurate count. */
+  async activateCourseRegistrationGroup(key, silent){
     const actor = this.currentUser();
-    if(!key){ toast('Could not find that group — refresh the page and try again.', 'err'); return; }
+    if(!key){ if(!silent) toast('Could not find that group — refresh the page and try again.', 'err'); return false; }
     const { batch, branch, semester, subject, section } = key;
     const norm = s => String(s||'').trim().toLowerCase();
     // Admin can activate anything; a Course Coordinator can only activate
@@ -5711,14 +5803,14 @@ const App = {
     // ccCreateSectionAndAssignInstructor used to do).
     const isAdmin = actor.systemRole==='ADMIN';
     const isOwningCC = this.state.courses.some(c=>norm(c.name)===norm(subject) && getCourseCCUser(c.id)?.id===actor.id);
-    if(!isAdmin && !isOwningCC){ toast('Only an Administrator, or this subject\'s Course Coordinator, can activate a course section from registration data.', 'err'); return; }
+    if(!isAdmin && !isOwningCC){ if(!silent) toast('Only an Administrator, or this subject\'s Course Coordinator, can activate a course section from registration data.', 'err'); return false; }
     const list = this.state.courseRegistrations.filter(r=>
       r.batch===batch && r.branch===branch && (r.semester||'—')===semester && r.subjectName===subject && (r.sectionCode||'—')===section);
-    if(!list.length){ toast('No registrations found for this group.', 'err'); return; }
+    if(!list.length){ if(!silent) toast('No registrations found for this group.', 'err'); return false; }
 
     const instructorNames = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
-    if(instructorNames.length===0){ toast('No instructor is listed for this section in the imported sheet.', 'err'); return; }
-    if(instructorNames.length>1){ toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return; }
+    if(instructorNames.length===0){ if(!silent) toast('No instructor is listed for this section in the imported sheet.', 'err'); return false; }
+    if(instructorNames.length>1){ if(!silent) toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return false; }
     const instructorName = instructorNames[0];
     const instructorEmail = resolveInstructorEmail(instructorName, this.state);
 
@@ -5733,10 +5825,10 @@ const App = {
       ciUser = created.user;
       if(created.isNew){
         const { error: profileErr } = await syncProfile(ciUser);
-        if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==ciUser.id); renderContent(); return; }
+        if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==ciUser.id); renderContent(); return false; }
       }
     }
-    if(!ciUser){ toast(`No faculty account matching "${instructorName}" was found, and no email is on file to create one. Add them first — Manage System Accounts or the Faculty Directory — then activate again.`, 'err'); return; }
+    if(!ciUser){ if(!silent) toast(`No faculty account matching "${instructorName}" was found, and no email is on file to create one. Add them first — Manage System Accounts or the Faculty Directory — then activate again.`, 'err'); return false; }
 
     const subj = (this.state.subjects||[]).find(s=>norm(s.name)===norm(subject));
     const code = subj ? subj.code : bizId('SUBJ', [subject], []).replace(/^SUBJ-/,'');
@@ -5760,7 +5852,7 @@ const App = {
       if(!course.semester && semester!=='—') course.semester = semester;
     }
     const { error: courseErr } = await syncCourse(course);
-    if(courseErr){ if(isNewCourse) this.state.courses = this.state.courses.filter(c=>c.id!==course.id); return; }
+    if(courseErr){ if(isNewCourse) this.state.courses = this.state.courses.filter(c=>c.id!==course.id); return false; }
 
     // Build/refresh the roster from the Student Directory so names/emails
     // stay linked; rows that already exist (matched by dirId) keep their
@@ -5828,16 +5920,22 @@ const App = {
       this.logHistory(course, `Default Question Paper Setup auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
     }
 
-    if(!evalType){
-      toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded. No matching subject was found in "Courses Applicable", so the Evaluation Type isn't fixed yet — a Coordinator (or you, as Admin) will need to set one before marks can be entered.`, 'ok');
-    } else {
-      toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} auto-matched${defaultedCycles.length ? `, Question Paper Setup auto-forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}` : ''}.`, 'ok');
+    if(!silent){
+      if(!evalType){
+        toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded. No matching subject was found in "Courses Applicable", so the Evaluation Type isn't fixed yet — a Coordinator (or you, as Admin) will need to set one before marks can be entered.`, 'ok');
+      } else {
+        toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} auto-matched${defaultedCycles.length ? `, Question Paper Setup auto-forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}` : ''}.`, 'ok');
+      }
     }
     renderSidebar();
     // Admin lands back on the registration-import page they came from; a
     // Course Coordinator lands back on their own "My Coordination" list,
-    // now showing this section as "Already assigned".
-    this.navigate(isAdmin ? 'admin-course-reg' : 'cc-list');
+    // now showing this section as "Already assigned". Skipped entirely
+    // during a silent bulk run — navigating away after every single
+    // section would otherwise interrupt the loop and only the last one
+    // would visibly finish.
+    if(!silent) this.navigate(isAdmin ? 'admin-course-reg' : 'cc-list');
+    return true;
   },
   /* ---------- ADMIN: set a course's Evaluation Type directly, bypassing
      the CC-request / HOD-approval chain — for sections that have a Course
@@ -7514,6 +7612,60 @@ function courseRegGroupsHtml(){
   });
   return html;
 }
+
+/* ---------- ADMIN: Bulk Assign All as Course Instructor ----------
+   Runs "Activate as Course Section" over every section currently visible
+   in courseRegGroupsHtml (i.e. respecting whatever Batch/Branch/Semester/
+   search filters are set) — so an Admin can turn a whole imported sheet
+   into live, staffed sections in one click instead of clicking "Activate
+   as Course Section" one row at a time. Sections whose sheet row lists no
+   instructor, or more than one, are skipped (same eligibility rule the
+   single-row button already enforces) and called out in the summary so
+   nothing silently fails. */
+async function bulkActivateCourseRegistrationGroups(){
+  if(App.currentUser().systemRole!=='ADMIN'){ toast('Only an Administrator can bulk-assign Course Instructors.', 'err'); return; }
+  if(!courseRegGroupIndex.length){ toast('No sections to assign — import a sheet, or clear the filters above.', 'err'); return; }
+
+  const eligible = [], skippedNoInstructor = [], skippedMultiple = [];
+  courseRegGroupIndex.forEach(key=>{
+    const list = (App.state.courseRegistrations||[]).filter(r=>
+      r.batch===key.batch && r.branch===key.branch && (r.semester||'—')===key.semester &&
+      r.subjectName===key.subject && (r.sectionCode||'—')===key.section);
+    const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+    if(instructors.length===1) eligible.push(key);
+    else if(instructors.length===0) skippedNoInstructor.push(key);
+    else skippedMultiple.push(key);
+  });
+  if(!eligible.length){ toast('None of the sections shown have exactly one instructor on file to assign — fix the sheet first.', 'err'); return; }
+
+  const skippedBits = [];
+  if(skippedMultiple.length) skippedBits.push(`${skippedMultiple.length} with more than one instructor listed`);
+  if(skippedNoInstructor.length) skippedBits.push(`${skippedNoInstructor.length} with no instructor on file`);
+  const confirmMsg = `Assign the matched Course Instructor and load the roster for ${eligible.length} section${eligible.length===1?'':'s'} shown below`
+    + (skippedBits.length ? ` (skipping ${skippedBits.join(' and ')})` : '')
+    + `. A faculty account will be created automatically for any instructor who doesn't have one yet. This may take a moment for a large sheet. Continue?`;
+  if(!confirm(confirmMsg)) return;
+
+  const btn = document.getElementById('bulk-assign-ci-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Assigning…'; }
+  let ok = 0, failed = 0;
+  for(const key of eligible){
+    const success = await App.activateCourseRegistrationGroup(key, true);
+    if(success) ok++; else failed++;
+  }
+  if(btn){ btn.disabled = false; btn.textContent = 'Bulk Assign All as Course Instructor'; }
+
+  const skippedTotal = skippedMultiple.length + skippedNoInstructor.length;
+  toast(`Bulk assign complete — ${ok} section${ok===1?'':'s'} assigned`
+    + (failed ? `, ${failed} failed (see that row for why)` : '')
+    + (skippedTotal ? `, ${skippedTotal} skipped (${skippedBits.join(', ')})` : '')
+    + '.', failed ? 'err' : 'ok');
+
+  renderSidebar();
+  const target = document.getElementById('course-reg-groups');
+  if(target) target.innerHTML = courseRegGroupsHtml();
+}
+window.bulkActivateCourseRegistrationGroups = bulkActivateCourseRegistrationGroups;
 
 function openCourseRegRosterModal(idx){
   const key = courseRegGroupIndex[idx];
@@ -9261,6 +9413,10 @@ function renderAdminCourseRegistrations(){
         </div>
       </div>
       <input class="search-input" type="text" placeholder="Search by roll no, name, subject, section, or instructor..." style="margin-top:10px;" oninput="updateCourseRegFilter({q:this.value})">
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button id="bulk-assign-ci-btn" class="btn btn-sm" onclick="bulkActivateCourseRegistrationGroups()">Bulk Assign All as Course Instructor</button>
+        <span class="section-meta">Activates every section shown below in one go — matched instructor assigned, roster loaded, faculty accounts created automatically where needed. Sections with no instructor, or more than one, listed in the sheet are skipped. Applies only to what's visible under your filters/search above.</span>
+      </div>
     </div>
     <div id="course-reg-groups">${courseRegGroupsHtml()}</div>
   `;
@@ -11047,14 +11203,27 @@ function renderCIPending(){
   const user = App.currentUser();
   const { ciCourses } = getFacultyCourses(user.id);
   const list = ciCourses.filter(c=>c.status!=='draft');
+  const actions = myPendingItemActions(user).filter(a=>a.role==='ci');
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Instructor</div>
       <h2>Pending Approval</h2>
-      <p>Sections you've submitted, tracked through Coordinator verification, Executive Assistant verification, and HOD approval.</p>
+      <p>Everything currently waiting on YOU as Course Instructor — Term Test / Practical Internal Test / SEE Practical items you still need to enter and forward, plus sections you've submitted, tracked through Coordinator verification, Executive Assistant verification, and HOD approval.</p>
     </div>
-    ${list.length===0 ? emptyStateHtml('Nothing pending', 'Sections you submit will appear here while they move through the approval pipeline.') : list.map(c=>`
+    ${actions.length ? `
+    <div class="card" style="border-left:3px solid var(--brass);">
+      <div class="section-title" style="font-size:15px;">Action needed from you</div>
+      ${actions.map(a=>`
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+          <div>
+            <div class="section-title" style="font-size:13.5px;">${escapeHtml(a.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[a.itemKey])}</div>
+            <div class="section-meta">${courseMeta(a.course)}</div>
+          </div>
+          <button class="btn btn-sm" onclick="${itemActionNavigateAttr(a.course, a.itemKey)}">Enter &amp; Forward to CC</button>
+        </div>`).join('')}
+    </div>` : ''}
+    ${list.length===0 && actions.length===0 ? emptyStateHtml('Nothing pending', 'Sections you submit will appear here while they move through the approval pipeline.') : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
@@ -11723,7 +11892,7 @@ function renderCIComponentEntry(params){
     : '';
 
   const bodyHtml = comp.key==='sia' ? siaEntryHtml(course, comp, editable) : (()=>{
-    const rows = course.students.map(s=>{
+    const rows = itemEntryStudents(course, itemKey).map(s=>{
       const absentHere = isAbsentForComponent(s, comp.key);
       const val = s.marks[comp.key];
       const overMax = typeof val==='number' && (val>comp.rawMax || val<0);
@@ -11758,6 +11927,9 @@ function renderCIComponentEntry(params){
     </div>
     ${itemKey ? itemApprovalStatusHtml(course, itemKey) : ''}
     ${lockBannerHtml}
+    ${itemKey && !getItemRosterOverrides(course, itemKey).length ? `<div class="card" style="border-left:3px solid var(--warn);">
+      <p class="section-meta" style="margin:0;">No roll-number list has been assigned for ${escapeHtml(comp.label)} yet — student roll numbers are <strong>not</strong> pulled in from Course Registration here. ${App.currentUser().systemRole==='ADMIN' ? `An Administrator needs to upload the roster first: <button class="btn btn-outline btn-sm" style="margin-left:6px;" onclick="App.navigate('admin-roster-assignment',{courseId:'${course.id}', itemKey:'${itemKey}'})">Assign Roster</button>` : 'Ask an Administrator to upload the roster from Roster Assignment before marks can be entered here.'}</p>
+    </div>` : ''}
     <div class="card">
       <p class="section-meta" style="margin-bottom:10px;">
         ${escapeHtml(comp.label)} — raw /${comp.rawMax} scaled to /${comp.scaledMax}. ${note}
@@ -12149,12 +12321,26 @@ function renderCCList(){
   const baseList = [];
   ccCourses.forEach(c=>{ if(!seenCodes[c.code]){ seenCodes[c.code]=true; baseList.push(c); } });
   const initialBase = baseList[0] || null;
+  const pendingCCActions = myPendingItemActions(user).filter(a=>a.role==='cc');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
     </div>
     ${termTestPeriodBannerHtml()}
+    ${pendingCCActions.length ? `
+      <div class="card" style="border-left:3px solid var(--brass);">
+        <div class="section-title" style="font-size:15px;">Action needed from you</div>
+        <p class="section-meta" style="margin-top:2px;">Term Test / Practical Internal Test / SEE Practical items your Course Instructors have forwarded — verify and pass them on to the HOD.</p>
+        ${pendingCCActions.map(a=>`
+          <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+            <div>
+              <div class="section-title" style="font-size:13.5px;">${escapeHtml(a.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[a.itemKey])}</div>
+              <div class="section-meta">${courseMeta(a.course)}</div>
+            </div>
+            <button class="btn btn-sm" onclick="${itemActionNavigateAttr(a.course, a.itemKey)}">Verify &amp; Forward to HOD</button>
+          </div>`).join('')}
+      </div>` : ''}
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
