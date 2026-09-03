@@ -3395,6 +3395,27 @@ function matchFacultyByName(rawName, users){
   return null;
 }
 
+/* An instructor's email is often only present on SOME of their imported
+   registration rows (e.g. one section's sheet had it, another's didn't) —
+   without this, the exact same person shows "no email on file" on one
+   section and their real email on another, which is confusing and was
+   also silently relying on matchFacultyByName as an unlabelled fallback
+   at assignment time. This is the single source of truth both the
+   Admin's and the CC's group listings, and the actual assignment logic,
+   all resolve through — so the displayed email always matches what
+   activation will actually use. Checks, in order: (1) any OTHER
+   registration row anywhere with this same name that does have an
+   email, (2) an existing Faculty account matched by name. */
+function resolveInstructorEmail(instructorName, state){
+  if(!instructorName) return '';
+  const targetNorm = normalizeNameForMatch(instructorName);
+  const fromRegistrations = (state.courseRegistrations||[]).find(r=>
+    r.instructorEmail && normalizeNameForMatch(r.instructorName||'')===targetNorm);
+  if(fromRegistrations) return fromRegistrations.instructorEmail;
+  const fromFaculty = matchFacultyByName(instructorName, state.users);
+  return fromFaculty ? fromFaculty.email : '';
+}
+
 /* ---------------- Practical sub-sections (B1/B2 lab batches) ----------------
    A Practical subject's section (e.g. Section B5) is very often actually
    taught as two lab batches with two different faculty — the imported
@@ -5699,7 +5720,7 @@ const App = {
     if(instructorNames.length===0){ toast('No instructor is listed for this section in the imported sheet.', 'err'); return; }
     if(instructorNames.length>1){ toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return; }
     const instructorName = instructorNames[0];
-    const instructorEmail = list.find(r=>r.instructorEmail)?.instructorEmail || '';
+    const instructorEmail = resolveInstructorEmail(instructorName, this.state);
 
     // Matches an existing account first; if the sheet has an email but no
     // account exists yet, creates one on the spot (same as the old CC
@@ -5771,6 +5792,23 @@ const App = {
     // applyDefaultTTPaperConfig for the full rationale. Computed before the
     // notify call below so the notification can mention it.
     const defaultedCycles = evalType ? applyDefaultTTPaperConfig(course) : [];
+
+    // Copy the Course Coordinator down from the parent coordination shell
+    // onto this specific section row — without this, a freshly-activated
+    // section shows "Coordinator: Unassigned" even though the subject
+    // itself has one, because CC and CI assignments are per-course-row,
+    // not per-subject.
+    const baseCourse = this.state.courses.find(c=>norm(c.name)===norm(subject) && getCourseCCUser(c.id));
+    const ccUser = baseCourse ? getCourseCCUser(baseCourse.id) : null;
+    const existingCC = getCourseCCUser(course.id);
+    if(ccUser && (!existingCC || existingCC.id !== ccUser.id)){
+      (this.state.assignments||[]).filter(a=>a.courseId===course.id && a.type==='CC' && a.status==='active').forEach(a=>{
+        a.status='revoked'; a.revokedAt=Date.now(); a.revokedBy=actor.id; syncAssignment(a);
+      });
+      const ccRec = { id:bizId('ASG', ['CC', course.code, course.section||'nosec', String(Date.now())], this.state.assignments.map(a=>a.id)), type:'CC', courseId:course.id, userId:ccUser.id, email:ccUser.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
+      this.state.assignments.push(ccRec);
+      syncAssignment(ccRec);
+    }
 
     // Assign the Course Instructor — active immediately, mirroring every
     // other Admin-initiated assignment in this app.
@@ -7447,7 +7485,7 @@ function courseRegGroupsHtml(){
               const list = sections[secKey];
               const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
               const instructorLabel = instructors.map(nm=>{
-                const email = list.find(r=>r.instructorName===nm && r.instructorEmail)?.instructorEmail;
+                const email = resolveInstructorEmail(nm, App.state);
                 return email ? `${nm} (${email})` : `${nm} — no email match`;
               }).join(', ');
               const idx = courseRegGroupIndex.length;
@@ -12061,7 +12099,7 @@ function ccRegGroupsHtml(baseCourseId){
           const list = tree[batchKey][branchKey][semKey][secKey];
           const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
           const instructorLabel = instructors.map(nm=>{
-            const email = list.find(r=>r.instructorName===nm && r.instructorEmail)?.instructorEmail;
+            const email = resolveInstructorEmail(nm, App.state);
             return email ? `${nm} (${email})` : `${nm} — no email on file`;
           }).join(', ');
           const idx = ccAssignGroupIndex.length;
