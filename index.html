@@ -2883,7 +2883,7 @@ async function fetchStateFromSupabase(){
 
   const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
   const studentDirectory = (studentDirR.data||[]).map(s=>({ id:s.id, rollNo:s.roll_no, name:s.name, email:s.email||'', branch:s.branch, batch:s.batch, semester:s.semester||'' }));
-  const courseRegistrations = (courseRegR.data||[]).map(r=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||'', semester:r.semester||'', rollNo:r.roll_no, studentName:r.student_name, subjectName:r.subject_name, sectionCode:r.section_code||'', instructorName:r.instructor_name||'' }));
+  const courseRegistrations = (courseRegR.data||[]).map(r=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||'', semester:r.semester||'', rollNo:r.roll_no, studentName:r.student_name, subjectName:r.subject_name, sectionCode:r.section_code||'', instructorName:r.instructor_name||'', instructorEmail:r.instructor_email||'' }));
 
   return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, practicalInternalWindow, seePracticalWindow, termTestHistory, subjects, studentDirectory, courseRegistrations };
 }
@@ -2912,7 +2912,7 @@ const rowOf = {
   history:(courseId,h)=>({ id:h.id, course_id:courseId, ts:new Date(h.ts).toISOString(), user_name:h.user, role:h.role, action:h.action, remark:h.remark||'' }),
   termTest:(t)=>({ id:t.id, ts:new Date(t.ts).toISOString(), by_name:t.by, value:t.value, academic_year:t.academicYear||null, semester:t.semester||null }),
   studentDirectoryEntry:(s)=>({ id:s.id, roll_no:s.rollNo, name:s.name, email:s.email||null, branch:s.branch, batch:s.batch, semester:s.semester||null }),
-  courseRegistration:(r)=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||null, semester:r.semester||null, roll_no:r.rollNo, student_name:r.studentName, subject_name:r.subjectName, section_code:r.sectionCode||null, instructor_name:r.instructorName||null }),
+  courseRegistration:(r)=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||null, semester:r.semester||null, roll_no:r.rollNo, student_name:r.studentName, subject_name:r.subjectName, section_code:r.sectionCode||null, instructor_name:r.instructorName||null, instructor_email:r.instructorEmail||null }),
 };
 
 async function warnOnError(promise, label, opts={}){
@@ -3414,11 +3414,13 @@ function suggestSubSectionsFromRegistrations(course){
   const distinctInstructors = [...new Set(rows.map(r=>r.instructorName).filter(Boolean))];
   if(distinctInstructors.length < 2) return [];
   const groups = distinctInstructors.map(name=>{
-    const rollNos = [...new Set(rows.filter(r=>r.instructorName===name).map(r=>r.rollNo))].sort();
-    return { instructorName:name, rollNos };
+    const matching = rows.filter(r=>r.instructorName===name);
+    const rollNos = [...new Set(matching.map(r=>r.rollNo))].sort();
+    const instructorEmail = matching.find(r=>r.instructorEmail)?.instructorEmail || '';
+    return { instructorName:name, instructorEmail, rollNos };
   }).filter(g=>g.rollNos.length);
   groups.sort((a,b)=>(a.rollNos[0]||'').localeCompare(b.rollNos[0]||''));
-  return groups.map((g,i)=>({ code:'B'+(i+1), instructorName:g.instructorName, rollNos:g.rollNos }));
+  return groups.map((g,i)=>({ code:'B'+(i+1), instructorName:g.instructorName, instructorEmail:g.instructorEmail, rollNos:g.rollNos }));
 }
 /* Whenever a Practical section's sub-sections have a faculty member
    assigned, mirror that split into the existing item-roster-override
@@ -4073,7 +4075,8 @@ const App = {
     const suggestions = suggestSubSectionsFromRegistrations(course);
     if(!suggestions.length){ toast('No two-instructor split found in the Course Registration data for this section — add sub-sections manually below, or import/correct the registration sheet first.', 'err'); return; }
     course.subSections = suggestions.map(s=>{
-      const faculty = matchFacultyByName(s.instructorName, this.state.users);
+      const faculty = (s.instructorEmail && this.state.users.find(u=>u.email===s.instructorEmail))
+        || matchFacultyByName(s.instructorName, this.state.users);
       return { code:s.code, facultyUserId: faculty ? faculty.id : null, facultyEmail: faculty ? faculty.email : '', facultyName: faculty ? faculty.name : s.instructorName, rollNos:s.rollNos, matchedFromRegistration:true };
     });
     syncSubSectionItemOverrides(course);
@@ -5568,10 +5571,12 @@ const App = {
         entries.forEach(en=>{
           if(!en.instructor && !en.sectionCode){ cellsSkipped++; return; }
           const idPool = this.state.courseRegistrations.map(r=>r.id).concat(newRegs.map(r=>r.id));
+          const faculty = en.instructor ? matchFacultyByName(en.instructor, this.state.users) : null;
           newRegs.push({
             id: bizId('REG', [batch, branch, semester, rollNo, subjectName, en.sectionCode], idPool),
             batch, branch, regulation, semester, rollNo, studentName:name,
-            subjectName, sectionCode:en.sectionCode, instructorName:en.instructor
+            subjectName, sectionCode:en.sectionCode, instructorName:en.instructor,
+            instructorEmail: faculty ? faculty.email : ''
           });
         });
       });
@@ -5587,7 +5592,8 @@ const App = {
     syncStudentDirectoryEntries(dirTouched);
 
     const subjectCount = new Set(newRegs.map(r=>r.subjectName)).size;
-    toast(`Imported ${newRegs.length} registrations for ${studentsSeen} students across ${subjectCount} subjects (${BATCH_LABELS[batch]} · ${branchLabel(branch)}).${cellsSkipped?` ${cellsSkipped} cells skipped.`:''}`, 'ok');
+    const emailMatched = newRegs.filter(r=>r.instructorEmail).length;
+    toast(`Imported ${newRegs.length} registrations for ${studentsSeen} students across ${subjectCount} subjects (${BATCH_LABELS[batch]} · ${branchLabel(branch)}) — ${emailMatched}/${newRegs.length} instructor entries matched to a faculty email.${cellsSkipped?` ${cellsSkipped} cells skipped.`:''}`, 'ok');
     this.navigate('admin-course-reg');
   },
   removeCourseRegistration(id){
@@ -5598,6 +5604,59 @@ const App = {
     this.state.courseRegistrations.splice(idx,1);
     warnOnError(sb.from('course_registrations').delete().eq('id', id), 'course_registrations-delete:'+id, {toastOnFail:true});
     this.navigate('admin-course-reg');
+  },
+  /* One-off catch-up for rows imported before instructor emails were
+     tracked (or imported before the matching faculty existed yet in the
+     Faculty Directory). Re-resolves every registration row's instructor
+     name against the current faculty list and fills in instructorEmail
+     wherever it's still blank but can now be matched — never touches a
+     row whose email is already set, and never touches instructorName. */
+  backfillCourseRegistrationEmails(){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can do this.', 'err'); return; }
+    const candidates = this.state.courseRegistrations.filter(r=>r.instructorName && !r.instructorEmail);
+    if(!candidates.length){ toast('Every registration already has an instructor email (or no instructor listed).', 'ok'); return; }
+    const touched = [];
+    candidates.forEach(r=>{
+      const faculty = matchFacultyByName(r.instructorName, this.state.users);
+      if(faculty){ r.instructorEmail = faculty.email; touched.push(r); }
+    });
+    if(!touched.length){ toast(`Checked ${candidates.length} registrations without an email — none matched a current faculty account. Import the Faculty Directory first if you haven't yet.`, 'err'); return; }
+    syncCourseRegistrations(touched);
+    toast(`Matched ${touched.length} of ${candidates.length} previously-unmatched registrations to a faculty email.`, 'ok');
+  },
+  /* Repairs rows where instructor_name accidentally picked up the
+     "Name (email@domain)" / "Name [no email match]" formatting meant only
+     for the human-readable review copies, not for upload — this happens
+     if that reference file gets fed into the importer by mistake. Splits
+     each polluted name back into a clean instructorName + instructorEmail
+     (or just strips the bracket text when there was no email in it), and
+     re-checks the cleaned name against the faculty list in case that
+     resolves an email that wasn't captured the first time. Leaves any
+     row that doesn't match this pattern untouched. */
+  repairPollutedInstructorNames(){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can do this.', 'err'); return; }
+    const emailSuffix = /^(.*?)\s*\(([^()\s]+@[^()\s]+)\)\s*$/;
+    const noMatchSuffix = /^(.*?)\s*\[no email match\]\s*$/i;
+    const candidates = this.state.courseRegistrations.filter(r=>r.instructorName && (emailSuffix.test(r.instructorName) || noMatchSuffix.test(r.instructorName)));
+    if(!candidates.length){ toast('No polluted instructor names found — nothing to repair.', 'ok'); return; }
+    const touched = [];
+    candidates.forEach(r=>{
+      const emailMatch = r.instructorName.match(emailSuffix);
+      const noMatch = r.instructorName.match(noMatchSuffix);
+      const cleanName = (emailMatch ? emailMatch[1] : noMatch[1]).trim();
+      r.instructorName = cleanName;
+      if(emailMatch){
+        r.instructorEmail = emailMatch[2].trim().toLowerCase();
+      } else if(!r.instructorEmail){
+        const faculty = matchFacultyByName(cleanName, this.state.users);
+        if(faculty) r.instructorEmail = faculty.email;
+      }
+      touched.push(r);
+    });
+    syncCourseRegistrations(touched);
+    toast(`Repaired ${touched.length} registration${touched.length===1?'':'s'} with a polluted instructor name — cleaned name and email restored.`, 'ok');
   },
 
   /* ---------- ADMIN: turn one imported (subject, section) group into a real
@@ -5630,8 +5689,10 @@ const App = {
     if(instructorNames.length===0){ toast('No instructor is listed for this section in the imported sheet.', 'err'); return; }
     if(instructorNames.length>1){ toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return; }
     const instructorName = instructorNames[0];
+    const instructorEmail = list.find(r=>r.instructorEmail)?.instructorEmail || '';
 
-    const ciUser = matchFacultyByName(instructorName, this.state.users);
+    const ciUser = (instructorEmail && this.state.users.find(u=>u.email===instructorEmail))
+      || matchFacultyByName(instructorName, this.state.users);
     if(!ciUser){ toast(`No faculty account matching "${instructorName}" was found. Add them first — Manage System Accounts or the Faculty Directory — then activate again.`, 'err'); return; }
 
     const subj = (this.state.subjects||[]).find(s=>norm(s.name)===norm(subject));
@@ -7315,6 +7376,7 @@ function courseRegGroupsHtml(){
     entries = entries.filter(r=>
       r.rollNo.toLowerCase().includes(needle) || r.studentName.toLowerCase().includes(needle) ||
       r.subjectName.toLowerCase().includes(needle) || (r.instructorName||'').toLowerCase().includes(needle) ||
+      (r.instructorEmail||'').toLowerCase().includes(needle) ||
       (r.sectionCode||'').toLowerCase().includes(needle));
   }
   if(!entries.length) return emptyStateHtml('No registrations found', 'Import a spreadsheet above, or adjust the filters/search.');
@@ -7343,6 +7405,10 @@ function courseRegGroupsHtml(){
             ${Object.keys(sections).sort().map(secKey=>{
               const list = sections[secKey];
               const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+              const instructorLabel = instructors.map(nm=>{
+                const email = list.find(r=>r.instructorName===nm && r.instructorEmail)?.instructorEmail;
+                return email ? `${nm} (${email})` : `${nm} — no email match`;
+              }).join(', ');
               const idx = courseRegGroupIndex.length;
               courseRegGroupIndex.push({ batch:batchKey, branch:branchKey, semester:semKey, subject:subjectKey, section:secKey });
               const norm = s => String(s||'').trim().toLowerCase();
@@ -7353,7 +7419,7 @@ function courseRegGroupsHtml(){
               return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;flex-wrap:wrap;gap:8px;">
                 <div>
                   <div class="section-title" style="font-size:13.5px;">${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
-                  <div class="section-meta">${instructors.length ? escapeHtml(instructors.join(', ')) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}${matchedCourse ? ` · Activated${matchedCourse.evalType?'':' — ET not fixed'}` : ''}</div>
+                  <div class="section-meta">${instructors.length ? escapeHtml(instructorLabel) : 'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}${matchedCourse ? ` · Activated${matchedCourse.evalType?'':' — ET not fixed'}` : ''}</div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                   <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${idx})">View Roster</button>
@@ -9078,7 +9144,7 @@ function renderAdminCourseRegistrations(){
     <div class="page-head">
       <div class="page-eyebrow">Administrator</div>
       <h2>Course Registrations</h2>
-      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. Use "Activate as Course Section" on any subject/section to turn it into a real, live section — it assigns the matching Course Instructor (they must already have a faculty account with a matching name) and loads its roster, so it appears under their "My Subjects" right away.</p>
+      <p>Import each batch's course-registration sheet (R24, R25, R26…) branch-wise — student, section, and the Course Instructor mapped to each subject, straight from the registrar's Excel export. Each instructor name is automatically matched to a faculty email against the Faculty Directory at import time (tolerating titles, word-order, and merged/split surnames), so import the Faculty Directory first if you haven't. Use "Activate as Course Section" on any subject/section to turn it into a real, live section — it assigns the matched Course Instructor and loads its roster, so it appears under their "My Subjects" right away.</p>
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Import from Excel</div>
@@ -9099,6 +9165,8 @@ function renderAdminCourseRegistrations(){
           <input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleCourseRegImport(this)">
         </label>
       </div>
+      ${regs.length ? `<p class="section-meta" style="margin-top:10px;">${regs.filter(r=>r.instructorEmail).length} of ${regs.length} registrations have a matched instructor email.${regs.some(r=>r.instructorName && !r.instructorEmail) ? ` <a href="#" onclick="App.backfillCourseRegistrationEmails();return false;">Re-check unmatched ones against the current Faculty Directory</a>` : ''}</p>` : ''}
+      ${regs.some(r=>/\((?:[^()\s]+@[^()\s]+)\)\s*$/.test(r.instructorName||'') || /\[no email match\]\s*$/i.test(r.instructorName||'')) ? `<p class="section-meta" style="margin-top:4px;color:var(--seal-red);">Some instructor names look like they picked up "(email)" text from the wrong file — <a href="#" onclick="App.repairPollutedInstructorNames();return false;">clean those up now</a>.</p>` : ''}
     </div>
     <div class="card">
       <div class="section-title" style="font-size:15px;">Browse &amp; search</div>
