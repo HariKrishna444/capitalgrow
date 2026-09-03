@@ -3900,6 +3900,11 @@ const App = {
      not this flow), and Section is restricted to that Regulation/branch's
      fixed numbering range. Can be called repeatedly to allocate several
      instructors/sections under the same coordination. */
+  // Superseded by App.activateCourseRegistrationGroup — the CC "My
+  // Coordination" page no longer asks for Branch/Section by hand, it
+  // reads them straight from the Course Registration import (see
+  // ccRegGroupsHtml). Left in place unused in case anything else ever
+  // needs a manual add-section path again.
   async ccCreateSectionAndAssignInstructor(baseCourseId, branch, section, instructorEmail, semester, instructorName){
     const actor = this.currentUser();
     const base = this.getCourse(baseCourseId);
@@ -5674,26 +5679,43 @@ const App = {
      section is still created and the CI assigned, but the Evaluation Type
      is left unfixed — marks entry stays blocked until a Coordinator (or
      Admin) fixes one, same as any freshly created section. */
-  async activateCourseRegistrationGroup(idx){
+  async activateCourseRegistrationGroup(key){
     const actor = this.currentUser();
-    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can activate a course section from registration data.', 'err'); return; }
-    const key = courseRegGroupIndex[idx];
     if(!key){ toast('Could not find that group — refresh the page and try again.', 'err'); return; }
     const { batch, branch, semester, subject, section } = key;
+    const norm = s => String(s||'').trim().toLowerCase();
+    // Admin can activate anything; a Course Coordinator can only activate
+    // groups under a subject they actually coordinate (matched by the
+    // coordination's display name, same as the auto-load in
+    // ccCreateSectionAndAssignInstructor used to do).
+    const isAdmin = actor.systemRole==='ADMIN';
+    const isOwningCC = this.state.courses.some(c=>norm(c.name)===norm(subject) && getCourseCCUser(c.id)?.id===actor.id);
+    if(!isAdmin && !isOwningCC){ toast('Only an Administrator, or this subject\'s Course Coordinator, can activate a course section from registration data.', 'err'); return; }
     const list = this.state.courseRegistrations.filter(r=>
       r.batch===batch && r.branch===branch && (r.semester||'—')===semester && r.subjectName===subject && (r.sectionCode||'—')===section);
     if(!list.length){ toast('No registrations found for this group.', 'err'); return; }
 
-    const norm = s => String(s||'').trim().toLowerCase();
     const instructorNames = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
     if(instructorNames.length===0){ toast('No instructor is listed for this section in the imported sheet.', 'err'); return; }
     if(instructorNames.length>1){ toast(`This section lists more than one instructor (${instructorNames.join(', ')}) — fix the sheet or split the section before activating.`, 'err'); return; }
     const instructorName = instructorNames[0];
     const instructorEmail = list.find(r=>r.instructorEmail)?.instructorEmail || '';
 
-    const ciUser = (instructorEmail && this.state.users.find(u=>u.email===instructorEmail))
+    // Matches an existing account first; if the sheet has an email but no
+    // account exists yet, creates one on the spot (same as the old CC
+    // "Add Section & Assign Instructor" form did) so a Coordinator isn't
+    // blocked waiting on an Admin to pre-create the Faculty account.
+    let ciUser = (instructorEmail && this.state.users.find(u=>u.email===instructorEmail))
       || matchFacultyByName(instructorName, this.state.users);
-    if(!ciUser){ toast(`No faculty account matching "${instructorName}" was found. Add them first — Manage System Accounts or the Faculty Directory — then activate again.`, 'err'); return; }
+    if(!ciUser && instructorEmail){
+      const created = createFacultyIfNeeded(instructorEmail, instructorName);
+      ciUser = created.user;
+      if(created.isNew){
+        const { error: profileErr } = await syncProfile(ciUser);
+        if(profileErr){ this.state.users = this.state.users.filter(u2=>u2.id!==ciUser.id); renderContent(); return; }
+      }
+    }
+    if(!ciUser){ toast(`No faculty account matching "${instructorName}" was found, and no email is on file to create one. Add them first — Manage System Accounts or the Faculty Directory — then activate again.`, 'err'); return; }
 
     const subj = (this.state.subjects||[]).find(s=>norm(s.name)===norm(subject));
     const code = subj ? subj.code : bizId('SUBJ', [subject], []).replace(/^SUBJ-/,'');
@@ -7424,7 +7446,7 @@ function courseRegGroupsHtml(){
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                   <button class="btn btn-outline btn-sm" onclick="openCourseRegRosterModal(${idx})">View Roster</button>
                   ${matchedCourse ? `<button class="btn btn-outline btn-sm" onclick="App.navigate('hod-review',{courseId:'${matchedCourse.id}'})">Manage Course</button>` : ''}
-                  <button class="btn btn-sm" onclick="if(confirm('Create/update the live course section for ${escapeHtml(subjectKey).replace(/'/g,"\\'")} · Section ${secKey==='—'?'—':escapeHtml(secKey).replace(/'/g,"\\'")}, assign ${instructors.length?escapeHtml(instructors.join(', ')).replace(/'/g,"\\'"):'the instructor'} as Course Instructor, and load its roster?')) App.activateCourseRegistrationGroup(${idx})">Activate as Course Section</button>
+                  <button class="btn btn-sm" onclick="if(confirm('Create/update the live course section for ${escapeHtml(subjectKey).replace(/'/g,"\\'")} · Section ${secKey==='—'?'—':escapeHtml(secKey).replace(/'/g,"\\'")}, assign ${instructors.length?escapeHtml(instructors.join(', ')).replace(/'/g,"\\'"):'the instructor'} as Course Instructor, and load its roster?')) App.activateCourseRegistrationGroup(courseRegGroupIndex[${idx}])">Activate as Course Section</button>
                 </div>
               </div>`;
             }).join('')}
@@ -11988,63 +12010,69 @@ function ccCoordinationOptionsHtml(ccCourses){
   ccCourses.forEach(c=>{ if(!seen[c.code]) seen[c.code] = c; });
   return Object.values(seen).map(c=>`<option value="${c.id}" data-semester="${escapeHtml(c.semester||'')}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
 }
-/* All faculty accounts in the system (every branch), for the quick-pick
-   Instructor dropdown — picking one just fills the email/name fields
-   below; the actual assignment still goes through the same
-   createFacultyIfNeeded path either way, existing account or new. */
-function allFacultyOptionsHtml(){
-  const facultyUsers = App.state.users.filter(u=>u.systemRole==='FACULTY').slice().sort((a,b)=>a.name.localeCompare(b.name));
-  return facultyUsers.map(u=>`<option value="${escapeHtml(u.email)}" data-name="${escapeHtml(u.name)}">${escapeHtml(u.name)} — ${escapeHtml(u.email)}${u.homeBranch?` (${escapeHtml(u.homeBranch)})`:''}</option>`).join('');
+/* Course Instructor assignment for a Course Coordinator is driven entirely
+   by the imported Course Registration sheet now — no Branch/Section
+   picker. Given the chosen coordination, this groups that subject's
+   registrations by Batch → Branch → Semester → Section (same grouping
+   Admin's "Course Registrations" page uses) so the CC just sees which
+   sections already have students + an instructor on file, and assigns
+   with one click. courseRegistrations.sectionCode / .instructorName /
+   .instructorEmail come straight from the imported sheet — see
+   syncCourseRegistrations / rowOf.courseRegistration. */
+let ccAssignGroupIndex = [];
+function ccRegGroupsHtml(baseCourseId){
+  const base = App.getCourse(baseCourseId);
+  if(!base) return emptyStateHtml('Pick a coordination', 'Choose a subject above to see its sections.');
+  const norm = s => String(s||'').trim().toLowerCase();
+  const entries = (App.state.courseRegistrations||[]).filter(r=>norm(r.subjectName)===norm(base.name));
+  ccAssignGroupIndex = [];
+  if(!entries.length) return emptyStateHtml('No Course Registration data yet', `No registrations found yet for "${escapeHtml(base.name)}". Ask an Administrator to import the Course Registration sheet — sections, instructors, and rosters will appear here automatically once it's in.`);
+
+  const tree = {};
+  entries.forEach(r=>{
+    const k1=r.batch, k2=r.branch, k3=r.semester||'—', k4=r.sectionCode||'—';
+    tree[k1]=tree[k1]||{}; tree[k1][k2]=tree[k1][k2]||{}; tree[k1][k2][k3]=tree[k1][k2][k3]||{};
+    (tree[k1][k2][k3][k4]=tree[k1][k2][k3][k4]||[]).push(r);
+  });
+  let html = '';
+  Object.keys(tree).sort().forEach(batchKey=>{
+    Object.keys(tree[batchKey]).sort().forEach(branchKey=>{
+      Object.keys(tree[batchKey][branchKey]).sort().forEach(semKey=>{
+        Object.keys(tree[batchKey][branchKey][semKey]).sort().forEach(secKey=>{
+          const list = tree[batchKey][branchKey][semKey][secKey];
+          const instructors = [...new Set(list.map(r=>r.instructorName).filter(Boolean))];
+          const instructorLabel = instructors.map(nm=>{
+            const email = list.find(r=>r.instructorName===nm && r.instructorEmail)?.instructorEmail;
+            return email ? `${nm} (${email})` : `${nm} — no email on file`;
+          }).join(', ');
+          const idx = ccAssignGroupIndex.length;
+          ccAssignGroupIndex.push({ batch:batchKey, branch:branchKey, semester:semKey, subject:base.name, section:secKey });
+          const matchedSec = secKey==='—' ? '' : secKey;
+          const matchedCourse = (App.state.courses||[]).find(c=>normalizeCode(c.code)===normalizeCode(base.code) && c.section===matchedSec && c.branch===branchKey);
+          const canAssign = instructors.length===1;
+          html += `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;flex-wrap:wrap;gap:8px;">
+            <div>
+              <div class="section-title" style="font-size:13.5px;">${branchLabel(branchKey)} · ${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
+              <div class="section-meta">${escapeHtml(BATCH_LABELS[batchKey]||batchKey)}${semKey!=='—'?' · Semester '+escapeHtml(semKey):''} · ${instructors.length?escapeHtml(instructorLabel):'No instructor on file'} · ${list.length} student${list.length===1?'':'s'}${matchedCourse?` · Already assigned${matchedCourse.evalType?'':' — ET not fixed'}`:''}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-sm" ${canAssign?'':'disabled title="This section lists more than one (or no) instructor in the imported sheet — fix the sheet first"'} onclick="if(confirm('Assign ${instructors.length?escapeHtml(instructors.join(', ')).replace(/'/g,"\\'"):'the instructor'} as Course Instructor for ${escapeHtml(base.code)} · ${secKey==='—'?'—':escapeHtml(secKey).replace(/'/g,"\\'")}, and load its ${list.length} student${list.length===1?'':'s'}?')) App.activateCourseRegistrationGroup(ccAssignGroupIndex[${idx}])">${matchedCourse ? 'Re-assign / Refresh Roster' : 'Assign as Course Instructor'}</button>
+            </div>
+          </div>`;
+        });
+      });
+    });
+  });
+  return html;
 }
-function onCCInstructorPick(sel){
-  if(!sel.value) return;
-  const opt = sel.options[sel.selectedIndex];
-  const emailEl = document.getElementById('cc-assign-instructor');
-  const nameEl = document.getElementById('cc-assign-instructor-name');
-  if(emailEl) emailEl.value = sel.value;
-  if(nameEl) nameEl.value = opt.dataset.name || '';
-}
-window.onCCInstructorPick = onCCInstructorPick;
-/* Re-populates Branch (to whichever branches can actually open a NEW
-   section of THIS subject — see ccCreatableBranches) and then Section (to
-   that Regulation+Branch's fixed range — see sectionOptionsFor). Both are
-   now fully derived from the chosen Coordination; nothing left to
-   manually mismatch. */
-function refreshCCBranchOptions(){
+window.ccRegGroupsHtml = ccRegGroupsHtml;
+function refreshCCRegGroups(){
   const baseEl = document.getElementById('cc-assign-base');
-  const branchEl = document.getElementById('cc-assign-branch');
-  if(!baseEl || !branchEl) return;
-  const base = App.getCourse(baseEl.value);
-  const code = base ? (base.code||'').trim().toUpperCase() : '';
-  const regulation = regulationFromCode(code);
-  const catalogBranch = catalogBranchForCode(code);
-  const allowed = regulation ? ccCreatableBranches(regulation, catalogBranch) : [];
-  branchEl.innerHTML = allowed.length ? allowed.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('') : `<option value="">— Coordination's Regulation not recognized —</option>`;
-  refreshCCSectionOptions();
+  const wrap = document.getElementById('cc-reg-groups');
+  if(!baseEl || !wrap) return;
+  wrap.innerHTML = ccRegGroupsHtml(baseEl.value);
 }
-window.refreshCCBranchOptions = refreshCCBranchOptions;
-function refreshCCSectionOptions(){
-  const baseEl = document.getElementById('cc-assign-base');
-  const branchEl = document.getElementById('cc-assign-branch');
-  const sectionEl = document.getElementById('cc-assign-section');
-  if(!baseEl || !branchEl || !sectionEl) return;
-  const base = App.getCourse(baseEl.value);
-  const code = base ? (base.code||'').trim().toUpperCase() : '';
-  const regulation = regulationFromCode(code);
-  const options = (regulation && branchEl.value) ? sectionOptionsFor(regulation, branchEl.value) : [];
-  sectionEl.innerHTML = options.length ? options.map(s=>`<option value="${s}">${s}</option>`).join('') : `<option value="">— No section range for this Branch —</option>`;
-}
-window.refreshCCSectionOptions = refreshCCSectionOptions;
-/* When the Coordination dropdown changes: prefill Semester from that
-   coordination's own semester (set by the Timetable Incharge on the
-   shell) — still freely overridable — then re-derive Branch and Section. */
-function onCCBaseChange(baseId){
-  const semEl = document.getElementById('cc-assign-semester');
-  const base = App.getCourse(baseId);
-  if(semEl && base && base.semester) semEl.value = base.semester;
-  refreshCCBranchOptions();
-}
-window.onCCBaseChange = onCCBaseChange;
+window.refreshCCRegGroups = refreshCCRegGroups;
 
 function renderCCList(){
   const user = App.currentUser();
@@ -12054,12 +12082,6 @@ function renderCCList(){
   const baseList = [];
   ccCourses.forEach(c=>{ if(!seenCodes[c.code]){ seenCodes[c.code]=true; baseList.push(c); } });
   const initialBase = baseList[0] || null;
-  const initialCode = initialBase ? (initialBase.code||'').trim().toUpperCase() : '';
-  const initialRegulation = initialCode ? regulationFromCode(initialCode) : null;
-  const initialCatalogBranch = initialCode ? catalogBranchForCode(initialCode) : null;
-  const initialAllowedBranches = initialRegulation ? ccCreatableBranches(initialRegulation, initialCatalogBranch) : [];
-  const initialBranch = initialAllowedBranches[0] || '';
-  const initialSections = (initialRegulation && initialBranch) ? sectionOptionsFor(initialRegulation, initialBranch) : [];
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
@@ -12068,50 +12090,17 @@ function renderCCList(){
     ${termTestPeriodBannerHtml()}
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
-        <div class="section-title" style="font-size:15px;">Add Section &amp; Assign Instructor</div>
+        <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
+        <p class="section-meta" style="margin-top:2px;">Sections, instructors, and rosters come straight from the imported Course Registration sheet — pick a coordination below and assign with one click. No Branch or Section to fill in by hand.</p>
         <table class="form-table">
           <tbody>
             <tr>
               <td class="ft-label">Coordination</td>
-              <td class="ft-input"><select id="cc-assign-base" onchange="onCCBaseChange(this.value)">${ccCoordinationOptionsHtml(ccCourses)}</select></td>
-            </tr>
-            <tr>
-              <td class="ft-label">Branch</td>
-              <td class="ft-input"><select id="cc-assign-branch" onchange="refreshCCSectionOptions()">${initialAllowedBranches.length ? initialAllowedBranches.map(b=>`<option value="${b}">${escapeHtml(BRANCH_LABELS[b])}</option>`).join('') : `<option value="">— Pick a Coordination first —</option>`}</select></td>
-            </tr>
-            <tr>
-              <td class="ft-label" title="Prefilled from the coordination's own mapping">Semester</td>
-              <td class="ft-input">
-                <select id="cc-assign-semester">
-                  <option value="">— Select —</option>
-                  ${SEMESTER_NUMBERS.map(n=>`<option value="${n}" ${initialBase && initialBase.semester===n?'selected':''}>Semester ${n}</option>`).join('')}
-                </select>
-              </td>
-            </tr>
-            <tr>
-              <td class="ft-label">Section</td>
-              <td class="ft-input"><select id="cc-assign-section">${initialSections.length ? initialSections.map(s=>`<option value="${s}">${s}</option>`).join('') : `<option value="">— Pick a Branch first —</option>`}</select></td>
-            </tr>
-            <tr>
-              <td class="ft-label" title="Pick existing, or type a new email below">Instructor</td>
-              <td class="ft-input">
-                <select id="cc-assign-instructor-pick" onchange="onCCInstructorPick(this)">
-                  <option value="">— Pick existing faculty (optional) —</option>
-                  ${allFacultyOptionsHtml()}
-                </select>
-              </td>
-            </tr>
-            <tr>
-              <td class="ft-label">Instructor Email</td>
-              <td class="ft-input"><input id="cc-assign-instructor" type="email" placeholder="name@suh.in"></td>
-            </tr>
-            <tr>
-              <td class="ft-label" title="Only needed for a new account">Instructor Name</td>
-              <td class="ft-input"><input id="cc-assign-instructor-name" type="text" placeholder="Dr. Jane Doe"></td>
+              <td class="ft-input"><select id="cc-assign-base" onchange="refreshCCRegGroups()">${ccCoordinationOptionsHtml(ccCourses)}</select></td>
             </tr>
           </tbody>
         </table>
-        <button class="btn" style="margin-top:14px;" onclick="App.ccCreateSectionAndAssignInstructor(document.getElementById('cc-assign-base').value, document.getElementById('cc-assign-branch').value, document.getElementById('cc-assign-section').value, document.getElementById('cc-assign-instructor').value, document.getElementById('cc-assign-semester').value, document.getElementById('cc-assign-instructor-name').value)">Add Section &amp; Assign Instructor</button>
+        <div id="cc-reg-groups" style="margin-top:4px;">${ccRegGroupsHtml(initialBase ? initialBase.id : '')}</div>
       </div>
 
       <div class="card">
