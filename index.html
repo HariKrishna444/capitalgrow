@@ -5728,13 +5728,15 @@ const App = {
     if(!course){
       course = {
         id: bizId('CRS', [code, branch, sec||'nosec'], this.state.courses.map(c=>c.id)), code, name, section:sec, branch,
+        semester: semester==='—' ? null : semester,
         status:'draft', sentBack:false, lastRemark:'', eaRemark:'', evalType, examDate:'', pracInternalDeadline:'', pracInternalStart:'', scrutinyRemark:'', frozenAt:null, frozenBy:'', scriptUploads:{},
         editRequestStatus:null, editRequestRemark:'', editUnlocked:false, ttLabApproval:null, labExternalApproval:null, etRequests:[], ttPaperConfig:{},
         students:[], studentsLoaded:true, history:[]
       };
       this.state.courses.push(course);
-    } else if(!course.evalType && evalType){
-      course.evalType = evalType;
+    } else {
+      if(!course.evalType && evalType) course.evalType = evalType;
+      if(!course.semester && semester!=='—') course.semester = semester;
     }
     const { error: courseErr } = await syncCourse(course);
     if(courseErr){ if(isNewCourse) this.state.courses = this.state.courses.filter(c=>c.id!==course.id); return; }
@@ -5760,6 +5762,16 @@ const App = {
     course.students = nextStudents;
     nextStudents.forEach(s=>syncNewStudent(course.id, s));
 
+    // Auto-apply + auto-forward the default Question Paper Setup (Part A
+    // Q1-Q5 fixed at 2 marks each = 10; Part B Q6/Q7 and Q8/Q9 fixed at 16
+    // marks each, Q10/Q11 fixed at 8 — see TT_LONG_PAIRS) the moment the
+    // Course Instructor is assigned, same as every other CI-assignment path
+    // in the app (assignRole / the legacy ccCreateSectionAndAssignInstructor)
+    // — no separate Course Coordinator step required. See
+    // applyDefaultTTPaperConfig for the full rationale. Computed before the
+    // notify call below so the notification can mention it.
+    const defaultedCycles = evalType ? applyDefaultTTPaperConfig(course) : [];
+
     // Assign the Course Instructor — active immediately, mirroring every
     // other Admin-initiated assignment in this app.
     const existingCI = getCourseCIUser(course.id);
@@ -5770,17 +5782,24 @@ const App = {
       const ciRec = { id:bizId('ASG', ['CI', course.code, course.section||'nosec', String(Date.now())], this.state.assignments.map(a=>a.id)), type:'CI', courseId:course.id, userId:ciUser.id, email:ciUser.email, assignedBy:actor.id, assignedAt:Date.now(), status:'active' };
       this.state.assignments.push(ciRec);
       syncAssignment(ciRec);
-      this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section||'—'} · ${branchLabel(course.branch)}), imported from the course registration sheet.`, true, actor.email);
+      this.notifyUser(ciUser.id, course, `You're now Course Instructor`, `${actor.name} assigned you as Course Instructor for ${course.code} — ${course.name} (Section ${course.section||'—'} · ${branchLabel(course.branch)}), imported from the course registration sheet.${defaultedCycles.length ? ` A default Question Paper Setup has already been forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}, so you can start entering marks right away.` : ''}`, true, actor.email);
     }
     this.logHistory(course, `Course section activated from Course Registration import: ${code} — ${name} (Section ${sec||'—'} · ${branchLabel(branch)}) · Instructor ${ciUser.name} (${ciUser.email}) (by ${actor.name})`);
+    if(defaultedCycles.length){
+      await syncCourse(course);
+      this.logHistory(course, `Default Question Paper Setup auto-forwarded to the Course Instructor for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}`);
+    }
 
     if(!evalType){
       toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded. No matching subject was found in "Courses Applicable", so the Evaluation Type isn't fixed yet — a Coordinator (or you, as Admin) will need to set one before marks can be entered.`, 'ok');
     } else {
-      toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} auto-matched.`, 'ok');
+      toast(`${ciUser.name} is now Course Instructor for ${code} · Section ${sec||'—'} — ${nextStudents.length} student${nextStudents.length===1?'':'s'} loaded, Evaluation Type ${evalType} auto-matched${defaultedCycles.length ? `, Question Paper Setup auto-forwarded for ${defaultedCycles.map(c=>TERM_TEST_LABELS[c]||c).join(' & ')}` : ''}.`, 'ok');
     }
     renderSidebar();
-    this.navigate('admin-course-reg');
+    // Admin lands back on the registration-import page they came from; a
+    // Course Coordinator lands back on their own "My Coordination" list,
+    // now showing this section as "Already assigned".
+    this.navigate(isAdmin ? 'admin-course-reg' : 'cc-list');
   },
   /* ---------- ADMIN: set a course's Evaluation Type directly, bypassing
      the CC-request / HOD-approval chain — for sections that have a Course
