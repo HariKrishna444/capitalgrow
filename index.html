@@ -9296,6 +9296,7 @@ function renderAdminRosterAssignment(params){
         <h2>Roster Assignment</h2>
         <p>Assign specific students, roll number by roll number, to a faculty member for Term Test 1/2/3, Practical Internal Test or SEE Practical — independent of the section's regular Course Instructor. Everything else on the course (every other CIE/SEE component, the Overall record) is untouched and keeps coming from Course Registration as usual. Pick a section below to get started.</p>
       </div>
+      ${practicalWindowsCardHtml()}
       <div class="card">
         <input class="search-input" type="text" placeholder="Search by subject, code, section, or branch..." value="${escapeHtml(rosterAssignQuery)}" oninput="updateRosterAssignQuery(this.value)">
         <div class="table-scroll" style="margin-top:10px;">
@@ -11671,6 +11672,15 @@ function renderCIComponentEntry(params){
   // Course-Coordinator-set deadline (see pracInternalDeadlinePassed) —
   // every other component here is unaffected by either gate.
   const seeLocked = section==='see' && seeEntryLocked();
+  // Course-level only (CC/HOD-set course.pracInternalStart/Deadline) — kept
+  // separate from the combined pracInternalNotYetStarted/DeadlinePassed
+  // checks (which also fold in the Administrator's window) specifically so
+  // the message below can name the right source. Using the combined check
+  // here previously meant an Administrator-only lock rendered THIS course's
+  // (empty) date field, showing "Invalid Date" instead of the Administrator
+  // window's actual date.
+  const pracNotStartedCourseOnly = comp.key==='pracInternal' && !!course.pracInternalStart && !isNaN(new Date(course.pracInternalStart).getTime()) && now < new Date(course.pracInternalStart).getTime();
+  const pracEndedCourseOnly = comp.key==='pracInternal' && !!course.pracInternalDeadline && !isNaN(new Date(course.pracInternalDeadline).getTime()) && now > new Date(course.pracInternalDeadline).getTime();
   const pracNotStarted = comp.key==='pracInternal' && pracInternalNotYetStarted(course);
   const pracEnded = comp.key==='pracInternal' && pracInternalDeadlinePassed(course);
   // Administrator-fixed windows (App.setPracticalWindow) — independent of,
@@ -11702,9 +11712,9 @@ function renderCIComponentEntry(params){
     ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">SEE Practical marks-entry hasn't opened yet — it starts at ${fmtDate(new Date(adminSeeWindow.startDate).getTime())} (set by the Administrator).</p></div>`
     : adminSeeEnded
     ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">SEE Practical marks-entry closed at ${fmtDate(new Date(adminSeeWindow.endDate).getTime())} (set by the Administrator) — entry is locked.</p></div>`
-    : pracNotStarted
+    : pracNotStartedCourseOnly
     ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">The Practical Internal Test marks-entry window hasn't opened yet — it starts at ${fmtDate(new Date(course.pracInternalStart).getTime())} (set by the Course Coordinator).</p></div>`
-    : pracEnded
+    : pracEndedCourseOnly
     ? `<div class="card" style="border-left:3px solid var(--seal-red);"><p class="section-meta" style="color:var(--seal-red);">The Practical Internal Test marks-entry window closed at ${fmtDate(new Date(course.pracInternalDeadline).getTime())} (set by the Course Coordinator) — entry is locked.</p></div>`
     : adminPracNotStarted
     ? `<div class="card" style="border-left:3px solid var(--warn);"><p class="section-meta" style="color:var(--warn);">Practical Internal Test marks-entry hasn't opened yet — it starts at ${fmtDate(new Date(adminPracWindow.startDate).getTime())} (set by the Administrator).</p></div>`
