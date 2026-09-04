@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Continuous Internal Evaluation (CIE)</title>
+<title>🎓 Continuous Internal Evaluation (CIE)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -908,8 +908,7 @@ input[type="number"]{
           <div class="login-logo-mark">🎓</div>
         </div>
         <h1 style="margin-top:16px;">Continuous Internal<br>Evaluation <span class="login-accent">(CIE)</span></h1>
-        <div class="login-tagline">Faculty &amp; Admin Portal</div>
-        <p class="login-sub">Sign in with the email and password issued to you by the System Administrator.</p>
+        <div class="login-tagline">Faculty Portal</div>      
         <form id="login-form" class="login-form" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
@@ -5018,7 +5017,7 @@ const App = {
     newlyAdded.forEach(s=>syncNewStudent(course.id, s));
 
     syncCourse(course);
-    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]}, independent of the section's regular Course Instructor.`, true, null, itemEntryLink(course, itemKey));
+    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data. .`, true, null, itemEntryLink(course, itemKey));
     toast(`${ITEM_FLOW_LABELS[itemKey]} — assigned ${rollNos.length} student${rollNos.length===1?'':'s'} to ${faculty.name}${newlyAdded.length ? ` (${newlyAdded.length} new to the roster)` : ''}.`, 'ok');
     this.navigate('admin-roster-assignment', { courseId, itemKey });
   },
