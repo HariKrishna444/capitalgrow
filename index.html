@@ -258,6 +258,13 @@ input,select,textarea{font-family:inherit;}
 }
 .login-card .google-btn:hover{border-color:#B9C0C7;box-shadow:0 2px 8px rgba(15,23,42,0.08);}
 .login-card .google-btn:disabled{opacity:0.6;cursor:default;}
+#login-submit-btn:disabled{opacity:0.75;cursor:default;}
+#login-submit-btn .btn-spinner{
+  display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:-2px;
+  border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;
+  animation:btn-spin 0.7s linear infinite;
+}
+@keyframes btn-spin{to{transform:rotate(360deg);}}
 .login-card .text-link-btn{
   background:none;border:none;padding:0;color:#8B96A1 !important;
   font-family:'Inter', sans-serif;font-size:12.5px;text-decoration:underline;cursor:pointer;
@@ -2859,6 +2866,21 @@ async function fetchStateFromSupabase(){
   });
   const courseById = id => courses.find(c=>c.id===id);
 
+  // One-time auto-heal for practical companion sections ("<Subject> (P)")
+  // that were activated before this "(P)" -> EP default existed, and so
+  // still have eval_type=null in the DB — same default
+  // App.activateCourseRegistrationGroup now applies to brand-new
+  // activations, just applied here too so already-existing rows don't sit
+  // on "ET: Not fixed yet" until someone clicks "Re-assign / Refresh
+  // Roster" on each one by hand. Fixed locally right away (so this load
+  // already renders correctly) and persisted to Supabase in the
+  // background so every future load sees it too, without a toast either
+  // way — this runs on every login, not just once.
+  courses.filter(c=>!c.evalType && /\(P\)\s*$/i.test(String(c.name||'').trim())).forEach(c=>{
+    c.evalType = 'EP';
+    syncCourse(c).catch(()=>{});
+  });
+
   (historyR.data||[]).forEach(h=>{
     const course = courseById(h.course_id);
     if(course) course.history.push({ id:h.id, ts:new Date(h.ts).getTime(), user:h.user_name, role:h.role, action:h.action, remark:h.remark||'' });
@@ -3013,10 +3035,23 @@ function deleteCourseRegistrationsFor(batch, branch, semesters){
 
 let authBusy = false;
 
+// Shared by attemptPasswordLogin, signInWithGoogle's return trip, and
+// handleSignedIn — anywhere the login button should show it's actively
+// working. Signing in itself (signInWithPassword) is fast; the part that
+// used to look "stuck" for a few seconds with no feedback was the app
+// data load (fetchStateFromSupabase) that runs AFTER auth succeeds,
+// inside handleSignedIn — so this stays busy across that whole span too,
+// not just the initial auth call.
+function setLoginBusy(busy, label){
+  const btn = document.getElementById('login-submit-btn');
+  if(!btn) return;
+  btn.disabled = busy;
+  btn.innerHTML = busy ? `<span class="btn-spinner"></span>${escapeHtml(label || 'Signing in…')}` : 'Sign In';
+}
+
 async function attemptPasswordLogin(email, password){
   const errBox = document.getElementById('login-error');
   const successBox = document.getElementById('login-success');
-  const btn = document.getElementById('login-submit-btn');
   if(errBox){ errBox.classList.add('hidden'); errBox.textContent = ''; }
   if(successBox){ successBox.classList.add('hidden'); successBox.textContent = ''; }
   if(!email || !password){
@@ -3029,23 +3064,36 @@ async function attemptPasswordLogin(email, password){
   }
   if(authBusy) return;
   authBusy = true;
-  if(btn){ btn.disabled = true; btn.textContent = 'Signing in…'; }
+  setLoginBusy(true, 'Signing in…');
   try{
     const { error } = await sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
     if(error) throw error;
-    // handleSignedIn() runs via onAuthStateChange once the session lands
+    // Auth succeeded. Don't clear the busy state here — handleSignedIn()
+    // runs next via onAuthStateChange and still has the app's data to
+    // load, which is the slower part; it swaps the label to "Loading
+    // your dashboard…" and is responsible for clearing busy once the
+    // dashboard is actually ready (or it fails).
+    setLoginBusy(true, 'Loading your dashboard…');
   }catch(e){
     const msg = (e && e.message) ? e.message : String(e);
     if(errBox){ errBox.textContent = 'Sign-in failed: ' + msg; errBox.classList.remove('hidden'); }
-  }finally{
     authBusy = false;
-    if(btn){ btn.disabled = false; btn.textContent = 'Sign In'; }
+    setLoginBusy(false);
   }
 }
 
 async function handleSignedIn(session){
   const email = (session.user.email || '').toLowerCase();
   if(!email) return;
+  // Covers every entry path that lands here: password login (continues
+  // the busy state attemptPasswordLogin already started), a Google
+  // redirect coming back, and restoring an existing session on a plain
+  // page refresh (where nothing set a busy state yet) — so the button
+  // always reflects "still working" for as long as fetchStateFromSupabase
+  // below is actually running, instead of looking idle/reset while the
+  // page quietly loads for a few seconds and then jumps to the dashboard.
+  authBusy = true;
+  setLoginBusy(true, 'Loading your dashboard…');
   // Applies to every sign-in path, including Google — password sign-in
   // and self sign-up already enforce the @suh.edu.in domain before ever
   // reaching here, but an OAuth provider can hand back ANY email the
@@ -3053,6 +3101,8 @@ async function handleSignedIn(session){
   if(!/@suh\.edu\.in$/i.test(email)){
     const errBox = document.getElementById('login-error');
     if(errBox){ errBox.textContent = `${email} is not a @suh.edu.in address. Please sign in with your college Google account.`; errBox.classList.remove('hidden'); }
+    authBusy = false;
+    setLoginBusy(false);
     await sb.auth.signOut();
     return;
   }
@@ -3065,6 +3115,8 @@ async function handleSignedIn(session){
     const state = await fetchStateFromSupabase();
     const me = state.users.find(u => u.email.toLowerCase() === email);
     if(!me){
+      authBusy = false;
+      setLoginBusy(false);
       await sb.auth.signOut();
       toast(`${email} isn't in the faculty directory yet with a password set up. Use "First time signing in?" below to set one.`, 'err');
       showCreateAccountForm();
@@ -3075,9 +3127,13 @@ async function handleSignedIn(session){
     state.currentUserId = me.id;
     App.state = state;
     App.completeLogin(me.id);
+    authBusy = false;
+    setLoginBusy(false);
   }catch(e){
     const errBox = document.getElementById('login-error');
     if(errBox){ errBox.textContent = 'Signed in, but could not load your data: ' + (e.message || e); errBox.classList.remove('hidden'); }
+    authBusy = false;
+    setLoginBusy(false);
   }
 }
 
