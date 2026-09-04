@@ -908,7 +908,7 @@ input[type="number"]{
           <div class="login-logo-mark">🎓</div>
         </div>
         <h1 style="margin-top:16px;">Continuous Internal<br>Evaluation <span class="login-accent">(CIE)</span></h1>
-        <div class="login-tagline">Faculty Portal</div>      
+        <div class="login-tagline">Faculty Portal</div>        
         <form id="login-form" class="login-form" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
@@ -5017,7 +5017,7 @@ const App = {
     newlyAdded.forEach(s=>syncNewStudent(course.id, s));
 
     syncCourse(course);
-    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data. .`, true, null, itemEntryLink(course, itemKey));
+    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data`, true, null, itemEntryLink(course, itemKey));
     toast(`${ITEM_FLOW_LABELS[itemKey]} — assigned ${rollNos.length} student${rollNos.length===1?'':'s'} to ${faculty.name}${newlyAdded.length ? ` (${newlyAdded.length} new to the roster)` : ''}.`, 'ok');
     this.navigate('admin-roster-assignment', { courseId, itemKey });
   },
@@ -12333,9 +12333,21 @@ function ccRegGroupsHtml(baseCourseId){
   const base = App.getCourse(baseCourseId);
   if(!base) return emptyStateHtml('Pick a coordination', 'Choose a subject above to see its sections.');
   const norm = s => String(s||'').trim().toLowerCase();
-  const entries = (App.state.courseRegistrations||[]).filter(r=>norm(r.subjectName)===norm(base.name));
+  // Matching by subject text alone (below) pulls in EVERY registration row
+  // with that same subject name, regardless of batch — e.g. an older
+  // batch's backlog/repeat section for "Computer Networks" would show up
+  // right alongside this batch's own sections. That's not something a CC
+  // coordinating one semester's cohort should see or be able to assign
+  // into, so once this coordination itself has a semester on record, only
+  // registration rows for that same semester are shown. A course with no
+  // semester set yet (freshly created, nothing activated under it so far)
+  // still shows everything, since there's nothing yet to scope against.
+  const entries = (App.state.courseRegistrations||[]).filter(r=>
+    norm(r.subjectName)===norm(base.name) && (!base.semester || (r.semester||'—')===base.semester));
   ccAssignGroupIndex = [];
-  if(!entries.length) return emptyStateHtml('No Course Registration data yet', `No registrations found yet for "${escapeHtml(base.name)}". Ask an Administrator to import the Course Registration sheet — sections, instructors, and rosters will appear here automatically once it's in.`);
+  if(!entries.length) return emptyStateHtml('No Course Registration data yet', base.semester
+    ? `No Semester ${escapeHtml(base.semester)} registrations found for "${escapeHtml(base.name)}". If the sheet only has this subject under a different semester, that's kept separate from this coordination on purpose — ask an Administrator if that looks wrong.`
+    : `No registrations found yet for "${escapeHtml(base.name)}". Ask an Administrator to import the Course Registration sheet — sections, instructors, and rosters will appear here automatically once it's in.`);
 
   const tree = {};
   entries.forEach(r=>{
