@@ -929,7 +929,7 @@ input[type="number"]{
           <div class="login-divider">new here?</div>
           <button type="button" class="pill-btn" onclick="showForgotPasswordForm()">Forgot password?</button>
           <button type="button" class="pill-btn" onclick="showCreateAccountForm()">🆕 First time signing in? Set up your password</button>
-          <p class="section-meta" style="color:var(--text-soft);margin-top:2px;">No @suh.edu.in email at all? Contact your Examination Branch (CIE).</p>
+          <p class="section-meta" style="color:var(--text-soft);margin-top:2px;">No @suh.edu.in email at all? Contact your System Administrator.</p>
         </form>
 
         <!-- FIRST-TIME SETUP: for an @suh.edu.in faculty (or other staff)
@@ -3023,7 +3023,7 @@ function syncNewStudent(courseId, s){ return warnOnError(sb.from('students').ups
 function deleteStudent(id){ return warnOnError(sb.from('students').delete().eq('id', id), 'student-delete:'+id, {toastOnFail:true}); }
 function syncStudents(courseId, students){ return students.length ? warnOnError(Promise.all(students.map(s=>sb.from('students').update({ marks:s.marks||{}, absent:!!s.absent }).eq('id', s.id))).then(results=>({ error: results.find(r=>r.error)?.error })), 'students:'+courseId, {toastOnFail:true}) : Promise.resolve(); }
 function syncAssignment(a){ return warnOnError(sb.from('assignments').upsert(rowOf.assignment(a)), 'assignment:'+a.id, {toastOnFail:true}); }
-function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id); }
+function syncNotification(n){ return warnOnError(sb.from('notifications').insert(rowOf.notification(n)), 'notification:'+n.id, {toastOnFail:true}); }
 function syncNotificationRead(n){ return warnOnError(sb.from('notifications').update({ read:true }).eq('id', n.id), 'notification-read:'+n.id); }
 function syncHistory(courseId, h){ return warnOnError(sb.from('course_history').insert(rowOf.history(courseId,h)), 'history:'+h.id); }
 function syncAppSetting(key, value){ return warnOnError(sb.from('app_settings').upsert({ key, value: JSON.stringify(value ?? null) }), 'app_settings:'+key); }
@@ -5044,7 +5044,7 @@ const App = {
     newlyAdded.forEach(s=>syncNewStudent(course.id, s));
 
     syncCourse(course);
-    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data `, true, null, itemEntryLink(course, itemKey));
+    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data`, true, null, itemEntryLink(course, itemKey));
     toast(`${ITEM_FLOW_LABELS[itemKey]} — assigned ${rollNos.length} student${rollNos.length===1?'':'s'} to ${faculty.name}${newlyAdded.length ? ` (${newlyAdded.length} new to the roster)` : ''}.`, 'ok');
     this.navigate('admin-roster-assignment', { courseId, itemKey });
   },
