@@ -109,7 +109,7 @@ html[data-theme="nordic"]{
   --text:#22303F;--text-soft:#3F5A70;--rule:#DCE6EE;--rule-light:#EEF3F8;--warn:#D97706;
 }
 
-html{ zoom:var(--app-zoom,1); }
+.shell{ zoom:var(--app-zoom,1); }
 
 *{box-sizing:border-box;}
 html,body{height:100%;}
@@ -144,22 +144,40 @@ input,select,textarea{font-family:inherit;}
 .login-view{
   min-height:100vh;
   display:flex;
+  background:#FDFEFF;
+}
+.login-visual{
+  display:none;
+  flex:1 1 auto;
+  background-image:url('assets/campus.jpg');
+  background-size:cover;
+  background-position:center;
+}
+@media (min-width:900px){
+  .login-visual{display:block;}
+}
+.login-panel-wrap{
+  flex:0 0 auto;
+  width:100%;
+  min-width:0;
+  display:flex;
   align-items:center;
   justify-content:center;
-  padding:32px;
-  background:radial-gradient(circle at 20% 0%, #F0FFF7 0%, rgba(240,255,247,0) 45%),
-             radial-gradient(circle at 100% 10%, #FFF6EA 0%, rgba(255,246,234,0) 50%),
-             #FDFEFF;
+  padding:28px 20px;
+  background:radial-gradient(circle at 100% 0%, #FFF6EA 0%, rgba(255,246,234,0) 55%), #FDFEFF;
+}
+@media (min-width:900px){
+  .login-panel-wrap{width:480px;}
 }
 .login-card{
-  max-width:440px;
+  max-width:400px;
   width:100%;
   color:var(--login-text, #4B5A63);
   background:#FFFFFF;
-  border:2px solid #E7893A;
+  border:1.5px solid #F1DFC2;
   border-radius:22px;
-  padding:38px 34px 32px;
-  box-shadow:0 18px 40px -18px rgba(196,110,20,0.28), 0 2px 10px rgba(15,23,42,0.04);
+  padding:32px 28px 26px;
+  box-shadow:0 18px 40px -18px rgba(196,110,20,0.22), 0 2px 10px rgba(15,23,42,0.04);
   text-align:center;
 }
 .login-logo-row{
@@ -467,7 +485,8 @@ input,select,textarea{font-family:inherit;}
   padding:20px 10px;
 }
 .nav-item{
-  display:block;width:100%;text-align:left;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  width:100%;text-align:left;
   background:none;border:none;
   padding:10px 16px;margin-bottom:2px;
   font-family:'Inter', sans-serif;
@@ -475,6 +494,13 @@ input,select,textarea{font-family:inherit;}
   color:var(--text-soft);
   border-left:3px solid transparent;border-radius:0 8px 8px 0;
   transition:color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.nav-badge{
+  background:var(--seal-red);color:#fff;
+  font-family:'IBM Plex Mono', monospace;
+  font-size:10.5px;line-height:1;font-weight:700;
+  padding:2.5px 6px;border-radius:9px;
+  min-width:16px;text-align:center;flex-shrink:0;
 }
 .nav-item:hover{color:var(--ink);background:rgba(79,70,229,0.08);}
 .nav-item.active{
@@ -904,6 +930,8 @@ input[type="number"]{
 
     <!-- LOGIN VIEW -->
     <section id="login-view" class="login-view">
+      <div class="login-visual" aria-hidden="true"></div>
+      <div class="login-panel-wrap">
       <div class="login-card">
         <div class="login-logo-row">
           <div class="login-logo-mark">🎓</div>
@@ -1007,6 +1035,7 @@ input[type="number"]{
           <div id="reset-password-error" class="section-meta hidden" style="color:var(--seal-red);"></div>
           <button id="reset-password-submit-btn" type="submit" class="btn" style="margin-top:4px;">Set New Password</button>
         </form>
+      </div>
       </div>
     </section>
 
@@ -2682,17 +2711,29 @@ function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.rando
    few natural fields (subject code, roll no, email, etc) behind a
    prefix — e.g. bizId('CRS', ['CSE301','A']) -> 'CRS-CSE301-A' — and
    only falls back to the old random uid() when there's genuinely no
-   natural field to build from. `existingIds` is whatever array of ids
-   the new row would collide with; a numeric suffix is added until the
-   candidate is unique. */
+   natural field to build from. A short random suffix is always appended
+   (not a sequential counter) so two clients/functions building an id for
+   the same natural key at the same time don't compute the same id —
+   `existingIds`, if passed, is only a local best-effort re-roll and is
+   NOT a substitute for the DB's own primary key uniqueness check. */
 function slugId(v){ return String(v||'').toUpperCase().replace(/[^A-Z0-9]+/g,'').slice(0,24); }
 function bizId(prefix, parts, existingIds){
   const base = (parts||[]).filter(p=>p!==null && p!==undefined && p!=='').map(slugId).join('-');
   if(!base) return uid(prefix.toLowerCase());
+  // NOTE: existingIds is only ever this client's in-memory state, never the
+  // real Supabase table. It can't see rows another user/tab inserted, or
+  // rows a server-side function (e.g. check-overdue-deadlines) inserted —
+  // so checking against it can't actually guarantee uniqueness against the
+  // DB's primary key, and was producing duplicate-key save failures once
+  // there were multiple real writers. A short random suffix makes
+  // collisions astronomically unlikely without depending on stale local
+  // state; existingIds is kept as a best-effort extra check, not the
+  // guarantee.
   const taken = new Set(existingIds||[]);
-  let candidate = prefix + '-' + base;
-  let n = 2;
-  while(taken.has(candidate)){ candidate = prefix + '-' + base + '-' + n; n++; }
+  let candidate;
+  do {
+    candidate = prefix + '-' + base + '-' + Math.random().toString(36).slice(2,7).toUpperCase();
+  } while(taken.has(candidate));
   return candidate;
 }
 
@@ -2780,7 +2821,7 @@ function seedState(){
     { id:'note_seed2', forUserId:'cc1', courseId:'c1', title:"You're now Course Coordinator", body:"Dr. Suresh Menon assigned you as Course Coordinator for CS301 — Data Structures. This role is active immediately.", ts:t0, read:true },
   ];
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:{ academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null }, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:{ academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null, examPeriodLabel:null }, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
 }
 
 /* ---------------- Supabase-backed persistence ----------------
@@ -2957,7 +2998,7 @@ async function fetchStateFromSupabase(){
   // this default is never applied again, so an intentional "Close this
   // cycle now" is respected as the deliberate all-off state it is.
   if(currentTermTest === null && !ctRow){
-    currentTermTest = { academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null };
+    currentTermTest = { academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null, examPeriodLabel:null };
   }
 
   // Admin-fixed marks-entry windows for Practical Internal Test and SEE
@@ -4975,14 +5016,12 @@ const App = {
     syncCourse(course);
     // Notify whoever now owns the ci stage for this item — the uploaded
     // roster-assignment faculty if this item has an override, otherwise the
-    // section's ordinary registered CI. Title/body match the HOD-approve
-    // notification's style, explicitly naming who sent it back and why —
-    // this is the counterpart to forwardItem's "approved by the HOD" email.
-    const title = `${course.code} — ${label} has been sent back to CI for marks correction`;
-    const body = `${course.code} — ${label} has been sent back to CI for marks correction by the HOD.\n\nRemark: "${remark.trim()}"`;
+    // section's ordinary registered CI.
     const overrides = getItemRosterOverrides(course, itemKey);
-    if(overrides.length) overrides.forEach(o=>this.notifyUser(o.facultyUserId, course, title, body, true, null, itemEntryLink(course, itemKey)));
-    else { const ciUser = getCourseCIUser(courseId); if(ciUser) this.notifyUser(ciUser.id, course, title, body, true, null, itemEntryLink(course, itemKey)); }
+    const roleLabel = actor.systemRole==='ADMIN' ? 'Admin' : 'HOD';
+    const sentBackMsg = `${course.code} — ${label} was sent back by ${roleLabel} : Remark by ${roleLabel} is "${remark.trim()}"`;
+    if(overrides.length) overrides.forEach(o=>this.notifyUser(o.facultyUserId, course, `${label} sent back`, sentBackMsg, true, null, itemEntryLink(course, itemKey)));
+    else { const ciUser = getCourseCIUser(courseId); if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, sentBackMsg, true, null, itemEntryLink(course, itemKey)); }
     toast(`${label} sent back to the Course Instructor.`, 'err');
     renderContent();
   },
@@ -5209,11 +5248,13 @@ const App = {
     const rmk = (remark||'').trim();
     this.logHistory(course, `Sent back "${groupLabel}" marks for correction`, rmk);
     const ciUser = getCourseCIUser(courseId);
-    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} sent back`, `${actor.name} sent the "${groupLabel}" marks for ${course.code} — ${course.name} back for correction.${rmk?` Remark: "${rmk}"`:''}`, true, null, groupEntryLink(course));
+    const groupRoleLabel = actor.systemRole==='ADMIN' ? 'Admin' : 'HOD';
+    if(ciUser) this.notifyUser(ciUser.id, course, `${course.code} — ${groupLabel} sent back`, `${course.code} — ${groupLabel} was sent back by ${groupRoleLabel}${rmk?` : Remark by ${groupRoleLabel} is "${rmk}"`:''}`, true, null, groupEntryLink(course));
     toast(`"${groupLabel}" sent back for correction.`, 'err');
     renderContent();
   },
   hodSendBack(courseId){
+    const actor = this.currentUser();
     const course = this.getCourse(courseId);
     const remarkEl = document.getElementById('sendback-remark');
     const remark = remarkEl ? remarkEl.value.trim() : '';
@@ -5227,7 +5268,9 @@ const App = {
     this.logHistory(course, 'Sent back for correction', remark);
     const ciUser = getCourseCIUser(courseId);
     const ccUser = getCourseCCUser(courseId);
-    [ciUser, ccUser].filter(Boolean).forEach(u => this.notifyUser(u.id, course, `${course.code} sent back for correction`, remark, true));
+    const sendBackRoleLabel = actor.systemRole==='ADMIN' ? 'Admin' : 'HOD';
+    const sendBackMsg = `${course.code} was sent back by ${sendBackRoleLabel} : Remark by ${sendBackRoleLabel} is "${remark}"`;
+    [ciUser, ccUser].filter(Boolean).forEach(u => this.notifyUser(u.id, course, `${course.code} sent back for correction`, sendBackMsg, true));
     toast(`${course.code} sent back to the instructor.`, 'err');
     closeModal();
     this.navigate('hod-list');
@@ -5243,14 +5286,14 @@ const App = {
      startDate/endDate (both optional) fence the cycle to a time window —
      once "now" is past endDate, entry locks automatically even if nobody
      explicitly closes the cycle. ---------- */
-  setTermTest(academicYear, semester, cycle, startDate=null, endDate=null){
+  setTermTest(academicYear, semester, cycle, startDate=null, endDate=null, examPeriodLabel=null){
     const actor = this.currentUser();
     if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can fix the examination cycle.', 'err'); return; }
     if(!ACADEMIC_YEARS.includes(academicYear)){ toast('Choose an Academic Year.', 'err'); return; }
     if(!SEMESTER_LABELS.includes(semester)){ toast('Choose a Semester.', 'err'); return; }
     if(!TERM_TEST_LABELS[cycle]){ toast('Choose a valid term test.', 'err'); return; }
     if(startDate && endDate && new Date(startDate).getTime() > new Date(endDate).getTime()){ toast('The end date/time must be after the start date/time.', 'err'); return; }
-    const value = { academicYear, semester, cycle, startDate: startDate||null, endDate: endDate||null };
+    const value = { academicYear, semester, cycle, startDate: startDate||null, endDate: endDate||null, examPeriodLabel: (examPeriodLabel||'').trim() || null };
     this.state.currentTermTest = value;
     syncAppSetting('current_term_test', value);
     this.state.termTestHistory = this.state.termTestHistory || [];
@@ -6364,11 +6407,52 @@ function getNavForUser(user){
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
 }
+/* How many items are actually actionable right now for a given nav
+   destination, shown as a small red count badge next to the label — the
+   same visual language as the bell's unread count. Deliberately reuses
+   the exact filter each destination page already applies to decide what's
+   "pending" (hodDashboardSummaryHtml's pendingApproval count, EA's
+   status==='coordinated' queue, myPendingItemActions() for CI/CC) rather
+   than a separate parallel computation, so the badge number can never say
+   something different from what the page shows once you click into it. */
+function navBadgeCount(viewKey, user){
+  if(viewKey==='hod-list'){
+    const all = App.state.courses.filter(c=>c.branch);
+    let n = all.filter(c=>c.status==='verified').length;
+    all.filter(c=>c.evalType).forEach(c=>{
+      const template = getCourseTemplate(c);
+      ['tt1','tt2'].forEach(key=>{
+        if(!itemFlowApplicable(template, key)) return;
+        const ia = App.itemApproval(c.id, key);
+        if(ia && ia.stage==='hod') n++;
+      });
+    });
+    all.forEach(c=>{
+      if(c.ttLabApproval==='pending') n++;
+      if(c.labExternalApproval==='pending') n++;
+    });
+    return n;
+  }
+  if(viewKey==='ea-list'){
+    return App.state.courses.filter(c=>c.branch && c.status==='coordinated').length;
+  }
+  if(viewKey==='ci-pending'){
+    return myPendingItemActions(user).filter(a=>a.role==='ci').length;
+  }
+  if(viewKey==='cc-list'){
+    return myPendingItemActions(user).filter(a=>a.role==='cc').length;
+  }
+  return 0;
+}
 function renderSidebar(){
   const user = App.currentUser();
   const nav = getNavForUser(user);
   const sb = document.getElementById('sidebar');
-  sb.innerHTML = nav.map(n=>`<button class="nav-item ${App.ui.view===n.v?'active':''}" onclick="App.navigate('${n.v}')">${n.label}</button>`).join('');
+  sb.innerHTML = nav.map(n=>{
+    const count = navBadgeCount(n.v, user);
+    const badge = count>0 ? `<span class="nav-badge">${count>99?'99+':count}</span>` : '';
+    return `<button class="nav-item ${App.ui.view===n.v?'active':''}" onclick="App.navigate('${n.v}')"><span>${n.label}</span>${badge}</button>`;
+  }).join('');
 }
 // Routes that read full course.students (marks/roster), not just the
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
@@ -6402,6 +6486,7 @@ function scheduleRenderContent(){
   setTimeout(()=>{ _renderContentQueued = false; renderContent(); }, 0);
 }
 function renderContent(){
+  renderSidebar();
   const user = App.currentUser();
   const nav = getNavForUser(user);
   let view = App.ui.view || (nav[0] ? nav[0].v : 'faculty-empty');
@@ -10059,6 +10144,21 @@ function renderHODReview(params){
         </div>
       </div>` : ''}
     ${course.status==='approved' && course.editUnlocked ? `<div class="card" style="border-left:3px solid var(--brass);"><div class="section-title" style="font-size:14px;">Unlocked for correction</div><p style="margin:8px 0 0;color:var(--text-soft);">The instructor is currently editing this record. It's still shown as Approved above and will re-lock once they finish.</p></div>` : ''}
+    ${(()=>{
+      const template = getCourseTemplate(course);
+      const ttCycles = ['TT1','TT2'].filter(cyc => termTestComponentKey(template, cyc) && isTTForwarded(course, cyc));
+      if(!ttCycles.length) return '';
+      return `<div class="card">
+        <div class="section-title" style="font-size:14px;">Award List</div>
+        <p class="section-meta" style="margin:4px 0 10px;">Official Name/Roll No/Total/Scaled sheet, ready for the Examination Branch — same document CI and CC can download from the marks-entry page.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;">
+          ${ttCycles.map(cyc => `
+            <button class="btn btn-outline btn-sm" onclick="exportTTAwardListPdf('${course.id}','${cyc}')">⬇ ${escapeHtml(TERM_TEST_LABELS[cyc]||cyc)} PDF</button>
+            <button class="btn btn-outline btn-sm" onclick="exportTTAwardListXlsx('${course.id}','${cyc}')">⬇ ${escapeHtml(TERM_TEST_LABELS[cyc]||cyc)} XLSX</button>
+          `).join('')}
+        </div>
+      </div>`;
+    })()}
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
         <div class="section-title" style="font-size:14px;">Marks</div>
@@ -10423,10 +10523,14 @@ function renderHODTermTest(){
           <label>Closes <span style="text-transform:none;">(optional)</span></label>
           <input type="datetime-local" id="tt-end-input" value="${curEnd}">
         </div>
+        <div class="config-field" style="grid-column:1/-1;">
+          <label>Examination period <span style="text-transform:none;">(shown on the Award List document header — e.g. "August/September 2026")</span></label>
+          <input type="text" id="tt-period-input" placeholder="e.g. August/September 2026" value="${escapeHtml(current?.examPeriodLabel || '')}">
+        </div>
       </div>
       <p class="section-meta" style="margin-top:8px;">Leave Opens/Closes blank for no time restriction — the cycle then stays open until you switch or close it manually. Once Closes has passed, every Course Instructor's marks-entry table for that cycle turns read-only, no manual step needed.</p>
       <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
-        <button class="btn" onclick="App.setTermTest(document.getElementById('tt-ay-select').value, document.getElementById('tt-sem-select').value, document.getElementById('tt-select').value, document.getElementById('tt-start-input').value||null, document.getElementById('tt-end-input').value||null)">Fix &amp; Send to CC</button>
+        <button class="btn" onclick="App.setTermTest(document.getElementById('tt-ay-select').value, document.getElementById('tt-sem-select').value, document.getElementById('tt-select').value, document.getElementById('tt-start-input').value||null, document.getElementById('tt-end-input').value||null, document.getElementById('tt-period-input').value||null)">Fix &amp; Send to CC</button>
         ${current && curCycle ? `<button class="btn btn-red" onclick="if(confirm('Close ${escapeHtml(TERM_TEST_LABELS[curCycle])} now? Marks entry for it will lock immediately everywhere.')) App.closeTermTestCycle()">Close this cycle now</button>` : ''}
       </div>
     </div>
@@ -10770,6 +10874,153 @@ async function exportTTXlsx(courseId, cycle){
   }
 }
 window.exportTTXlsx = exportTTXlsx;
+
+/* ---------- Term Test Award List (PDF + XLSX) ----------
+   A separate, simpler export from the detailed Part A/Part B breakdown
+   above: just S.No / Student Name / Roll No / Total Marks / Scaled Marks,
+   framed with the official award-list header (course/subject/faculty/
+   section/branch + the examination period fixed by the Administrator)
+   and a four-signature footer (Course Instructor → Course Coordinator →
+   HOD → Dean SOE, left to right). Portrait, matching the physical
+   award-list format handed to the Examination Branch — as opposed to the
+   detailed export above, which stays landscape since it exists to show
+   every question's marks on screen. Reuses ttExportTableData so the
+   Total/Scaled figures (and the "Absent" handling) can't drift from the
+   detailed export's numbers. This single pair of functions is what's
+   wired to the Award List buttons below — since this page is shared by
+   the CI, CC, HOD and Admin/EA alike, they automatically get the exact
+   same header/footer template rather than each role needing its own. */
+function ttAwardListTableData(course, cycle){
+  const { rows, cycleLabel, comp } = ttExportTableData(course, cycle);
+  const header = ['S.No', 'Student Name', 'Roll No', `Total Marks (/${comp.rawMax})`, `Scaled Marks (/${comp.scaledMax})`];
+  const awardRows = rows.map((r, i) => [i + 1, r[0], r[1], r[r.length - 2], r[r.length - 1]]);
+  return { header, rows: awardRows, cycleLabel, comp };
+}
+/* "Term Test 1 Award List for August/September 2026 Examinations" — the
+   exam-period phrase is fixed once by the Administrator (Term Test Cycle
+   page) rather than guessed from a date, since institutions phrase this
+   as a fixed calendar window ("August/September 2026") that doesn't map
+   cleanly onto any single stored date. Falls back gracefully if unset. */
+function awardListTitle(cycleLabel){
+  const period = App.state.currentTermTest?.examPeriodLabel;
+  return period ? `${cycleLabel} Award List for ${period} Examinations` : `${cycleLabel} Award List`;
+}
+function awardListMetaRows(course){
+  const ciUser = getCourseCIUser(course.id);
+  return [
+    ['Course Code', course.code || '—', 'Section', course.section || '—'],
+    ['Subject Name', course.name || '—', 'Branch', course.branch || '—'],
+    ['Faculty Name', ciUser ? ciUser.name : 'Unassigned', '', ''],
+  ];
+}
+/* Four signature blocks, left to right, at the bottom of the last page —
+   Course Instructor, Course Coordinator, HOD, then Dean SOE. Drawn as a
+   line with a role label underneath, matching how a physical award list
+   is signed off by hand once printed. */
+function drawAwardListSignatureFooter(doc){
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const labels = ['Course Instructor', 'Course Coordinator', 'HOD', 'Dean, SOE'];
+  const margin = 36;
+  const usable = pageWidth - margin * 2;
+  const colWidth = usable / labels.length;
+  const lineY = pageHeight - 46;
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.75);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  labels.forEach((label, i) => {
+    const colStart = margin + i * colWidth;
+    const lineStart = colStart + 8;
+    const lineEnd = colStart + colWidth - 8;
+    doc.line(lineStart, lineY, lineEnd, lineY);
+    doc.text(label, (lineStart + lineEnd) / 2, lineY + 13, { align: 'center' });
+  });
+}
+async function exportTTAwardListPdf(courseId, cycle){
+  const course = await App.ensureCourseStudentsLoaded(courseId);
+  if(!isTTForwarded(course, cycle)){ toast('Marks haven\'t been forwarded to the Course Coordinator yet.', 'err'); return; }
+  try{
+    await ensureJsPDFLoaded();
+  }catch(e){
+    toast('Could not load the PDF writer — check your connection and try again.', 'err');
+    return;
+  }
+  const { header, rows, cycleLabel } = ttAwardListTableData(course, cycle);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(awardListTitle(cycleLabel), pageWidth / 2, 34, { align: 'center' });
+
+  doc.autoTable({
+    body: awardListMetaRows(course),
+    startY: 48,
+    theme: 'plain',
+    styles: { fontSize: 9.5, cellPadding: 2.5, textColor: [0, 0, 0] },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 90 },
+      1: { cellWidth: pageWidth / 2 - 90 - 36 },
+      2: { fontStyle: 'bold', cellWidth: 70 },
+      3: { cellWidth: pageWidth / 2 - 70 - 36 },
+    },
+    margin: { left: 36, right: 36 },
+  });
+
+  doc.autoTable({
+    head: [header],
+    body: rows.map(r => r.map(v => String(v))),
+    startY: doc.lastAutoTable.finalY + 10,
+    theme: 'grid',
+    styles: { fontSize: 9, halign: 'center', cellPadding: 4, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
+    headStyles: { fillColor: [238, 238, 238], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9 },
+    columnStyles: { 0: { cellWidth: 34 }, 1: { halign: 'left' } },
+    margin: { left: 36, right: 36, bottom: 70 },
+    didDrawPage: () => drawAwardListSignatureFooter(doc),
+  });
+  // In case autoTable didn't fire didDrawPage for a single-page table on
+  // some versions, make sure the footer is still drawn once at the end.
+  if(doc.internal.getNumberOfPages() === 1){ drawAwardListSignatureFooter(doc); }
+
+  const fileName = `${course.code}_Section${course.section}_${cycle}_AwardList.pdf`;
+  doc.save(fileName);
+}
+window.exportTTAwardListPdf = exportTTAwardListPdf;
+async function exportTTAwardListXlsx(courseId, cycle){
+  const course = await App.ensureCourseStudentsLoaded(courseId);
+  if(!isTTForwarded(course, cycle)){ toast('Marks haven\'t been forwarded to the Course Coordinator yet.', 'err'); return; }
+  try{
+    await ensureXLSXLoaded();
+  }catch(e){
+    toast('Could not load the spreadsheet writer — check your connection and try again.', 'err');
+    return;
+  }
+  const { header, rows, cycleLabel } = ttAwardListTableData(course, cycle);
+  const title = [[awardListTitle(cycleLabel)]];
+  const meta = awardListMetaRows(course);
+  const signatureRow = ['Course Instructor', 'Course Coordinator', 'HOD', 'Dean, SOE'];
+  const aoa = [...title, [], ...meta, [], header, ...rows, [], [], signatureRow];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }];
+  ws['!cols'] = header.map((_, i) => ({ wch: i === 1 ? 26 : 16 }));
+  const wb = XLSX.utils.book_new();
+  const sheetName = `${cycleLabel || 'Award List'}`.replace(/[\\/?*[\]:]/g, '').slice(0, 31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fileName = `${course.code}_Section${course.section}_${cycle}_AwardList.xlsx`;
+  try{
+    XLSX.writeFile(wb, fileName);
+  }catch(e){
+    const blob = new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/octet-stream" });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+}
+window.exportTTAwardListXlsx = exportTTAwardListXlsx;
 
 /* ================= FACULTY DIRECTORY (uploaded by EA, branch-wise; HOD views read-only) ================= */
 function facultyDirectoryEntries(){
@@ -11801,7 +12052,9 @@ function renderCITermTestEntry(params){
         </div>
         ${forwarded ? `
         <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTPdf('${course.id}','${cycle}')" title="Download the entered ${escapeHtml(cycleLabel)} marks as a PDF">⬇ PDF</button>
-        <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTXlsx('${course.id}','${cycle}')" title="Download the entered ${escapeHtml(cycleLabel)} marks as an Excel file">⬇ XLSX</button>` : ''}
+        <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTXlsx('${course.id}','${cycle}')" title="Download the entered ${escapeHtml(cycleLabel)} marks as an Excel file">⬇ XLSX</button>
+        <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTAwardListPdf('${course.id}','${cycle}')" title="Download the official Award List (Name, Roll No, Total, Scaled) as a PDF">⬇ Award List PDF</button>
+        <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="exportTTAwardListXlsx('${course.id}','${cycle}')" title="Download the official Award List (Name, Roll No, Total, Scaled) as an Excel file">⬇ Award List XLSX</button>` : ''}
         <button class="btn btn-outline btn-sm no-print" style="flex-shrink:0;" onclick="toggleTTFullscreen()">
           <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-label">✕ Exit Full Screen</span>
         </button>
