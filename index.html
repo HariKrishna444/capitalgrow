@@ -4975,10 +4975,14 @@ const App = {
     syncCourse(course);
     // Notify whoever now owns the ci stage for this item — the uploaded
     // roster-assignment faculty if this item has an override, otherwise the
-    // section's ordinary registered CI.
+    // section's ordinary registered CI. Title/body match the HOD-approve
+    // notification's style, explicitly naming who sent it back and why —
+    // this is the counterpart to forwardItem's "approved by the HOD" email.
+    const title = `${course.code} — ${label} has been sent back to CI for marks correction`;
+    const body = `${course.code} — ${label} has been sent back to CI for marks correction by the HOD.\n\nRemark: "${remark.trim()}"`;
     const overrides = getItemRosterOverrides(course, itemKey);
-    if(overrides.length) overrides.forEach(o=>this.notifyUser(o.facultyUserId, course, `${label} sent back`, `${course.code} — ${label} was sent back: ${remark.trim()}`, true, null, itemEntryLink(course, itemKey)));
-    else { const ciUser = getCourseCIUser(courseId); if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, `${course.code} — ${label} was sent back: ${remark.trim()}`, true, null, itemEntryLink(course, itemKey)); }
+    if(overrides.length) overrides.forEach(o=>this.notifyUser(o.facultyUserId, course, title, body, true, null, itemEntryLink(course, itemKey)));
+    else { const ciUser = getCourseCIUser(courseId); if(ciUser) this.notifyUser(ciUser.id, course, title, body, true, null, itemEntryLink(course, itemKey)); }
     toast(`${label} sent back to the Course Instructor.`, 'err');
     renderContent();
   },
