@@ -908,7 +908,7 @@ input[type="number"]{
           <div class="login-logo-mark">🎓</div>
         </div>
         <h1 style="margin-top:16px;">Continuous Internal<br>Evaluation <span class="login-accent">(CIE)</span></h1>
-        <div class="login-tagline">Faculty Portal</div>        
+        <div class="login-tagline">Faculty Portal</div>
         <form id="login-form" class="login-form" style="margin-top:26px;display:flex;flex-direction:column;gap:14px;" onsubmit="return false;">
           <div class="config-field">
             <label style="color:var(--text-soft);">Email</label>
@@ -929,7 +929,7 @@ input[type="number"]{
           <div class="login-divider">new here?</div>
           <button type="button" class="pill-btn" onclick="showForgotPasswordForm()">Forgot password?</button>
           <button type="button" class="pill-btn" onclick="showCreateAccountForm()">🆕 First time signing in? Set up your password</button>
-          <p class="section-meta" style="color:var(--text-soft);margin-top:2px;">No @suh.edu.in email at all? Contact your System Administrator.</p>
+          <p class="section-meta" style="color:var(--text-soft);margin-top:2px;">No @suh.edu.in email at all? Contact your Examination Branch (CIE).</p>
         </form>
 
         <!-- FIRST-TIME SETUP: for an @suh.edu.in faculty (or other staff)
@@ -1082,6 +1082,23 @@ const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Time
 // assignment, etc., but deliberately left out of
 // REGULATION_BRANCHES/SECTION_RANGES/BATCH_BRANCHES below since they don't
 // have their own admitted student batches or section numbering.
+/* Canonical branch display order for any screen that lists sections from
+   more than one branch together — HOD's Pending Approval / Term Test /
+   Lab Internal / Lab External overviews, the EA queue, the Exam Branch
+   list, Admin's Roster Assignment, etc. Branches not in this list (the
+   non-CSE departments) sort after these five, alphabetically among
+   themselves; within the same branch, sections sort by section code. */
+const BRANCH_DISPLAY_ORDER = ['CSE','CSE-AIML','CSE-CYS','CSE-DSC','CSE-SAP'];
+function compareCoursesByBranch(a, b){
+  const ai = BRANCH_DISPLAY_ORDER.indexOf(a.branch||'');
+  const bi = BRANCH_DISPLAY_ORDER.indexOf(b.branch||'');
+  const aRank = ai===-1 ? BRANCH_DISPLAY_ORDER.length : ai;
+  const bRank = bi===-1 ? BRANCH_DISPLAY_ORDER.length : bi;
+  if(aRank!==bRank) return aRank - bRank;
+  if(aRank===BRANCH_DISPLAY_ORDER.length && a.branch!==b.branch) return String(a.branch||'').localeCompare(String(b.branch||''));
+  return String(a.section||'').localeCompare(String(b.section||''), undefined, {numeric:true, sensitivity:'base'});
+}
+function sortCoursesByBranch(courses){ return [...courses].sort(compareCoursesByBranch); }
 const BRANCH_LABELS = {
   CSE:'CSE — Computer Science',
   'CSE-SAP':'CSE-SAP — Systems & Applications',
@@ -3635,8 +3652,18 @@ function groupEntryLink(course){
    linkified, just without the button treatment. */
 function linkifyNotifBody(body){
   const escaped = escapeHtml(body||'');
-  const withButton = escaped.replace(/Login here:\s*(https?:\/\/[^\s]+)/g, (_, url) => `<a href="${url}" class="notif-link-btn" onclick="closeNotifPanel()">Login here →</a>`);
-  return withButton.replace(/(^|[^"])(https?:\/\/[^\s]+)/g, (m, pre, url) => `${pre}<a href="${url}" style="color:var(--brass);font-weight:600;text-decoration:underline;" onclick="closeNotifPanel()">${url}</a>`);
+  // Only ever linkify URLs on the app's own origin (window.location.origin —
+  // the same value buildAppLink() uses to construct every "Login here:"
+  // link in the first place) or the fixed production domain the deployed
+  // reminder Edge Function points at. Everything here is already
+  // HTML-escaped above regardless, so this was never exploitable as XSS —
+  // this is purely to stop a notification body from ever turning an
+  // arbitrary external URL into a clickable link (a phishing vector),
+  // should one ever end up in a notification's text.
+  const trustedOrigins = [window.location.origin, 'https://samagra-su.web.app'].map(o=>o.replace(/\/+$/,''));
+  const isTrusted = url => trustedOrigins.some(o => url.startsWith(o + '/') || url === o);
+  const withButton = escaped.replace(/Login here:\s*(https?:\/\/[^\s]+)/g, (m, url) => isTrusted(url) ? `<a href="${url}" class="notif-link-btn" onclick="closeNotifPanel()">Login here →</a>` : m);
+  return withButton.replace(/(^|[^"])(https?:\/\/[^\s]+)/g, (m, pre, url) => isTrusted(url) ? `${pre}<a href="${url}" style="color:var(--brass);font-weight:600;text-decoration:underline;" onclick="closeNotifPanel()">${url}</a>` : m);
 }
 // Clicking a #/view?params deep link (from an email or the bell dropdown)
 // while already signed in should navigate in place, not just move the
@@ -5017,7 +5044,7 @@ const App = {
     newlyAdded.forEach(s=>syncNewStudent(course.id, s));
 
     syncCourse(course);
-    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data`, true, null, itemEntryLink(course, itemKey));
+    this.notifyUser(faculty.id, course, `${ITEM_FLOW_LABELS[itemKey]} roster assigned to you`, `${course.code} — you've been assigned ${rollNos.length} student${rollNos.length===1?'':'s'} for ${ITEM_FLOW_LABELS[itemKey]} Evaluation, irrespective of mapping from course registration data `, true, null, itemEntryLink(course, itemKey));
     toast(`${ITEM_FLOW_LABELS[itemKey]} — assigned ${rollNos.length} student${rollNos.length===1?'':'s'} to ${faculty.name}${newlyAdded.length ? ` (${newlyAdded.length} new to the roster)` : ''}.`, 'ok');
     this.navigate('admin-roster-assignment', { courseId, itemKey });
   },
@@ -5905,7 +5932,7 @@ const App = {
     let evalType = subj ? subj.abbr : (isPracticalCompanion ? 'EP' : null);
     const sec = section==='—' ? '' : section;
 
-    let course = this.state.courses.find(c=>normalizeCode(c.code)===normalizeCode(code) && c.section===sec && c.branch===branch);
+    let course = this.state.courses.find(c=>norm(c.name)===norm(subject) && c.section===sec && c.branch===branch && (c.semester||'—')===semester);
     const isNewCourse = !course;
     if(!course){
       course = {
@@ -5919,6 +5946,14 @@ const App = {
     } else {
       if(!course.evalType && evalType) course.evalType = evalType;
       if(!course.semester && semester!=='—') course.semester = semester;
+      // Heals an earlier synthesized "-SHELL"-style code (minted back when
+      // this subject had no "Courses Applicable" entry yet) to the real
+      // code, now that one exists. Reusing this same row above by name —
+      // instead of matching on the old code, which would no longer find
+      // it — is what stops that drift from spawning a duplicate row (and
+      // a duplicate "coordination" dropdown entry) every time the master
+      // list catches up after the fact.
+      if(subj && course.code !== subj.code) course.code = subj.code;
     }
     const { error: courseErr } = await syncCourse(course);
     if(courseErr){ if(isNewCourse) this.state.courses = this.state.courses.filter(c=>c.id!==course.id); return false; }
@@ -6847,6 +6882,31 @@ function legacyScriptUploads(course){
   Object.keys(SCRIPT_KINDS).forEach(k=>{ if(su[k]) flat[k] = su[k]; });
   return flat;
 }
+/* Client-side validation only — this is a usability/defense-in-depth
+   layer (catches mistakes and casual abuse immediately, with a clear
+   message), NOT the real security boundary. The actual boundary has to
+   be Firebase Storage rules enforcing the same content-type/size limits
+   server-side, since anyone can call the Storage API directly and skip
+   this file entirely. Scanned answer scripts are realistically PDFs or
+   photos of paper — jpeg/png/webp/pdf, capped at 20MB. */
+const ANSWER_SCRIPT_MAX_BYTES = 20 * 1024 * 1024;
+const ANSWER_SCRIPT_ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+const ANSWER_SCRIPT_ALLOWED_EXT = /\.(pdf|jpe?g|png|webp)$/i;
+function validateAnswerScriptFile(file){
+  if(file.size > ANSWER_SCRIPT_MAX_BYTES) return `"${file.name}" is ${(file.size/1024/1024).toFixed(1)}MB — the limit is 20MB.`;
+  const typeOk = ANSWER_SCRIPT_ALLOWED_TYPES.includes(file.type) || (!file.type && ANSWER_SCRIPT_ALLOWED_EXT.test(file.name));
+  if(!typeOk || !ANSWER_SCRIPT_ALLOWED_EXT.test(file.name)) return `"${file.name}" isn't a PDF or image (jpg/png/webp) — that's all this accepts.`;
+  return null;
+}
+// Keeps only a safe basename for the Storage path — file.name is
+// attacker-controlled text (it's just whatever the browser reports from
+// the picked file) and was previously spliced straight into the path
+// unsanitized; a name containing "/" or ".." could otherwise land the
+// upload somewhere outside answer-scripts/<courseId>/ entirely.
+function sanitizeUploadFilename(name){
+  const base = String(name||'file').split(/[\\/]/).pop();
+  return base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120) || 'file';
+}
 async function uploadAnswerScriptForStudent(courseId, cycle, kind, studentId, inputEl){
   const file = inputEl && inputEl.files && inputEl.files[0];
   if(!file) return;
@@ -6854,11 +6914,19 @@ async function uploadAnswerScriptForStudent(courseId, cycle, kind, studentId, in
   if(!course) return;
   const student = (course.students||[]).find(s=>s.id===studentId);
   const statusEl = document.getElementById(`script-status-${courseId}-${cycle}-${studentId}`);
+  const validationError = validateAnswerScriptFile(file);
+  if(validationError){
+    if(statusEl) statusEl.textContent = 'Rejected.';
+    toast(validationError, 'err');
+    inputEl.value = '';
+    return;
+  }
   if(statusEl) statusEl.textContent = 'Uploading…';
   try{
     const storage = fbStorage();
     if(!storage) return;
-    const path = `answer-scripts/${course.id}/${cycle}-${kind}-${Date.now()}-${file.name}`;
+    const safeName = sanitizeUploadFilename(file.name);
+    const path = `answer-scripts/${course.id}/${cycle}-${kind}-${Date.now()}-${safeName}`;
     const ref = storage.ref().child(path);
     await ref.put(file);
     const url = await ref.getDownloadURL();
@@ -7662,7 +7730,15 @@ function courseRegGroupsHtml(){
               const matchedSubj = (App.state.subjects||[]).find(s=>norm(s.name)===norm(subjectKey));
               const matchedCode = matchedSubj ? matchedSubj.code : bizId('SUBJ',[subjectKey],[]).replace(/^SUBJ-/,'');
               const matchedSec = secKey==='—' ? '' : secKey;
-              const matchedCourse = (App.state.courses||[]).find(c=>normalizeCode(c.code)===normalizeCode(matchedCode) && c.section===matchedSec && c.branch===branchKey);
+              // Matched by subject NAME, not code: the code for a subject
+              // with no "Courses Applicable" entry yet is synthesized from
+              // its name, and once that entry gets added later, the real
+              // code differs from the synthesized one — matching on code
+              // would then miss sections already activated under the old
+              // synthesized code and wrongly offer to "activate" them
+              // again as brand-new duplicates. Name is the one thing that
+              // stays stable across that drift.
+              const matchedCourse = (App.state.courses||[]).find(c=>norm(c.name)===norm(subjectKey) && c.section===matchedSec && c.branch===branchKey && (c.semester||'—')===semKey);
               return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;flex-wrap:wrap;gap:8px;">
                 <div>
                   <div class="section-title" style="font-size:13.5px;">${secKey==='—'?'No section code':'Section '+escapeHtml(secKey)}</div>
@@ -9512,10 +9588,10 @@ function renderAdminRosterAssignment(params){
   const courseId = params && params.courseId;
   if(!courseId){
     const q = rosterAssignQuery.trim().toLowerCase();
-    const courses = App.state.courses.filter(c=>c.evalType).filter(c=>{
+    const courses = sortCoursesByBranch(App.state.courses.filter(c=>c.evalType).filter(c=>{
       if(!q) return true;
       return [c.name,c.code,c.section,c.branch].filter(Boolean).some(v=>String(v).toLowerCase().includes(q));
-    }).sort((a,b)=>a.code.localeCompare(b.code));
+    }));
     wrap.innerHTML = `
       <div class="page-head">
         <div class="page-eyebrow">Administrator</div>
@@ -9801,7 +9877,7 @@ function hodDashboardSummaryHtml(all){
     </div>`;
 }
 function renderHODList(){
-  const all = App.state.courses.filter(c=>c.branch);
+  const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
     : hodListFilter==='pending' ? all.filter(c=>c.status!=='approved')
     : all;
@@ -9888,7 +9964,7 @@ function hodOverviewRow(course, comps, statusField, noCompMsg){
    group with Lab Internal, so approving/sending back happens there, not
    per-tab). */
 function renderHODTermTestOverview(){
-  const all = App.state.courses.filter(c=>c.branch);
+  const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -9904,7 +9980,7 @@ function renderHODTermTestOverview(){
 /* "Lab Internals" HOD overview — same idea, scoped to the Lab Internal
    component (still part of the same ttLabApproval group as Term Test). */
 function renderHODLabInternalOverview(){
-  const all = App.state.courses.filter(c=>c.branch);
+  const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -9922,7 +9998,7 @@ function renderHODLabInternalOverview(){
 }
 /* "Lab Externals" HOD overview — its own separate approval group. */
 function renderHODLabExternalOverview(){
-  const all = App.state.courses.filter(c=>c.branch);
+  const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -10430,7 +10506,7 @@ window.updateHODAuditList = updateHODAuditList;
 
 /* ================= EA VIEWS ================= */
 function renderEAList(){
-  const list = App.state.courses.filter(c=>c.branch);
+  const list = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -10490,7 +10566,7 @@ function renderEAReview(params){
 
 /* ================= EXAM BRANCH VIEWS ================= */
 function renderExamList(){
-  const approved = App.state.courses.filter(c=>c.status==='approved');
+  const approved = sortCoursesByBranch(App.state.courses.filter(c=>c.status==='approved'));
   const pending = approved.filter(c=>!c.ebPublished);
   const published = approved.filter(c=>c.ebPublished);
   const wrap = el('<div></div>');
@@ -12315,8 +12391,17 @@ function attendanceSummaryHtml(course){
 
 /* ================= FACULTY: CC VIEWS (dynamic role) ================= */
 function ccCoordinationOptionsHtml(ccCourses){
+  // Deduped by NAME, not code: a subject can end up with more than one
+  // underlying course row using a different code (see the fix notes in
+  // activateCourseRegistrationGroup) — deduping by code would then show
+  // one dropdown entry per code drift instead of the two a CC actually
+  // coordinates, one theory + one practical. Whichever row for that name
+  // is seen first just supplies the display code/id; assignment itself
+  // already resolves everything by name, not by which row got picked
+  // here.
+  const norm = s => String(s||'').trim().toLowerCase();
   const seen = {};
-  ccCourses.forEach(c=>{ if(!seen[c.code]) seen[c.code] = c; });
+  ccCourses.forEach(c=>{ const k = norm(c.name); if(!seen[k]) seen[k] = c; });
   return Object.values(seen).map(c=>`<option value="${c.id}" data-semester="${escapeHtml(c.semester||'')}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join('');
 }
 /* Course Instructor assignment for a Course Coordinator is driven entirely
@@ -12369,7 +12454,9 @@ function ccRegGroupsHtml(baseCourseId){
           const idx = ccAssignGroupIndex.length;
           ccAssignGroupIndex.push({ batch:batchKey, branch:branchKey, semester:semKey, subject:base.name, section:secKey });
           const matchedSec = secKey==='—' ? '' : secKey;
-          const matchedCourse = (App.state.courses||[]).find(c=>normalizeCode(c.code)===normalizeCode(base.code) && c.section===matchedSec && c.branch===branchKey);
+          // See the matching admin-side fix in courseRegGroupsHtml for why
+          // this is by name, not code.
+          const matchedCourse = (App.state.courses||[]).find(c=>norm(c.name)===norm(base.name) && c.section===matchedSec && c.branch===branchKey && (c.semester||'—')===semKey);
           const canAssign = instructors.length===1;
           html += `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:8px;margin-top:8px;flex-wrap:wrap;gap:8px;">
             <div>
@@ -12399,9 +12486,10 @@ function renderCCList(){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
   const wrap = el('<div></div>');
-  const seenCodes = {};
+  const norm = s => String(s||'').trim().toLowerCase();
+  const seenNames = {};
   const baseList = [];
-  ccCourses.forEach(c=>{ if(!seenCodes[c.code]){ seenCodes[c.code]=true; baseList.push(c); } });
+  ccCourses.forEach(c=>{ const k = norm(c.name); if(!seenNames[k]){ seenNames[k]=true; baseList.push(c); } });
   const initialBase = baseList[0] || null;
   const pendingCCActions = myPendingItemActions(user).filter(a=>a.role==='cc');
   wrap.innerHTML = `
