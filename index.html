@@ -3839,7 +3839,7 @@ const ROLE_ALLOWED_VIEWS = {
   EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
   SCRUTINY: ['scrutiny-list','ci-termtest-entry','ci-component-entry'],
-  FACULTY: ['ci-sections','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
+  FACULTY: ['ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
 };
 function isViewAllowedForRole(role, view){
   const allowed = ROLE_ALLOWED_VIEWS[role];
@@ -6399,7 +6399,7 @@ window.closeModal = closeModal;
    account never sees the switcher at all. */
 const FACULTY_ROLE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator' };
 const FACULTY_VIEW_ROLE = {
-  'ci-sections':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
+  'ci-sections':'ci', 'ci-evaluation':'ci', 'ci-class-progress':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
   'ci-component-entry':'ci', 'ci-section-view':'ci', 'ci-analytics':'ci', 'ci-termtest':'ci', 'ci-termtest-entry':'ci',
   'ci-labint':'ci', 'ci-labext':'ci',
   'cc-list':'cc', 'cc-roster':'cc', 'cc-review':'cc', 'cc-termtest-setup':'cc',
@@ -6407,7 +6407,13 @@ const FACULTY_VIEW_ROLE = {
 function getFacultyAvailableRoles(user){
   const { ccCourses, ciCourses } = getFacultyCourses(user.id);
   const roles = [];
-  if(ciCourses.length) roles.push('ci');
+  // A faculty member can also be handed a Roster Assignment slice of a
+  // Term Test / Practical Internal / SEE Practical item on a section
+  // they're not the registered Course Instructor of at all (see
+  // getItemRosterOverrides/myAssignedRosterItems) — that alone should
+  // still surface the "ci"-side nav (specifically "Evaluation") so the
+  // assignment isn't invisible to them.
+  if(ciCourses.length || myAssignedRosterItems(user.id).length) roles.push('ci');
   if(ccCourses.length) roles.push('cc');
   return roles;
 }
@@ -6625,6 +6631,7 @@ function getNavForUser(user){
   const nav = [];
   if(role==='ci'){
     nav.push({v:'ci-sections', label:'My Subjects'});
+    nav.push({v:'ci-evaluation', label:'Evaluation'});
     nav.push({v:'ci-pending', label:'Pending Approval'});
     nav.push({v:'ci-audit', label:'Audit Log'});
   } else if(role==='cc'){
@@ -6666,6 +6673,9 @@ function navBadgeCount(viewKey, user){
   if(viewKey==='ci-pending'){
     return myPendingItemActions(user).filter(a=>a.role==='ci').length;
   }
+  if(viewKey==='ci-evaluation'){
+    return myAssignedRosterItems(user.id).filter(it=>it.stage==='ci').length;
+  }
   if(viewKey==='cc-list'){
     return myPendingItemActions(user).filter(a=>a.role==='cc').length;
   }
@@ -6698,7 +6708,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-subject-detail':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-subject-detail':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'ci-class-progress':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
 /* Defers a renderContent() rebuild to the next tick instead of running it
    synchronously inside an onchange handler. onchange fires the instant an
    input loses focus — i.e. mid-click, before the browser has finished
@@ -6754,6 +6764,8 @@ function renderContent(){
     'exam-list': renderExamList,
     'verification-status': renderVerificationStatus,
     'ci-sections': renderCISections,
+    'ci-evaluation': renderCIEvaluation,
+    'ci-class-progress': renderCIClassProgress,
     'ci-subject-detail': renderCISubjectDetail,
     'ci-entry': renderCIEntry,
     'ci-component-entry': renderCIComponentEntry,
@@ -12054,6 +12066,7 @@ function renderCISubjectDetail(params){
         ${course.status==='approved' && course.editUnlocked ? `<span class="status-pill status-draft">Unlocked for correction</span>` : ''}
       </div>
       ${deadlineBadge(course)}
+      ${course.evalType ? `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" onclick="App.navigate('ci-class-progress',{courseId:'${course.id}'})">👥 View Class Progress (read-only)</button></div>` : ''}
     </div>
     ${sentBackBanner(course)}
     ${termTestComparisonHtml(course)}
@@ -12098,6 +12111,114 @@ function renderCISubjectDetail(params){
         ${link('overall','Overall Analytics')}
       </div>`;
     })() : ''}
+  `;
+  return wrap;
+}
+/* ---------- CI: "Evaluation" — every Term Test 1/2/3, Practical Internal,
+   or SEE Practical roll-number slice an Administrator has assigned to
+   THIS faculty member via Roster Assignment (App.setItemRosterOverride),
+   across EVERY course in the system — not just sections they're the
+   registered Course Instructor for. An Administrator can hand a slice of
+   any section's item to any faculty member (see getItemRosterOverrides
+   above), independent of who that section's own registered CI is; before
+   this tab existed, such an assignment was only reachable by already
+   knowing the exact subject and drilling into its entry page, and was
+   invisible entirely if the faculty member wasn't also that section's CI
+   (My Subjects / Pending Approval both only ever look at ciCourses). */
+function myAssignedRosterItems(userId){
+  const out = [];
+  App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
+    const template = getCourseTemplate(c);
+    ITEM_FLOW_KEYS.forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      const mine = getItemRosterOverrides(c, key).find(o=>o.facultyUserId===userId);
+      if(!mine) return;
+      const ia = App.itemApproval(c.id, key) || { stage:'ci' };
+      out.push({ course:c, itemKey:key, rollCount:(mine.rollNos||[]).length, stage:ia.stage });
+    });
+  });
+  return out;
+}
+/* Small stage pill for one Evaluation-tab row — same three-state look as
+   the rest of the app (draft/submitted/approved colors) without needing a
+   whole itemStageDotsHtml row per card. */
+function itemStagePillHtml(stage){
+  if(stage==='done') return `<span class="status-pill status-approved">Approved</span>`;
+  if(stage==='ci') return `<span class="status-pill status-draft">Not yet entered</span>`;
+  return `<span class="status-pill status-submitted">With ${escapeHtml(ITEM_STAGE_LABELS[stage]||stage)}</span>`;
+}
+function renderCIEvaluation(){
+  const user = App.currentUser();
+  const items = myAssignedRosterItems(user.id);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Evaluation</h2>
+      <p>Every Term Test 1/2, Practical Internal Test, and SEE Practical roll-number slice an Administrator has currently assigned to you from Roster Assignment — across every section, including ones you aren't the registered Course Instructor for. Open one to enter marks for just your assigned roll numbers.</p>
+    </div>
+    ${items.length===0 ? emptyStateHtml('Nothing assigned yet', 'An Administrator hasn\'t assigned you a roll-number slice for any Term Test, Practical Internal, or SEE Practical item yet — check with them under Roster Assignment. Sections where you\'re the registered Course Instructor still appear under "My Subjects" as usual.') :
+      items.map(it=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${escapeHtml(it.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[it.itemKey])}</div>
+            ${courseMetaBlock(it.course)}
+            <div class="section-meta" style="margin-top:6px;">${it.rollCount} roll number${it.rollCount===1?'':'s'} assigned to you</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            ${itemStagePillHtml(it.stage)}
+            <button class="btn btn-sm" onclick="${itemActionNavigateAttr(it.course, it.itemKey)}">${it.stage==='ci' ? 'Enter Marks' : 'View'}</button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
+/* ---------- CI: "Class Progress" — read-only view of the FULL official
+   roster (Course Registration's course.students), never narrowed to any
+   Roster Assignment slice. Lets a section's registered Course Instructor
+   — or anyone else holding a Roster Assignment slice on one of this
+   course's item flows, or its Course Coordinator/HOD/Admin — see every
+   student's currently entered marks for Term Test 1/2, Practical
+   Internal, SEE Practical, and every other CIE/SEE component, including
+   marks entered by ANOTHER faculty member on a different roll-number
+   slice of the same item (see getItemRosterOverrides/itemEntryStudents
+   above) — without being able to edit any of it. Reuses the same
+   read-only marksViewTable used on the HOD/CC review pages, with
+   hideTermTest=false so Term Test 1/2/3 columns show here too (unlike
+   the existing "View CIE/Total Marks" page on My Subjects, which hides
+   them deliberately since a CI normally already has full entry access to
+   their own Term Test there). */
+function canViewClassProgress(course){
+  if(!course) return false;
+  const actor = App.currentUser();
+  if(!actor) return false;
+  if(actor.systemRole==='ADMIN' || actor.systemRole==='HOD') return true;
+  if(isCourseOwnerCI(course)) return true;
+  if(getCourseCCUser(course.id)?.id === actor.id) return true;
+  return ITEM_FLOW_KEYS.some(key => getItemRosterOverrides(course, key).some(o=>o.facultyUserId===actor.id));
+}
+function renderCIClassProgress(params){
+  const course = App.getCourse(params.courseId);
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course ? course.name : 'subject')}</button>`;
+  const wrap = el('<div></div>');
+  if(!course || !canViewClassProgress(course)){
+    wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`;
+    return wrap;
+  }
+  if(!course.evalType){
+    wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`;
+    return wrap;
+  }
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>Class Progress — view only</h2>
+      <p>${escapeHtml(course.name)}'s full roster from Course Registration, with every component's currently entered marks — including Term Test 1/2 and Practical Internal/SEE Practical entered by another faculty member on a Roster Assignment slice of this section. Read-only; enter marks for your own assigned roll numbers from "Evaluation" or "My Subjects" instead.</p>
+    </div>
+    <div class="card">${marksViewTable(course, false, false)}</div>
   `;
   return wrap;
 }
