@@ -3839,7 +3839,7 @@ const ROLE_ALLOWED_VIEWS = {
   EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
   SCRUTINY: ['scrutiny-list','ci-termtest-entry','ci-component-entry'],
-  FACULTY: ['ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
+  FACULTY: ['ci-sections','ci-evaluation','ci-my-sections','ci-class-progress','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
 };
 function isViewAllowedForRole(role, view){
   const allowed = ROLE_ALLOWED_VIEWS[role];
@@ -6399,7 +6399,7 @@ window.closeModal = closeModal;
    account never sees the switcher at all. */
 const FACULTY_ROLE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator' };
 const FACULTY_VIEW_ROLE = {
-  'ci-sections':'ci', 'ci-evaluation':'ci', 'ci-class-progress':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
+  'ci-sections':'ci', 'ci-evaluation':'ci', 'ci-my-sections':'ci', 'ci-class-progress':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
   'ci-component-entry':'ci', 'ci-section-view':'ci', 'ci-analytics':'ci', 'ci-termtest':'ci', 'ci-termtest-entry':'ci',
   'ci-labint':'ci', 'ci-labext':'ci',
   'cc-list':'cc', 'cc-roster':'cc', 'cc-review':'cc', 'cc-termtest-setup':'cc',
@@ -6632,6 +6632,7 @@ function getNavForUser(user){
   if(role==='ci'){
     nav.push({v:'ci-sections', label:'My Subjects'});
     nav.push({v:'ci-evaluation', label:'Evaluation'});
+    nav.push({v:'ci-my-sections', label:'My Sections'});
     nav.push({v:'ci-pending', label:'Pending Approval'});
     nav.push({v:'ci-audit', label:'Audit Log'});
   } else if(role==='cc'){
@@ -6765,6 +6766,7 @@ function renderContent(){
     'verification-status': renderVerificationStatus,
     'ci-sections': renderCISections,
     'ci-evaluation': renderCIEvaluation,
+    'ci-my-sections': renderCIMySections,
     'ci-class-progress': renderCIClassProgress,
     'ci-subject-detail': renderCISubjectDetail,
     'ci-entry': renderCIEntry,
@@ -12198,6 +12200,42 @@ function canViewClassProgress(course){
   if(isCourseOwnerCI(course)) return true;
   if(getCourseCCUser(course.id)?.id === actor.id) return true;
   return ITEM_FLOW_KEYS.some(key => getItemRosterOverrides(course, key).some(o=>o.facultyUserId===actor.id));
+}
+/* ---------- CI: "My Sections" — the default, unfiltered student list for
+   every section this faculty member is the registered Course Instructor
+   of, straight from Course Registration (course.students), not narrowed
+   to any Roster Assignment slice. Distinct from "My Subjects" (which is
+   for entering this CI's OWN marks) — this tab is purely for looking at
+   the whole class's progress, including Term Test 1/2 and Practical
+   Internal/SEE Practical marks entered by another faculty member on a
+   different roll-number slice of the same item (see
+   getItemRosterOverrides/canViewClassProgress below). Each card opens the
+   read-only Class Progress table for that section. */
+function renderCIMySections(){
+  const user = App.currentUser();
+  const { ciCourses } = getFacultyCourses(user.id);
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>My Sections</h2>
+      <p>Your registered sections' full roster, straight from Course Registration. View every student's currently entered marks for Term Test 1/2, Practical Internal Test, SEE Practical, and every other component — including marks entered by another faculty member on a Roster Assignment slice of the same item. Read-only; enter marks from "My Subjects" (your own components) or "Evaluation" (any roll-number slice assigned to you).</p>
+    </div>
+    ${ciCourses.length===0 ? emptyStateHtml('No sections yet', 'You aren\'t the registered Course Instructor on any section yet — once one is assigned, its full class roster will appear here.') :
+      ciCourses.map(c=>`
+      <div class="card" style="cursor:pointer;" onclick="App.navigate('ci-class-progress',{courseId:'${c.id}'})" role="button" tabindex="0" onkeydown="if(event.key==='Enter') App.navigate('ci-class-progress',{courseId:'${c.id}'})">
+        <div class="section-title">${escapeHtml(c.name)}</div>
+        ${courseMetaBlock(c)}
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            ${statusPill(c)}
+            ${etPill(c)}
+          </div>
+          <span class="section-meta" style="color:var(--brass);font-weight:600;">View class roster &amp; marks →</span>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
 }
 function renderCIClassProgress(params){
   const course = App.getCourse(params.courseId);
