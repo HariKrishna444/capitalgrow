@@ -10195,7 +10195,57 @@ function pendingEtRequestsHtml(){
    CHECKPOINT D — HOD Dashboard: status counts across all sections,
    plus faculty-wise (Course Instructor) completion status.
    ============================================================ */
-function hodDashboardSummaryHtml(all){
+function hodDashboardSummaryHtml(all, itemKey){
+  const stat = (label, val) => `<div style="flex:1;min-width:120px;padding:10px 14px;background:#F3EEDD;border:1px solid var(--rule);border-radius:8px;">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;color:var(--ink);">${val}</div>
+    <div class="section-meta" style="margin-top:2px;">${label}</div>
+  </div>`;
+  if(itemKey){
+    // Exam-specific mode (Term Test 1/2/3, Practical Internal, SEE Practical):
+    // only subjects whose Evaluation Type template actually carries this
+    // item (see itemFlowApplicable) count at all, and status reflects THAT
+    // item's own independent CI -> CC -> HOD chain (App.itemApproval),
+    // never the Overall record's status — a course can be "InProgress"
+    // overall while its Term Test 1 has already reached the HOD.
+    const label = ITEM_FLOW_LABELS[itemKey];
+    const eligible = all.filter(c=>c.evalType && itemFlowApplicable(getCourseTemplate(c), itemKey));
+    const counts = { ci:0, cc:0, scrutiny:0, hod:0, done:0 };
+    eligible.forEach(c=>{
+      const stage = App.itemApproval(c.id, itemKey)?.stage || 'ci';
+      counts[stage] = (counts[stage]||0) + 1;
+    });
+    const byCI = {};
+    eligible.forEach(c=>{
+      const ci = getCourseCIUser(c.id);
+      if(!ci) return;
+      byCI[ci.id] = byCI[ci.id] || { name:ci.name, total:0, submitted:0 };
+      byCI[ci.id].total++;
+      if((App.itemApproval(c.id, itemKey)?.stage || 'ci') !== 'ci') byCI[ci.id].submitted++;
+    });
+    const facultyRows = Object.values(byCI).sort((a,b)=>a.name.localeCompare(b.name));
+    return `
+      <div class="card">
+        <div class="section-title" style="font-size:15px;">Evaluation Status Overview — ${escapeHtml(label)}</div>
+        <p class="section-meta" style="margin-top:2px;">${eligible.length} subject${eligible.length===1?'':'s'} use ${escapeHtml(label)} under their Evaluation Type.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+          ${stat('Pending with CI', counts.ci)}
+          ${stat('Pending with CC', counts.cc)}
+          ${stat('At Scrutiny', counts.scrutiny)}
+          ${stat('Pending with HOD', counts.hod)}
+          ${stat('Approved', counts.done)}
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title" style="font-size:15px;">Faculty-wise Completion Status — ${escapeHtml(label)}</div>
+        ${facultyRows.length===0 ? `<p class="section-meta" style="margin-top:8px;">No subjects currently use ${escapeHtml(label)}.</p>` : `
+        <div class="table-scroll" style="margin-top:8px;">
+          <table class="data-table"><thead><tr><th>Course Instructor</th><th>Sections assigned</th><th>Sections submitted+</th></tr></thead><tbody>
+            ${facultyRows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${r.total}</td><td>${r.submitted}</td></tr>`).join('')}
+          </tbody></table>
+        </div>`}
+      </div>`;
+  }
+  // "All Exams" — every subject's Overall record, regardless of Evaluation Type or which item flows apply to it. Unchanged from before the exam selector was added.
   const counts = {
     pendingEvaluation: all.filter(c=>c.status==='draft').length,
     pendingModeration: all.filter(c=>c.status==='submitted').length,
@@ -10203,10 +10253,6 @@ function hodDashboardSummaryHtml(all){
     pendingApproval: all.filter(c=>c.status==='verified').length,
     frozen: all.filter(c=>c.status==='approved').length,
   };
-  const stat = (label, val) => `<div style="flex:1;min-width:120px;padding:10px 14px;background:#F3EEDD;border:1px solid var(--rule);border-radius:8px;">
-    <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;color:var(--ink);">${val}</div>
-    <div class="section-meta" style="margin-top:2px;">${label}</div>
-  </div>`;
   const byCI = {};
   all.forEach(c=>{
     const ci = getCourseCIUser(c.id);
@@ -10218,7 +10264,7 @@ function hodDashboardSummaryHtml(all){
   const facultyRows = Object.values(byCI).sort((a,b)=>a.name.localeCompare(b.name));
   return `
     <div class="card">
-      <div class="section-title" style="font-size:15px;">Evaluation Status Overview</div>
+      <div class="section-title" style="font-size:15px;">Evaluation Status Overview — All Exams</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
         ${stat('Pending evaluation (CI)', counts.pendingEvaluation)}
         ${stat('Pending moderation (CC)', counts.pendingModeration)}
@@ -10228,7 +10274,7 @@ function hodDashboardSummaryHtml(all){
       </div>
     </div>
     <div class="card">
-      <div class="section-title" style="font-size:15px;">Faculty-wise Completion Status</div>
+      <div class="section-title" style="font-size:15px;">Faculty-wise Completion Status — All Exams</div>
       ${facultyRows.length===0 ? `<p class="section-meta" style="margin-top:8px;">No Course Instructors assigned yet.</p>` : `
       <div class="table-scroll" style="margin-top:8px;">
         <table class="data-table"><thead><tr><th>Course Instructor</th><th>Sections assigned</th><th>Sections submitted+</th></tr></thead><tbody>
@@ -10271,6 +10317,9 @@ function defaultHodExamCycleKey(){
   return ttKey || 'tt1';
 }
 function hodExamCycleInfo(key){
+  if(key==='all'){
+    return { kind:'All', label:'All Exams', windowText:'Every subject, across every exam type and Evaluation Type' };
+  }
   const fmtWindow = (startTs, endTs) => {
     const dOnly = ts => new Date(ts).toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'});
     if(startTs && endTs) return `${dOnly(startTs)} – ${dOnly(endTs)}`;
@@ -10312,15 +10361,17 @@ function hodExamCycleInfo(key){
   return { kind, label:ITEM_FLOW_LABELS[key], windowText: noWindow ? 'No window set — always open' : fmtWindow(startTs, endTs) };
 }
 function hodExamCycleBannerHtml(){
-  const activeKey = (hodExamCycleSelection && ITEM_FLOW_KEYS.includes(hodExamCycleSelection)) ? hodExamCycleSelection : defaultHodExamCycleKey();
+  const activeKey = (hodExamCycleSelection && (hodExamCycleSelection==='all' || ITEM_FLOW_KEYS.includes(hodExamCycleSelection))) ? hodExamCycleSelection : defaultHodExamCycleKey();
   hodExamCycleSelection = activeKey; // lock in the resolved default so the dropdown and banner never disagree
   const info = hodExamCycleInfo(activeKey);
-  const pillClass = info.kind==='Active' ? 'status-approved' : info.kind==='Upcoming' ? 'status-submitted' : 'status-draft';
+  const pillClass = info.kind==='Active' ? 'status-approved' : info.kind==='Upcoming' ? 'status-submitted' : info.kind==='All' ? 'status-coordinated' : 'status-draft';
   const borderColor = info.kind==='Active' ? 'var(--brass)' : 'var(--text-soft)';
-  const options = ITEM_FLOW_KEYS.map(k=>`<option value="${k}" ${k===activeKey?'selected':''}>${ITEM_FLOW_LABELS[k]}</option>`).join('');
+  const optionList = ['all', ...ITEM_FLOW_KEYS];
+  const optionLabel = k => k==='all' ? 'All Exams' : ITEM_FLOW_LABELS[k];
+  const options = optionList.map(k=>`<option value="${k}" ${k===activeKey?'selected':''}>${optionLabel(k)}</option>`).join('');
   return `<div class="card" style="padding:12px 16px;margin-bottom:14px;border-left:3px solid ${borderColor};display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between;">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span class="status-pill ${pillClass}">${escapeHtml(info.kind)} examination cycle</span>
+      <span class="status-pill ${pillClass}">${escapeHtml(info.kind)}${info.kind==='All' ? '' : ' examination cycle'}</span>
       <span class="section-meta" style="font-weight:600;color:var(--ink);">${escapeHtml(info.label)}</span>
       <span class="section-meta">${escapeHtml(info.windowText)}</span>
     </div>
@@ -10342,7 +10393,7 @@ function renderHODList(){
     </div>
     ${hodExamCycleBannerHtml()}
     ${pendingTermTestApprovalsHtml()}
-    ${hodDashboardSummaryHtml(all)}
+    ${hodDashboardSummaryHtml(all, hodExamCycleSelection==='all' ? null : hodExamCycleSelection)}
     ${pendingEtRequestsHtml()}
     ${pendingApprovalGroupsHtml()}
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
