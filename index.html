@@ -10373,9 +10373,19 @@ function hodExamCycleInfo(key){
   const kind = noWindow ? 'No restriction' : ended ? 'Previous' : notStarted ? 'Upcoming' : 'Active';
   return { kind, label:ITEM_FLOW_LABELS[key], windowText: noWindow ? 'No window set — always open' : fmtWindow(startTs, endTs) };
 }
-function hodExamCycleBannerHtml(){
+/* Resolves hodExamCycleSelection to a concrete key ('all' or one of
+   ITEM_FLOW_KEYS), falling back to defaultHodExamCycleKey() the first
+   time, and locks the resolved value back into hodExamCycleSelection so
+   the dropdown, banner, and course list below all agree within a single
+   render. Call this before reading hodExamCycleSelection anywhere in
+   renderHODList. */
+function resolvedHodExamCycleKey(){
   const activeKey = (hodExamCycleSelection && (hodExamCycleSelection==='all' || ITEM_FLOW_KEYS.includes(hodExamCycleSelection))) ? hodExamCycleSelection : defaultHodExamCycleKey();
-  hodExamCycleSelection = activeKey; // lock in the resolved default so the dropdown and banner never disagree
+  hodExamCycleSelection = activeKey;
+  return activeKey;
+}
+function hodExamCycleBannerHtml(){
+  const activeKey = resolvedHodExamCycleKey();
   const info = hodExamCycleInfo(activeKey);
   const pillClass = info.kind==='Active' ? 'status-approved' : info.kind==='Upcoming' ? 'status-submitted' : info.kind==='All' ? 'status-coordinated' : 'status-draft';
   const borderColor = info.kind==='Active' ? 'var(--brass)' : 'var(--text-soft)';
@@ -10393,9 +10403,27 @@ function hodExamCycleBannerHtml(){
 }
 function renderHODList(){
   const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
-  const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
-    : hodListFilter==='pending' ? all.filter(c=>c.status!=='approved')
-    : all;
+  // Resolve the exam-cycle dropdown up front (same value the banner and
+  // summary below will use) so the course cards can be scoped to it too.
+  // Previously only the summary stats respected this selector — the card
+  // list underneath always showed every section regardless, so a
+  // practical-only subject (Evaluation Type EP — Practical, no Term Test
+  // component in its template — e.g. a "(P)" section) or any other subject
+  // whose Evaluation Type has no Term Test 1/2/3, Practical Internal, or
+  // SEE Practical component kept showing up under every exam tab. Now the
+  // list is filtered the same way the summary already was, via
+  // itemFlowApplicable against each course's own template — so this is
+  // driven entirely by each subject's actual Evaluation Type, not a
+  // hardcoded subject-name list, and covers any current or future subject
+  // (e.g. Marketing for Sustainability, Soft Skills - 3, Innovation and
+  // Entrepreneurship - II, or any other ES/ESS/EAC/EP-style Evaluation
+  // Type with no matching component) automatically.
+  const examKeyRaw = resolvedHodExamCycleKey();
+  const examKey = examKeyRaw==='all' ? null : examKeyRaw;
+  const examEligible = examKey ? all.filter(c => c.evalType && itemFlowApplicable(getCourseTemplate(c), examKey)) : all;
+  const list = hodListFilter==='approved' ? examEligible.filter(c=>c.status==='approved')
+    : hodListFilter==='pending' ? examEligible.filter(c=>c.status!=='approved')
+    : examEligible;
   const filterBtn = (v,label) => `<button class="btn btn-sm ${hodListFilter===v?'':'btn-outline'}" onclick="setHodListFilter('${v}')">${label}</button>`;
   const wrap = el('<div></div>');
   wrap.innerHTML = `
@@ -10406,7 +10434,7 @@ function renderHODList(){
     </div>
     ${hodExamCycleBannerHtml()}
     ${pendingTermTestApprovalsHtml()}
-    ${hodDashboardSummaryHtml(all, hodExamCycleSelection==='all' ? null : hodExamCycleSelection)}
+    ${hodDashboardSummaryHtml(all, examKey)}
     ${pendingEtRequestsHtml()}
     ${pendingApprovalGroupsHtml()}
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
@@ -10414,7 +10442,10 @@ function renderHODList(){
       ${filterBtn('pending','Pending')}
       ${filterBtn('approved','Approved')}
     </div>
-    ${list.length===0 ? emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Once the Timetable Incharge creates one from "Manage Coordinators" and it moves through the approval pipeline, it will appear here.') : list.map(c=>`
+    ${list.length===0 ? (examKey && all.length>0
+        ? emptyStateHtml(`No subjects use ${escapeHtml(ITEM_FLOW_LABELS[examKey]||examKey)}`, 'No section\'s Evaluation Type includes this component (or matches the current status filter). Switch the dropdown above to "All Exams" to see every section.')
+        : emptyStateHtml('No course sections yet', 'No course-sections exist in the system yet. Once the Timetable Incharge creates one from "Manage Coordinators" and it moves through the approval pipeline, it will appear here.')
+      ) : list.map(c=>`
       <div class="card">
         <div class="card-row">
           <div>
