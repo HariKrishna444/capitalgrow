@@ -470,6 +470,47 @@ input,select,textarea{font-family:inherit;}
 .user-chip{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
 .user-name{font-size:13px;color:var(--ink);font-weight:600;}
 .role-tag{font-size:10px;color:var(--brass);letter-spacing:0.05em;}
+
+/* ---------------- ROLE SWITCHER (FACULTY: CI/CC dashboards) ---------------- */
+.role-switch-btn{
+  background:transparent;border:1px solid var(--rule);color:var(--ink);
+  padding:6px 10px 6px 12px;font-size:11.5px;font-weight:700;border-radius:8px;
+  display:flex;align-items:center;gap:8px;letter-spacing:0.03em;
+  font-family:'IBM Plex Mono',monospace;text-transform:uppercase;
+  transition:all 0.15s ease;
+}
+.role-switch-btn:hover{border-color:var(--brass-light);color:var(--brass);background:rgba(79,70,229,0.06);}
+.role-switch-btn .rs-chevron{transition:transform 0.15s ease;color:var(--text-soft);}
+.role-switch-btn.open .rs-chevron{transform:rotate(180deg);}
+.role-switch-panel{
+  position:absolute;top:50px;right:0;
+  width:240px;
+  background:var(--card);color:var(--text);
+  border:1px solid var(--rule);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-lg);
+  z-index:40;padding:8px;
+  animation:themePanelIn 0.18s ease;
+}
+.role-switch-label{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-soft);
+  letter-spacing:0.06em;text-transform:uppercase;padding:6px 10px 8px;
+}
+.role-switch-item{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  background:none;border:none;border-radius:9px;padding:9px 10px;cursor:pointer;
+  transition:background 0.15s ease;
+}
+.role-switch-item:hover{background:var(--parchment-2);}
+.role-switch-item .rs-dot{
+  width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--rule);
+}
+.role-switch-item.active .rs-dot{background:var(--brass);}
+.role-switch-item .rs-text{display:flex;flex-direction:column;gap:1px;}
+.role-switch-item .rs-name{font-size:13px;font-weight:700;color:var(--ink);}
+.role-switch-item.active .rs-name{color:var(--brass);}
+.role-switch-item .rs-sub{font-size:10.5px;color:var(--text-soft);}
+.role-switch-item .rs-check{margin-left:auto;color:var(--brass);font-size:13px;visibility:hidden;}
+.role-switch-item.active .rs-check{visibility:visible;}
 .ghost-btn{
   background:transparent;border:1px solid var(--rule);
   color:var(--text-soft);padding:7px 14px;font-size:12px;border-radius:7px;
@@ -1056,6 +1097,11 @@ input[type="number"]{
             <span id="bell-count" class="bell-count hidden">0</span>
           </button>
           <div id="notif-panel" class="notif-panel hidden"></div>
+          <button id="role-switch-btn" class="role-switch-btn hidden" aria-label="Switch dashboard role">
+            <span id="role-switch-btn-label"></span>
+            <svg class="rs-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div id="role-switch-panel" class="role-switch-panel hidden"></div>
           <div class="user-chip">
             <span id="user-name" class="user-name"></span>
             <span id="user-role" class="role-tag mono"></span>
@@ -3883,6 +3929,7 @@ function itemViewerBackBtnHtml(course, ciBackView, ciBackParams, ciBackLabel){
 const App = {
   state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, practicalInternalWindow:null, seePracticalWindow:null, defaultScrutinyUserId:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
   ui: { view:'', params:{} },
+  facultyRole: null, // active dashboard for FACULTY users with both CI and CC roles — see getActiveFacultyRole
   ready:false,
 
   currentUser(){ return this.state.users.find(u=>u.id===this.state.currentUserId) || null; },
@@ -3930,6 +3977,7 @@ const App = {
     const u = this.currentUser();
     document.getElementById('user-name').textContent = u.name;
     document.getElementById('user-role').textContent = u.systemRole==='FACULTY' ? (facultyBadgeShort(u) || 'FACULTY') : `${u.systemRole} · ${ROLE_LABELS[u.systemRole]}`;
+    if(u.systemRole==='FACULTY') this.facultyRole = getActiveFacultyRole(u);
     const nav = getNavForUser(u);
     const pending = parseHashRoute();
     const target = pending || { view: nav[0] ? nav[0].v : 'faculty-empty', params:{} };
@@ -3957,6 +4005,14 @@ const App = {
   },
   navigate(view, params={}){
     const user = this.currentUser();
+    // If this view belongs to a specific FACULTY sub-role (e.g. a deep link
+    // from a notification email, or the Verification Status page linking
+    // straight into a CI entry screen), switch the active dashboard to
+    // match FIRST, so isViewAllowedForRole / getNavForUser below see the
+    // correct role and the sidebar doesn't fall back to the wrong one.
+    if(user && user.systemRole==='FACULTY' && FACULTY_VIEW_ROLE[view]){
+      this.facultyRole = FACULTY_VIEW_ROLE[view];
+    }
     if(user && !isViewAllowedForRole(user.systemRole, view)){
       toast("That page isn't available for your role — showing your dashboard instead.", 'err');
       const fallback = getNavForUser(user)[0];
@@ -3982,6 +4038,18 @@ const App = {
     renderSidebar();
     renderContent();
     window.scrollTo({top:0, behavior:'smooth'});
+  },
+  // Called from the role-switch dropdown. Jumps straight to that role's own
+  // default landing page, so switching roles always feels like arriving at
+  // a fresh separated dashboard rather than just re-filtering the sidebar.
+  switchFacultyRole(role){
+    const user = this.currentUser();
+    if(!user || user.systemRole!=='FACULTY') return;
+    if(!getFacultyAvailableRoles(user).includes(role)) return;
+    this.facultyRole = role;
+    closeRoleSwitchPanel();
+    const nav = getNavForUser(user);
+    this.navigate(nav[0] ? nav[0].v : 'faculty-empty');
   },
 
   /* ---------- audit ---------- */
@@ -6321,6 +6389,68 @@ function openModal(html){
 function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
 window.closeModal = closeModal;
 
+/* ---------------- faculty role switcher (CI / CC dashboards) ----------------
+   A FACULTY account can simultaneously be Course Instructor for some
+   sections and Course Coordinator for others. Previously both roles'
+   nav items were merged into one sidebar; this splits them into two
+   separate, switchable dashboards — App.facultyRole tracks which one is
+   currently active, similar to a "switch role" dropdown. Only rendered
+   when the user actually holds more than one role; a single-role faculty
+   account never sees the switcher at all. */
+const FACULTY_ROLE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator' };
+const FACULTY_VIEW_ROLE = {
+  'ci-sections':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
+  'ci-component-entry':'ci', 'ci-section-view':'ci', 'ci-analytics':'ci', 'ci-termtest':'ci', 'ci-termtest-entry':'ci',
+  'ci-labint':'ci', 'ci-labext':'ci',
+  'cc-list':'cc', 'cc-roster':'cc', 'cc-review':'cc', 'cc-termtest-setup':'cc',
+};
+function getFacultyAvailableRoles(user){
+  const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+  const roles = [];
+  if(ciCourses.length) roles.push('ci');
+  if(ccCourses.length) roles.push('cc');
+  return roles;
+}
+// Falls back to the first available role if none is set yet, or if the
+// previously active one no longer applies (e.g. a CC assignment was revoked).
+function getActiveFacultyRole(user){
+  const roles = getFacultyAvailableRoles(user);
+  if(!roles.length) return null;
+  if(App.facultyRole && roles.includes(App.facultyRole)) return App.facultyRole;
+  return roles[0];
+}
+function renderRoleSwitch(){
+  const btn = document.getElementById('role-switch-btn');
+  const panel = document.getElementById('role-switch-panel');
+  const user = App.currentUser();
+  if(!user || user.systemRole!=='FACULTY'){ btn.classList.add('hidden'); panel.classList.add('hidden'); return; }
+  const roles = getFacultyAvailableRoles(user);
+  if(roles.length < 2){ btn.classList.add('hidden'); panel.classList.add('hidden'); return; }
+  const active = getActiveFacultyRole(user);
+  App.facultyRole = active;
+  btn.classList.remove('hidden');
+  document.getElementById('role-switch-btn-label').textContent = FACULTY_ROLE_LABELS[active];
+  const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+  const subLabel = { ci: `${ciCourses.length} subject${ciCourses.length===1?'':'s'}`, cc: `${ccCourses.length} section${ccCourses.length===1?'':'s'}` };
+  panel.innerHTML = `<div class="role-switch-label">Switch dashboard</div>` + roles.map(r=>`
+    <button class="role-switch-item ${r===active?'active':''}" onclick="App.switchFacultyRole('${r}')">
+      <span class="rs-dot"></span>
+      <span class="rs-text"><span class="rs-name">${FACULTY_ROLE_LABELS[r]}</span><span class="rs-sub">${subLabel[r]}</span></span>
+      <span class="rs-check">✓</span>
+    </button>`).join('');
+}
+function toggleRoleSwitchPanel(){
+  const panel = document.getElementById('role-switch-panel');
+  const btn = document.getElementById('role-switch-btn');
+  const willOpen = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden');
+  btn.classList.toggle('open', willOpen);
+}
+function closeRoleSwitchPanel(){
+  document.getElementById('role-switch-panel').classList.add('hidden');
+  document.getElementById('role-switch-btn').classList.remove('open');
+}
+
 /* ---------------- faculty badge text ---------------- */
 function facultyBadgeShort(u){
   const { ccCourses, ciCourses } = getFacultyCourses(u.id);
@@ -6486,13 +6616,20 @@ function getNavForUser(user){
   ];
   if(user.systemRole==='EXAM') return [{v:'exam-list', label:'Approved Records'}];
   if(user.systemRole==='SCRUTINY') return [{v:'scrutiny-list', label:'Scrutiny Queue'}];
-  // FACULTY — dynamic, derived from assignments
+  // FACULTY — dynamic, derived from assignments. When a faculty member
+  // holds both CI and CC roles, the sidebar shows only the ACTIVE role's
+  // items (picked via the role-switch dropdown in the topbar) instead of
+  // merging everything into one list — see getActiveFacultyRole.
   const { ccCourses, ciCourses } = getFacultyCourses(user.id);
+  const role = getActiveFacultyRole(user);
   const nav = [];
-  if(ciCourses.length) nav.push({v:'ci-sections', label:'My Subjects'});
-  if(ciCourses.length) nav.push({v:'ci-pending', label:'Pending Approval'});
-  if(ciCourses.length) nav.push({v:'ci-audit', label:'Audit Log'});
-  if(ccCourses.length) nav.push({v:'cc-list', label:'My Coordination'});
+  if(role==='ci'){
+    nav.push({v:'ci-sections', label:'My Subjects'});
+    nav.push({v:'ci-pending', label:'Pending Approval'});
+    nav.push({v:'ci-audit', label:'Audit Log'});
+  } else if(role==='cc'){
+    nav.push({v:'cc-list', label:'My Coordination'});
+  }
   if(ciCourses.length || ccCourses.length) nav.push({v:'verification-status', label:'Verification Status'});
   if(nav.length===0) nav.push({v:'faculty-empty', label:'Overview'});
   return nav;
@@ -6548,6 +6685,7 @@ function navBadgeCount(viewKey, user){
 }
 function renderSidebar(){
   const user = App.currentUser();
+  renderRoleSwitch();
   const nav = getNavForUser(user);
   const sb = document.getElementById('sidebar');
   sb.innerHTML = nav.map(n=>{
@@ -13442,6 +13580,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('logout-btn').addEventListener('click', ()=>App.logout());
   document.getElementById('bell-btn').addEventListener('click', (e)=>{ e.stopPropagation(); toggleNotifPanel(); });
   document.getElementById('theme-btn').addEventListener('click', (e)=>{ e.stopPropagation(); closeNotifPanel(); toggleThemePanel(); });
+  document.getElementById('role-switch-btn').addEventListener('click', (e)=>{ e.stopPropagation(); closeNotifPanel(); closeThemePanel(); toggleRoleSwitchPanel(); });
   document.addEventListener('click', (e)=>{
     const panel = document.getElementById('notif-panel');
     if(!panel.classList.contains('hidden') && !panel.contains(e.target) && e.target.id!=='bell-btn'){
@@ -13450,6 +13589,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
     const tpanel = document.getElementById('theme-panel');
     if(!tpanel.classList.contains('hidden') && !tpanel.contains(e.target) && e.target.id!=='theme-btn' && !e.target.closest('#theme-btn')){
       closeThemePanel();
+    }
+    const rpanel = document.getElementById('role-switch-panel');
+    if(!rpanel.classList.contains('hidden') && !rpanel.contains(e.target) && e.target.id!=='role-switch-btn' && !e.target.closest('#role-switch-btn')){
+      closeRoleSwitchPanel();
     }
   });
 
