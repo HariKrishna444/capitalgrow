@@ -1097,7 +1097,7 @@ const SUPABASE_URL = 'https://dhmidutrazdhhiqsstxv.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobWlkdXRyYXpkaGhpcXNzdHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTMwOTIsImV4cCI6MjA5OTk2OTA5Mn0.jXlLh7b737FzsKpavzr5lHzSn04mjcb1XhWZaPFn9ko';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty' };
+const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty', SCRUTINY:'Scrutiny' };
 
 // The 12 current departments/branches. The 5 CSE-family branches
 // (CSE, CSE-SAP, CSE-CYS, CSE-AIML, CSE-DSC) keep all of the existing
@@ -1653,7 +1653,7 @@ const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coord
    never actually starts for it. */
 const ITEM_FLOW_KEYS = ['tt1','tt2','tt3','pracInternal','seePractical'];
 const ITEM_FLOW_LABELS = { tt1:'Term Test 1', tt2:'Term Test 2', tt3:'Term Test 3', pracInternal:'Practical Internal Test', seePractical:'SEE Practical' };
-const ITEM_STAGE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator', hod:'HOD', done:'Approved' };
+const ITEM_STAGE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator', hod:'HOD', scrutiny:'Scrutiny', done:'Approved' };
 const ITEM_NEXT_STAGE = { ci:'cc', cc:'hod', hod:'done' };
 /* Every item-flow (Term Test 1/2/3, Practical Internal, SEE Practical)
    action currently sitting at THIS user's stage — as Course Instructor on
@@ -1780,9 +1780,10 @@ function overallStageFor(course){
 /* Compact icon+label row for the Verification Status table — a denser
    sibling of itemStageDotsHtml, meant to fit several per row. */
 function compactStageDots(stage, order, labelMap){
-  const idx = order.indexOf(stage);
+  const displayStage = stage==='scrutiny' ? 'hod' : stage;
+  const idx = order.indexOf(displayStage);
   return order.map((s,i)=>{
-    const state = stage==='done' ? 'done' : i<idx ? 'done' : stage===s ? 'current' : 'pending';
+    const state = stage==='done' ? 'done' : i<idx ? 'done' : displayStage===s ? 'current' : 'pending';
     const icon = state==='done' ? '✓' : state==='current' ? '…' : '✗';
     const color = state==='done' ? '#2f7a3f' : state==='current' ? 'var(--brass)' : 'var(--seal-red)';
     return `<span style="display:inline-block;margin-right:7px;font-size:11.5px;white-space:nowrap;"><b style="color:${color};">${icon}</b> ${escapeHtml(labelMap[s]||s)}</span>`;
@@ -1864,7 +1865,8 @@ function itemFlowApplicable(template, itemKey){
    record, which does still go through EA. */
 function itemStageDotsHtml(stage, stageOrder){
   const order = stageOrder || ['ci','cc','hod'];
-  const idx = order.indexOf(stage);
+  const displayStage = stage==='scrutiny' ? 'hod' : stage;
+  const idx = order.indexOf(displayStage);
   const dot = (label, state) => {
     const icon = state==='done' ? '✓' : state==='current' ? '…' : '✗';
     const color = state==='done' ? '#2f7a3f' : state==='current' ? 'var(--brass)' : 'var(--seal-red)';
@@ -1873,7 +1875,7 @@ function itemStageDotsHtml(stage, stageOrder){
       <span style="font-size:11.5px;color:var(--text-soft);">${escapeHtml(label)}</span>
     </span>`;
   };
-  return order.map((s,i)=>dot(ITEM_STAGE_LABELS[s]||s, stage==='done'||i<idx ? 'done' : stage===s ? 'current' : 'pending')).join('')
+  return order.map((s,i)=>dot(ITEM_STAGE_LABELS[s]||s, stage==='done'||i<idx ? 'done' : displayStage===s ? 'current' : 'pending')).join('')
     + dot('Approved', stage==='done' ? 'done' : 'pending');
 }
 /* Status card for one of the 4 independently-flowed items (Term Test 1/2,
@@ -1996,6 +1998,33 @@ function toggleInlineAnalytics(key){
 }
 window.toggleInlineAnalytics = toggleInlineAnalytics;
 
+/* HOD's "Send to Scrutiny" action — pre-selects the Administrator's
+   configured default (App.state.defaultScrutinyUserId) so the common case
+   is a single click, but still lets the HOD pick a different Scrutiny
+   Faculty member when a department has more than one (e.g. to split load
+   across several verifiers when there are too many sections for one
+   person). */
+function openAssignScrutinyModal(courseId, itemKey){
+  const scrutinyUsers = App.state.users.filter(u=>u.systemRole==='SCRUTINY');
+  if(!scrutinyUsers.length){ toast('No Scrutiny Faculty accounts exist yet — ask an Administrator to create one first.', 'err'); return; }
+  const defaultId = App.state.defaultScrutinyUserId || scrutinyUsers[0].id;
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h3>Send to Scrutiny</h3>
+    <p style="color:var(--text-soft);margin-top:6px;">Instead of approving this yourself, hand verification to a Scrutiny Faculty member — pre-filled with the Administrator's default.</p>
+    <div class="config-field" style="margin-top:14px;">
+      <label>Scrutiny Faculty</label>
+      <select id="assign-scrutiny-select">
+        ${scrutinyUsers.map(u=>`<option value="${u.id}" ${u.id===defaultId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="App.assignItemToScrutiny('${courseId}','${itemKey}', document.getElementById('assign-scrutiny-select').value); closeModal();">Assign</button>
+    </div>
+  `);
+}
+window.openAssignScrutinyModal = openAssignScrutinyModal;
 function itemApprovalStatusHtml(course, itemKey){
   const ia = App.itemApproval(course.id, itemKey);
   if(!ia) return '';
@@ -2003,25 +2032,34 @@ function itemApprovalStatusHtml(course, itemKey){
   const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
   const canForward =
     (ia.stage==='cc' && (getCourseCCUser(course.id)?.id===actor.id || actor.systemRole==='ADMIN')) ||
-    (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN'));
+    (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN')) ||
+    (ia.stage==='scrutiny' && (actor.id===ia.scrutinyUserId || actor.systemRole==='ADMIN'));
   // The Course Coordinator does NOT get a "Send Back to CI" button — instead
   // they flag a problem on a particular student via the CC Remark column
   // (see ttStudentRemarkCell) and simply forward on, leaving the actual
   // send-back-or-not call to the HOD once they've reviewed those remarks.
   // So only HOD (or an Admin, as a general override) can send an item back
   // to the CI. There's no EA step in this chain at all (unlike the Overall
-  // record's flow).
+  // record's flow). The assigned Scrutiny Faculty member gets the same
+  // send-back power the HOD would have had, once it's been handed to them.
   const canSendBack =
     (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN')) ||
+    (ia.stage==='scrutiny' && (actor.id===ia.scrutinyUserId || actor.systemRole==='ADMIN')) ||
     (ia.stage==='cc' && actor.systemRole==='ADMIN');
-  const actionHtml = (canForward || canSendBack) ? `<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+  // Only the HOD (not the Scrutiny Faculty member it might already be
+  // delegated to) can hand an item off for scrutiny — it's a one-hop
+  // delegation, not a re-delegation chain.
+  const canAssignScrutiny = ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN');
+  const actionHtml = (canForward || canSendBack || canAssignScrutiny) ? `<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
       ${canSendBack ? `<button class="btn btn-red btn-sm" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${course.id}','${itemKey}', r);">Send Back to CI</button>` : ''}
-      ${canForward ? `<button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${ia.stage==='hod' ? 'Approve' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>` : ''}
+      ${canAssignScrutiny ? `<button class="btn btn-outline btn-sm" onclick="openAssignScrutinyModal('${course.id}','${itemKey}')">Send to Scrutiny</button>` : ''}
+      ${canForward ? `<button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${(ia.stage==='hod'||ia.stage==='scrutiny') ? 'Approve' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>` : ''}
     </div>` : '';
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">${escapeHtml(label)} — Verification Status</div>
     <div style="margin-top:10px;">${itemStageDotsHtml(ia.stage)}</div>
     ${ia.remark ? `<p class="section-meta" style="margin-top:6px;color:var(--seal-red);">Sent back: ${escapeHtml(ia.remark)}</p>` : ''}
+    ${ia.stage==='scrutiny' && ia.scrutinyUserId ? `<p class="section-meta" style="margin-top:6px;">Assigned to ${escapeHtml(App.getUserById(ia.scrutinyUserId)?.name || 'Scrutiny Faculty')} for scrutiny.</p>` : ''}
     ${actionHtml}
   </div>`;
 }
@@ -2821,7 +2859,7 @@ function seedState(){
     { id:'note_seed2', forUserId:'cc1', courseId:'c1', title:"You're now Course Coordinator", body:"Dr. Suresh Menon assigned you as Course Coordinator for CS301 — Data Structures. This role is active immediately.", ts:t0, read:true },
   ];
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:{ academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null, examPeriodLabel:null }, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest:{ academicYear:null, semester:null, cycle:'TT1', startDate:null, endDate:null, examPeriodLabel:null }, practicalInternalWindow:null, seePracticalWindow:null, defaultScrutinyUserId:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] };
 }
 
 /* ---------------- Supabase-backed persistence ----------------
@@ -3011,12 +3049,13 @@ async function fetchStateFromSupabase(){
   // fields breaks.
   const practicalInternalWindow = loadJsonSetting('practical_internal_window');
   const seePracticalWindow = loadJsonSetting('see_practical_window');
+  const defaultScrutinyUserId = loadJsonSetting('default_scrutiny_user_id');
 
   const subjects = (subjectsR.data||[]).map(s=>({ id:s.id, code:s.code, abbr:s.abbr, courseType:s.course_type, name:s.name }));
   const studentDirectory = (studentDirR.data||[]).map(s=>({ id:s.id, rollNo:s.roll_no, name:s.name, email:s.email||'', branch:s.branch, batch:s.batch, semester:s.semester||'' }));
   const courseRegistrations = (courseRegR.data||[]).map(r=>({ id:r.id, batch:r.batch, branch:r.branch, regulation:r.regulation||'', semester:r.semester||'', rollNo:r.roll_no, studentName:r.student_name, subjectName:r.subject_name, sectionCode:r.section_code||'', instructorName:r.instructor_name||'', instructorEmail:r.instructor_email||'' }));
 
-  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, practicalInternalWindow, seePracticalWindow, termTestHistory, subjects, studentDirectory, courseRegistrations };
+  return { currentUserId:null, users, courses, assignments, notifications, currentTermTest, practicalInternalWindow, seePracticalWindow, defaultScrutinyUserId, termTestHistory, subjects, studentDirectory, courseRegistrations };
 }
 
 // Lightweight, pre-login fetch — just the public directory, used to
@@ -3753,6 +3792,7 @@ const ROLE_ALLOWED_VIEWS = {
   TTI: ['hod-coordinators','hod-cc-detail','hod-faculty'],
   EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
+  SCRUTINY: ['scrutiny-list','ci-termtest-entry','ci-component-entry'],
   FACULTY: ['ci-sections','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
 };
 function isViewAllowedForRole(role, view){
@@ -3792,6 +3832,7 @@ function canViewItemEntry(course, itemKey){
   if(getCourseCCUser(course.id)?.id === actor.id) return true;
   const ia = itemKey ? App.itemApproval(course.id, itemKey) : null;
   if(ia && ia.stage==='hod' && actor.systemRole==='HOD') return true;
+  if(ia && ia.stage==='scrutiny' && actor.systemRole==='SCRUTINY' && ia.scrutinyUserId===actor.id) return true;
   return false;
 }
 /* Per-student CC/EA/HOD remark columns on the Term Test (TT1/TT2) marks
@@ -3824,6 +3865,7 @@ function itemViewerBackBtnHtml(course, ciBackView, ciBackParams, ciBackLabel){
   if(actor && course && !isCourseOwnerCI(course)){
     if(actor.systemRole==='EA'){ view='ea-list'; params={}; label='← Back to verification queue'; }
     else if(actor.systemRole==='HOD'){ view='hod-list'; params={}; label='← Back to pending approval'; }
+    else if(actor.systemRole==='SCRUTINY'){ view='scrutiny-list'; params={}; label='← Back to scrutiny queue'; }
     else if(actor.systemRole==='ADMIN'){ view='admin-users'; params={}; label='← Back'; }
     else if(getCourseCCUser(course.id)?.id===actor.id){ view='cc-review'; params={courseId:course.id}; label='← Back to coordinator review'; }
   }
@@ -3839,7 +3881,7 @@ function itemViewerBackBtnHtml(course, ciBackView, ciBackParams, ciBackLabel){
 }
 
 const App = {
-  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, practicalInternalWindow:null, seePracticalWindow:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
+  state: { currentUserId:null, users:[], courses:[], assignments:[], notifications:[], currentTermTest:null, practicalInternalWindow:null, seePracticalWindow:null, defaultScrutinyUserId:null, termTestHistory:[], subjects:[], studentDirectory:[], courseRegistrations:[] },
   ui: { view:'', params:{} },
   ready:false,
 
@@ -4965,11 +5007,57 @@ const App = {
       ia.stage = 'done';
       const ciUser = getCourseCIUser(courseId);
       if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by the HOD.`, true, null, itemEntryLink(course, itemKey));
+    } else if(ia.stage==='scrutiny'){
+      if(actor.id!==ia.scrutinyUserId && actor.systemRole!=='ADMIN'){ toast('Only the Scrutiny Faculty this was assigned to can approve it.', 'err'); return; }
+      ia.stage = 'done';
+      const ciUser = getCourseCIUser(courseId);
+      if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by Scrutiny.`, true, null, itemEntryLink(course, itemKey));
+      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} approved by Scrutiny`, `${course.code} — ${label} was verified and approved by ${actor.name} (Scrutiny) on your behalf.`, true, null, itemEntryLink(course, itemKey)));
     }
     ia.remark = '';
     ia.history.push({ by:actor.name, role:actor.systemRole, action: ia.stage==='done' ? 'approved' : `forwarded to ${ITEM_STAGE_LABELS[ia.stage]}`, ts:Date.now() });
     syncCourse(course);
     toast(ia.stage==='done' ? `${label} approved.` : `${label} forwarded to ${ITEM_STAGE_LABELS[ia.stage]}.`, 'ok');
+    renderContent();
+  },
+  /* ---------- HOD: hand an item off to a Scrutiny Faculty member instead
+     of approving it directly — for departments with too many sections for
+     the HOD to personally verify each one. Only valid while the item is
+     actually sitting at the 'hod' stage; the Scrutiny Faculty member then
+     sees it in their own Scrutiny Queue and can Approve (finalizes exactly
+     like an HOD approval — see forwardItem's 'scrutiny' branch) or Send
+     Back to the CI, same as the HOD could have done. ---------- */
+  assignItemToScrutiny(courseId, itemKey, scrutinyUserId){
+    const course = this.getCourse(courseId);
+    if(!course) return;
+    const actor = this.currentUser();
+    if(actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can send this for scrutiny.', 'err'); return; }
+    const ia = this.itemApproval(courseId, itemKey);
+    const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
+    if(ia.stage!=='hod'){ toast(`${label} isn't waiting on HOD action right now.`, 'err'); return; }
+    const scrUser = scrutinyUserId ? this.getUserById(scrutinyUserId) : null;
+    if(!scrUser || scrUser.systemRole!=='SCRUTINY'){ toast('Choose a valid Scrutiny Faculty member.', 'err'); return; }
+    ia.stage = 'scrutiny';
+    ia.scrutinyUserId = scrUser.id;
+    ia.history.push({ by:actor.name, role:actor.systemRole, action:`assigned to Scrutiny (${scrUser.name})`, ts:Date.now() });
+    syncCourse(course);
+    this.notifyUser(scrUser.id, course, `${label} assigned to you for Scrutiny`, `${course.code} — ${label} has been assigned to you by the HOD for scrutiny verification.\n\nLogin here: ${buildAppLink('scrutiny-list',{})}`, true, null, itemEntryLink(course, itemKey));
+    toast(`${label} assigned to ${scrUser.name} for Scrutiny.`, 'ok');
+    renderContent();
+  },
+  /* ---------- ADMIN: which Scrutiny Faculty member "Send to Scrutiny" pre-
+     selects by default — HOD can still change it per item in the modal,
+     but doesn't have to for the common case of one designated verifier. ---------- */
+  setDefaultScrutinyUser(userId){
+    const actor = this.currentUser();
+    if(actor.systemRole!=='ADMIN'){ toast('Only an Administrator can set this.', 'err'); return; }
+    if(userId){
+      const u = this.getUserById(userId);
+      if(!u || u.systemRole!=='SCRUTINY'){ toast('Choose a valid Scrutiny Faculty member.', 'err'); return; }
+    }
+    this.state.defaultScrutinyUserId = userId || null;
+    syncAppSetting('default_scrutiny_user_id', this.state.defaultScrutinyUserId);
+    toast(this.state.defaultScrutinyUserId ? 'Default Scrutiny Faculty updated.' : 'Default Scrutiny Faculty cleared.', 'ok');
     renderContent();
   },
   /* ---------- CI: notify a Course Instructor if their just-forwarded Term
@@ -5009,6 +5097,7 @@ const App = {
     if(ia.stage==='cc'){
       if(actor.systemRole!=='ADMIN'){ toast('Course Coordinators don\'t send items back — add a CC Remark for the student instead and forward it on; the HOD can send it back to the Course Instructor.', 'err'); return; }
     } else if(ia.stage==='hod' && actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can send this back.', 'err'); return; }
+    else if(ia.stage==='scrutiny' && actor.id!==ia.scrutinyUserId && actor.systemRole!=='ADMIN'){ toast('Only the Scrutiny Faculty this was assigned to can send this back.', 'err'); return; }
     if(!remark || !remark.trim()){ toast('A remark is required so the Course Instructor knows what to fix.', 'err'); return; }
     ia.stage = 'ci';
     ia.remark = remark.trim();
@@ -5018,7 +5107,7 @@ const App = {
     // roster-assignment faculty if this item has an override, otherwise the
     // section's ordinary registered CI.
     const overrides = getItemRosterOverrides(course, itemKey);
-    const roleLabel = actor.systemRole==='ADMIN' ? 'Admin' : 'HOD';
+    const roleLabel = actor.systemRole==='ADMIN' ? 'Admin' : actor.systemRole==='SCRUTINY' ? 'Scrutiny' : 'HOD';
     const sentBackMsg = `${course.code} — ${label} was sent back by ${roleLabel} : Remark by ${roleLabel} is "${remark.trim()}"`;
     if(overrides.length) overrides.forEach(o=>this.notifyUser(o.facultyUserId, course, `${label} sent back`, sentBackMsg, true, null, itemEntryLink(course, itemKey)));
     else { const ciUser = getCourseCIUser(courseId); if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, sentBackMsg, true, null, itemEntryLink(course, itemKey)); }
@@ -6396,6 +6485,7 @@ function getNavForUser(user){
     {v:'ea-students', label:'Student Directory'},
   ];
   if(user.systemRole==='EXAM') return [{v:'exam-list', label:'Approved Records'}];
+  if(user.systemRole==='SCRUTINY') return [{v:'scrutiny-list', label:'Scrutiny Queue'}];
   // FACULTY — dynamic, derived from assignments
   const { ccCourses, ciCourses } = getFacultyCourses(user.id);
   const nav = [];
@@ -6441,6 +6531,18 @@ function navBadgeCount(viewKey, user){
   }
   if(viewKey==='cc-list'){
     return myPendingItemActions(user).filter(a=>a.role==='cc').length;
+  }
+  if(viewKey==='scrutiny-list'){
+    let n = 0;
+    App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
+      const template = getCourseTemplate(c);
+      ITEM_FLOW_KEYS.forEach(key=>{
+        if(!itemFlowApplicable(template, key)) return;
+        const ia = App.itemApproval(c.id, key);
+        if(ia && ia.stage==='scrutiny' && ia.scrutinyUserId===user.id) n++;
+      });
+    });
+    return n;
   }
   return 0;
 }
@@ -6509,6 +6611,7 @@ function renderContent(){
     'ea-faculty': renderEAFacultyDirectory,
     'ea-students': renderEAStudents,
     'ea-list': renderEAList,
+    'scrutiny-list': renderScrutinyList,
     'ea-review': renderEAReview,
     'exam-list': renderExamList,
     'verification-status': renderVerificationStatus,
@@ -7652,7 +7755,7 @@ function openAssignModal(type, courseId){
 window.openAssignModal = openAssignModal;
 
 /* ================= ADMIN VIEWS ================= */
-const FIXED_ROLE_OPTIONS = ['ADMIN','HOD','TTI','EA','EXAM','FACULTY'];
+const FIXED_ROLE_OPTIONS = ['ADMIN','HOD','TTI','EA','EXAM','FACULTY','SCRUTINY'];
 function roleSelectHtml(userId, currentRole){
   return `<select onchange="if(confirm('Change role to '+this.value+'?')){App.setSystemRole('${userId}', this.value);}else{this.value='${currentRole}';}">
     ${FIXED_ROLE_OPTIONS.map(r=>`<option value="${r}" ${r===currentRole?'selected':''}>${ROLE_LABELS[r]}</option>`).join('')}
@@ -7690,6 +7793,25 @@ function renderAdminUsers(){
         <div class="config-field"><label>Initial password</label><input id="new-acct-password" type="text" placeholder="min. 8 characters"></div>
       </div>
       <button class="btn" style="margin-top:14px;" onclick="App.createSystemAccount(document.getElementById('new-acct-name').value, document.getElementById('new-acct-email').value, document.getElementById('new-acct-role').value, document.getElementById('new-acct-password').value, document.getElementById('new-acct-branch').value)">Create Account</button>
+    </div>
+
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Default Scrutiny Faculty</div>
+      <p class="section-meta" style="margin-top:4px;">When an HOD sends a Term Test / Practical Internal / SEE Practical record for Scrutiny instead of approving it directly, this is who "Send to Scrutiny" pre-selects — the HOD can still pick someone else per item.</p>
+      ${(()=>{
+        const scrutinyUsers = users.filter(u=>u.systemRole==='SCRUTINY');
+        if(!scrutinyUsers.length) return `<p class="section-meta" style="margin-top:8px;">No Scrutiny accounts yet — create one above with the "Scrutiny" role first.</p>`;
+        return `<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:10px;">
+          <div class="config-field" style="max-width:320px;">
+            <label>Scrutiny Faculty</label>
+            <select id="default-scrutiny-select">
+              <option value="">— None set —</option>
+              ${scrutinyUsers.map(u=>`<option value="${u.id}" ${App.state.defaultScrutinyUserId===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+            </select>
+          </div>
+          <button class="btn btn-sm" onclick="App.setDefaultScrutinyUser(document.getElementById('default-scrutiny-select').value)">Save Default</button>
+        </div>`;
+      })()}
     </div>
 
     <div class="card">
@@ -9859,21 +9981,23 @@ function hodStatusPill(course){
    top of that page, so a Term Test that's reached the HOD's desk is
    on-time priority instead of something the HOD has to go hunting for. */
 function pendingTermTestApprovalsHtml(){
-  const rows = [];
+  const hodRows = [];
+  const scrutinyRows = [];
   App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
     const template = getCourseTemplate(c);
     ['tt1','tt2'].forEach(key=>{
       if(!itemFlowApplicable(template, key)) return;
       const ia = App.itemApproval(c.id, key);
-      if(ia && ia.stage==='hod') rows.push({ c, key });
+      if(ia && ia.stage==='hod') hodRows.push({ c, key });
+      else if(ia && ia.stage==='scrutiny') scrutinyRows.push({ c, key, ia });
     });
   });
-  if(!rows.length) return '';
+  if(!hodRows.length && !scrutinyRows.length) return '';
   return `
     <div class="card" style="border-left:3px solid var(--seal-red);margin-bottom:16px;">
       <div class="section-title" style="font-size:15px;">Term Test Approvals Awaiting You</div>
-      <p class="section-meta" style="margin-top:4px;">Forwarded by the Course Coordinator and waiting on your sign-off — verify the marks, then approve or send it back to the Course Instructor.</p>
-      ${rows.map(({c,key})=>`
+      <p class="section-meta" style="margin-top:4px;">Forwarded by the Course Coordinator and waiting on your sign-off — verify the marks, then approve, send it back, or hand it to a Scrutiny Faculty member instead.</p>
+      ${hodRows.map(({c,key})=>`
         <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
           <div>
             <div class="section-title" style="font-size:14px;">${escapeHtml(c.name)} — ${ITEM_FLOW_LABELS[key]}</div>
@@ -9882,7 +10006,16 @@ function pendingTermTestApprovalsHtml(){
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline" onclick="App.navigate('ci-termtest-entry',{courseId:'${c.id}', cycle:'${key==='tt1'?'TT1':'TT2'}'})">Verify</button>
             <button class="btn btn-sm btn-outline" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${c.id}','${key}', r);">Send Back</button>
+            <button class="btn btn-sm btn-outline" onclick="openAssignScrutinyModal('${c.id}','${key}')">Send to Scrutiny</button>
             <button class="btn btn-sm" onclick="App.forwardItem('${c.id}','${key}')">Approve</button>
+          </div>
+        </div>`).join('')}
+      ${scrutinyRows.map(({c,key,ia})=>`
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+          <div>
+            <div class="section-title" style="font-size:14px;">${escapeHtml(c.name)} — ${ITEM_FLOW_LABELS[key]}</div>
+            ${courseMetaBlock(c)}
+            <p class="section-meta" style="margin-top:4px;">Awaiting Scrutiny — assigned to ${escapeHtml(App.getUserById(ia.scrutinyUserId)?.name || 'Scrutiny Faculty')}.</p>
           </div>
         </div>`).join('')}
     </div>`;
@@ -10614,6 +10747,50 @@ function updateHODAuditList(dateKey){
 window.updateHODAuditList = updateHODAuditList;
 
 /* ================= EA VIEWS ================= */
+/* ---------- Scrutiny Queue ----------
+   For departments with too many sections for the HOD to personally verify
+   every Term Test / Practical Internal / SEE Practical record, the HOD can
+   hand an item at their own stage off to a Scrutiny Faculty member instead
+   of approving it directly (see App.assignItemToScrutiny). This is that
+   person's queue — everything currently assigned to THEM specifically
+   (ia.scrutinyUserId), with the same Verify/Send Back/Approve actions the
+   HOD would otherwise have used, via App.forwardItem/sendBackItem (both
+   already accept the 'scrutiny' stage — see the item-approval chain). */
+function renderScrutinyList(){
+  const user = App.currentUser();
+  const rows = [];
+  App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
+    const template = getCourseTemplate(c);
+    ITEM_FLOW_KEYS.forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      const ia = App.itemApproval(c.id, key);
+      if(ia && ia.stage==='scrutiny' && ia.scrutinyUserId===user.id) rows.push({ c, key });
+    });
+  });
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Scrutiny</div>
+      <h2>Scrutiny Queue</h2>
+      <p>Records the HOD has assigned to you for verification, in place of approving them directly. Approving here finalizes the record exactly as an HOD approval would.</p>
+    </div>
+    ${rows.length===0 ? emptyStateHtml('Nothing assigned', 'Records the HOD sends you for scrutiny will appear here.') : rows.map(({c,key})=>`
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="section-title">${escapeHtml(c.name)} — ${escapeHtml(ITEM_FLOW_LABELS[key])}</div>
+            ${courseMetaBlock(c)}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="${itemActionNavigateAttr(c, key)}">View Marks</button>
+            <button class="btn btn-sm btn-outline" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${c.id}','${key}', r);">Send Back</button>
+            <button class="btn btn-sm" onclick="App.forwardItem('${c.id}','${key}')">Approve</button>
+          </div>
+        </div>
+      </div>`).join('')}
+  `;
+  return wrap;
+}
 function renderEAList(){
   const list = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const wrap = el('<div></div>');
