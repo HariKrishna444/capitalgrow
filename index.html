@@ -10202,13 +10202,26 @@ function hodDashboardSummaryHtml(all, itemKey){
   </div>`;
   if(itemKey){
     // Exam-specific mode (Term Test 1/2/3, Practical Internal, SEE Practical):
-    // only subjects whose Evaluation Type template actually carries this
-    // item (see itemFlowApplicable) count at all, and status reflects THAT
-    // item's own independent CI -> CC -> HOD chain (App.itemApproval),
-    // never the Overall record's status — a course can be "InProgress"
-    // overall while its Term Test 1 has already reached the HOD.
+    // a course only counts here if it's a genuinely active, fully-assigned
+    // section — Evaluation Type fixed (c.evalType, which also implies a
+    // Course Instructor is already assigned — see App.assignRole/
+    // activateCourseSectionFromRegistration, the only two places evalType
+    // ever gets set) AND a Course Coordinator actually assigned
+    // (getCourseCCUser) AND that Evaluation Type's own template actually
+    // carries this item (itemFlowApplicable) — e.g. a pure-practical
+    // Evaluation Type has no Term Test component, so it never shows up
+    // under Term Test 1/2/3. A section imported straight from a Course
+    // Registration sheet can end up with a Course Instructor and an
+    // Evaluation Type but still no Coordinator (see the "Coordinator:
+    // Unassigned" case in that import path) — those are excluded too,
+    // same as any section whose Evaluation Type was never matched at all
+    // (evalType stays null until a Coordinator or Admin fixes one).
+    // Status reflects THAT item's own independent CI -> CC -> HOD chain
+    // (App.itemApproval), never the Overall record's status — a course
+    // can be "InProgress" overall while its Term Test 1 has already
+    // reached the HOD.
     const label = ITEM_FLOW_LABELS[itemKey];
-    const eligible = all.filter(c=>c.evalType && itemFlowApplicable(getCourseTemplate(c), itemKey));
+    const eligible = all.filter(c=>c.evalType && getCourseCCUser(c.id) && itemFlowApplicable(getCourseTemplate(c), itemKey));
     const counts = { ci:0, cc:0, scrutiny:0, hod:0, done:0 };
     eligible.forEach(c=>{
       const stage = App.itemApproval(c.id, itemKey)?.stage || 'ci';
