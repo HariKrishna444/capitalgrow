@@ -10237,6 +10237,96 @@ function hodDashboardSummaryHtml(all){
       </div>`}
     </div>`;
 }
+/* ---------- HOD Pending Approval: exam-cycle selector ----------
+   The five exam types that move through the CI -> CC -> HOD approval
+   chain (see ITEM_FLOW_KEYS/ITEM_FLOW_LABELS above) each have their own
+   cycle/window info — Term Test 1/2/3 share the Administrator's single
+   "currently fixed" cycle (App.state.currentTermTest), while Practical
+   Internal and SEE Practical each have their own independent admin
+   window (see adminWindowFor). Previously the HOD's Pending Approval
+   page only ever showed whichever Term Test cycle was fixed; this lets
+   the HOD pick any of the five from a dropdown, defaulting to whichever
+   one is actually active right now so nothing looks different until the
+   HOD asks to see another one. */
+let hodExamCycleSelection = null;
+function setHodExamCycleSelection(key){ hodExamCycleSelection = key; renderContent(); }
+window.setHodExamCycleSelection = setHodExamCycleSelection;
+function defaultHodExamCycleKey(){
+  const tt = App.state.currentTermTest;
+  const nowTs = Date.now();
+  if(tt && tt.cycle){
+    const endTs = tt.endDate ? new Date(tt.endDate).getTime() : null;
+    const ttKey = tt.cycle==='TT1' ? 'tt1' : tt.cycle==='TT2' ? 'tt2' : tt.cycle==='TT3' ? 'tt3' : null;
+    if(ttKey && !(endTs && nowTs > endTs)) return ttKey;
+  }
+  for(const kind of ['pracInternal','seePractical']){
+    const win = adminWindowFor(kind);
+    if(win && (win.startDate || win.endDate)){
+      const startTs = win.startDate ? new Date(win.startDate).getTime() : null;
+      const endTs = win.endDate ? new Date(win.endDate).getTime() : null;
+      if(!(startTs && nowTs < startTs) && !(endTs && nowTs > endTs)) return kind;
+    }
+  }
+  const ttKey = tt && tt.cycle ? (tt.cycle==='TT1' ? 'tt1' : tt.cycle==='TT2' ? 'tt2' : tt.cycle==='TT3' ? 'tt3' : null) : null;
+  return ttKey || 'tt1';
+}
+function hodExamCycleInfo(key){
+  const fmtWindow = (startTs, endTs) => {
+    const dOnly = ts => new Date(ts).toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'});
+    if(startTs && endTs) return `${dOnly(startTs)} – ${dOnly(endTs)}`;
+    if(startTs) return `Opens ${dOnly(startTs)}`;
+    if(endTs) return `Closes ${dOnly(endTs)}`;
+    return 'No window set';
+  };
+  const nowTs = Date.now();
+  if(key==='tt1' || key==='tt2' || key==='tt3'){
+    const cycleCode = key.toUpperCase();
+    const tt = App.state.currentTermTest;
+    if(tt && tt.cycle===cycleCode){
+      const startTs = tt.startDate ? new Date(tt.startDate).getTime() : null;
+      const endTs = tt.endDate ? new Date(tt.endDate).getTime() : null;
+      const ended = endTs && nowTs > endTs;
+      const notStarted = startTs && nowTs < startTs;
+      const fullLabel = (tt.academicYear && tt.semester) ? `${tt.academicYear} · ${tt.semester} · ${ITEM_FLOW_LABELS[key]}` : ITEM_FLOW_LABELS[key];
+      return { kind: ended ? 'Previous' : notStarted ? 'Upcoming' : 'Active', label:fullLabel, windowText:fmtWindow(startTs, endTs) };
+    }
+    // Not the currently-fixed cycle — fall back to this cycle's most recent past window, if any is on record.
+    const history = App.state.termTestHistory || [];
+    const past = history.find(h=>h.cycle===cycleCode && (h.startDate || h.endDate));
+    if(past){
+      const startTs = past.startDate ? new Date(past.startDate).getTime() : null;
+      const endTs = past.endDate ? new Date(past.endDate).getTime() : null;
+      const fullLabel = (past.academicYear && past.semester) ? `${past.academicYear} · ${past.semester} · ${ITEM_FLOW_LABELS[key]}` : ITEM_FLOW_LABELS[key];
+      return { kind:'Previous', label:fullLabel, windowText:fmtWindow(startTs, endTs) };
+    }
+    return { kind:'Not fixed', label:ITEM_FLOW_LABELS[key], windowText:'Not currently fixed by the Administrator' };
+  }
+  // pracInternal / seePractical — independent Administrator window, no academic-year/semester tag.
+  const win = adminWindowFor(key);
+  const startTs = win?.startDate ? new Date(win.startDate).getTime() : null;
+  const endTs = win?.endDate ? new Date(win.endDate).getTime() : null;
+  const noWindow = !win || (!startTs && !endTs);
+  const notStarted = startTs && nowTs < startTs;
+  const ended = endTs && nowTs > endTs;
+  const kind = noWindow ? 'No restriction' : ended ? 'Previous' : notStarted ? 'Upcoming' : 'Active';
+  return { kind, label:ITEM_FLOW_LABELS[key], windowText: noWindow ? 'No window set — always open' : fmtWindow(startTs, endTs) };
+}
+function hodExamCycleBannerHtml(){
+  const activeKey = (hodExamCycleSelection && ITEM_FLOW_KEYS.includes(hodExamCycleSelection)) ? hodExamCycleSelection : defaultHodExamCycleKey();
+  hodExamCycleSelection = activeKey; // lock in the resolved default so the dropdown and banner never disagree
+  const info = hodExamCycleInfo(activeKey);
+  const pillClass = info.kind==='Active' ? 'status-approved' : info.kind==='Upcoming' ? 'status-submitted' : 'status-draft';
+  const borderColor = info.kind==='Active' ? 'var(--brass)' : 'var(--text-soft)';
+  const options = ITEM_FLOW_KEYS.map(k=>`<option value="${k}" ${k===activeKey?'selected':''}>${ITEM_FLOW_LABELS[k]}</option>`).join('');
+  return `<div class="card" style="padding:12px 16px;margin-bottom:14px;border-left:3px solid ${borderColor};display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span class="status-pill ${pillClass}">${escapeHtml(info.kind)} examination cycle</span>
+      <span class="section-meta" style="font-weight:600;color:var(--ink);">${escapeHtml(info.label)}</span>
+      <span class="section-meta">${escapeHtml(info.windowText)}</span>
+    </div>
+    <select style="width:auto;min-width:180px;" onchange="setHodExamCycleSelection(this.value)" aria-label="Choose which exam's cycle to view">${options}</select>
+  </div>`;
+}
 function renderHODList(){
   const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   const list = hodListFilter==='approved' ? all.filter(c=>c.status==='approved')
@@ -10250,7 +10340,7 @@ function renderHODList(){
       <h2>Pending Approval</h2>
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
-    ${termTestPeriodBannerHtml()}
+    ${hodExamCycleBannerHtml()}
     ${pendingTermTestApprovalsHtml()}
     ${hodDashboardSummaryHtml(all)}
     ${pendingEtRequestsHtml()}
