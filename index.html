@@ -549,6 +549,17 @@ input,select,textarea{font-family:inherit;}
   border-left-color:var(--brass);
   background:rgba(79,70,229,0.12);
 }
+.nav-group-label{
+  display:flex;align-items:center;justify-content:space-between;gap:6px;
+  width:100%;text-align:left;background:none;border:none;cursor:pointer;
+  font-family:'IBM Plex Mono', monospace;
+  font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
+  color:var(--text-soft);
+  padding:14px 16px 4px;
+}
+.nav-group-label:first-child{padding-top:2px;}
+.nav-group-label:hover{color:var(--ink);}
+.nav-group-caret{font-size:9px;flex-shrink:0;transition:transform 0.15s ease;}
 .content{flex:1;padding:36px 40px 64px;max-width:1120px;}
 
 /* ---------------- SHARED COMPONENTS ---------------- */
@@ -791,6 +802,39 @@ table.data-table.sticky-thead{
 .search-input:focus{outline:none;border-color:var(--brass-light);box-shadow:0 0 0 3px rgba(99,102,241,0.18);}
 
 .table-scroll{overflow-x:auto;}
+
+/* Explicit scroll slider for the Term Test marks table — see
+   syncTTMarksScrollbars() and the .tt-marks-scroll wrapper it targets.
+   Styled as a slim brass-accented track/thumb so it reads as part of the
+   app's UI (not a bare OS control), and stays out of the way at 6px tall
+   until the user actually needs to grab it.
+   The container's own native horizontal scrollbar is hidden (below) —
+   with both present, the native strip sits right at the table's bottom
+   edge and is easy to mistake for "the" scrollbar while this slider (a
+   few px further down, outside .tt-marks-scroll) goes unnoticed. Hiding
+   the native one leaves this slider as the one obvious way to scroll. */
+.tt-marks-scroll{scrollbar-width:none;-ms-overflow-style:none;}
+.tt-marks-scroll::-webkit-scrollbar{display:none;height:0;}
+.tt-marks-scrollbar{
+  -webkit-appearance:none;appearance:none;
+  display:block;width:100%;height:10px;border-radius:5px;
+  background:var(--rule);outline:none;cursor:pointer;
+}
+.tt-marks-scrollbar::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:20px;height:20px;border-radius:50%;
+  background:var(--brass);border:2px solid var(--card);
+  box-shadow:0 0 0 1px var(--rule);cursor:grab;
+}
+.tt-marks-scrollbar::-webkit-slider-thumb:active{cursor:grabbing;}
+.tt-marks-scrollbar::-moz-range-thumb{
+  width:20px;height:20px;border-radius:50%;
+  background:var(--brass);border:2px solid var(--card);
+  box-shadow:0 0 0 1px var(--rule);cursor:grab;
+}
+.tt-marks-scrollbar::-moz-range-track{height:10px;border-radius:5px;background:var(--rule);}
+body.tt-fs-active .tt-marks-scrollbar{margin-top:4px;flex-shrink:0;}
+
 
 /* Full-screen marks-entry mode (Term Test 1/2) — toggleTTFullscreen()
    fullscreens document.documentElement (the whole page) rather than this
@@ -1698,6 +1742,9 @@ const STATUS_CLASS = { draft:'status-draft', submitted:'status-submitted', coord
    is added, itemFlowApplicable('tt3') is always false and this chain
    never actually starts for it. */
 const ITEM_FLOW_KEYS = ['tt1','tt2','tt3','pracInternal','seePractical'];
+// Subset of ITEM_FLOW_KEYS that stays gated behind a Roster Assignment
+// override with no Course-Registration fallback — see itemEntryStudents.
+const TERM_TEST_ITEM_KEYS = ['tt1','tt2','tt3'];
 const ITEM_FLOW_LABELS = { tt1:'Term Test 1', tt2:'Term Test 2', tt3:'Term Test 3', pracInternal:'Practical Internal Test', seePractical:'SEE Practical' };
 const ITEM_STAGE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator', hod:'HOD', scrutiny:'Scrutiny', done:'Approved' };
 const ITEM_NEXT_STAGE = { ci:'cc', cc:'hod', hod:'done' };
@@ -1769,6 +1816,25 @@ function itemActionNavigateAttr(course, itemKey){
 function getItemRosterOverrides(course, itemKey){
   return (course && course.itemRosterOverrides && course.itemRosterOverrides[itemKey]) || [];
 }
+/* Roll number is the primary key for any student list shown on a marks-
+   entry page. If course.students ever ends up with two rows for the same
+   roll number (e.g. a section imported twice from Course Registration, or
+   merged from two upload batches), keep only the first occurrence so the
+   TT1/TT2/TT3/Practical Internal/SEE Practical entry tables — and the
+   plain roster fallback — never render the same student twice. Rows with
+   no roll number at all are left alone since there's no key to dedupe on. */
+function dedupeStudentsByRoll(list){
+  const seen = new Set();
+  const out = [];
+  (list||[]).forEach(s=>{
+    const key = s && s.rollNo ? String(s.rollNo).trim().toUpperCase() : '';
+    if(!key){ out.push(s); return; }
+    if(seen.has(key)) return;
+    seen.add(key);
+    out.push(s);
+  });
+  return out;
+}
 /* Whoever is looking at an item that HAS overrides is only treated as "the
    CI" for permission purposes (view/edit/forward at the ci stage) if
    they're one of the uploaded faculty for THIS item — the section's
@@ -1785,25 +1851,32 @@ function isItemCIFor(course, itemKey){
   return isCourseOwnerCI(course);
 }
 /* Which of course.students belong on THIS item's entry/verification page
-   for the CURRENT viewer. No overrides -> nothing shown for any of the 5
-   ITEM_FLOW_KEYS (Term Test 1/2/3, Practical Internal, SEE Practical) —
-   student names/roll numbers stay hidden until an Administrator has
-   uploaded a roll-number list for that specific item via Roster
-   Assignment; Course Registration's full class list must never show up
-   here by default for ANY of them. Every other component on the course
-   (every non-item CIE/SEE field, the Overall record) is completely
-   unaffected — this only narrows what these 5 pages show. With overrides
-   -> a faculty member who owns one of the uploaded slices sees only THEIR
-   OWN roll numbers (so two examiners splitting one item never see or
-   touch each other's rows); anyone else looking at the page (Admin, the
-   assigned CC, HOD at their own stage, or even the section's own ordinary
-   CI if the item was fully handed off to others) sees the combined pool
-   across every uploaded slice, for verification. */
+   for the CURRENT viewer. No overrides -> Term Test 1/2/3 (TERM_TEST_ITEM_
+   KEYS) show nothing at all — those student names/roll numbers stay hidden
+   until an Administrator has uploaded a roll-number list for that specific
+   cycle via Roster Assignment, and are entered from the "Evaluation" tab,
+   not "My Subjects". Practical Internal Test and SEE Practical, and every
+   non-item CIE/SEE component, fall back to the full Course Registration
+   roster instead — they're entered directly from "My Subjects" like any
+   other component and don't need a Roster Assignment override to be
+   usable. With overrides -> a faculty member who owns one of the uploaded
+   slices sees only THEIR OWN roll numbers (so two examiners splitting one
+   item never see or touch each other's rows); anyone else looking at the
+   page (Admin, the assigned CC, HOD at their own stage, or even the
+   section's own ordinary CI if the item was fully handed off to others)
+   sees the combined pool across every uploaded slice, for verification. */
 function itemEntryStudents(course, itemKey){
-  const all = course.students || [];
+  const all = dedupeStudentsByRoll(course.students || []);
   const overrides = getItemRosterOverrides(course, itemKey);
   if(!overrides.length){
-    if(ITEM_FLOW_KEYS.includes(itemKey)) return [];
+    // Only Term Test 1/2/3 stay gated behind a Roster Assignment override —
+    // those are entered from the "Evaluation" tab, not "My Subjects" (see
+    // renderCIEvaluation / ci-subject-detail's tt1Key/tt2Key handling).
+    // Practical Internal Test and SEE Practical are entered directly from
+    // "My Subjects" against the ordinary Course Registration roster, same
+    // as every other CIE/SEE component, so they fall through to `all` here
+    // just like a non-item-flow component would.
+    if(TERM_TEST_ITEM_KEYS.includes(itemKey)) return [];
     return all;
   }
   const actor = App.currentUser();
@@ -1993,6 +2066,67 @@ function svgPieChart(segments, opts={}){
     <div>${legend}</div>
   </div>`;
 }
+/* Smoothed "bell curve" frequency-polygon for a set of {student,total}
+   scores against a fixed maxScore — a quick visual read of where the
+   group clustered (the "Bundle Average" card on the Term Test entry
+   page). This is a smoothed histogram, not a fitted normal-distribution
+   curve — it doesn't claim the underlying scores ARE normally
+   distributed, it just renders however they actually bucketed as a
+   continuous curve instead of jagged bars, which is the shape people
+   mean colloquially by "bell curve". Buckets into a handful of
+   equal-width bins, plots bucket counts as a Catmull-Rom smoothed curve
+   pinned to zero at both ends (so it closes into a fillable area instead
+   of a dangling line), and marks the mean with a dashed vertical guide. */
+function svgBellCurveChart(scored, maxScore, opts={}){
+  const w = opts.width || 380, h = opts.height || 190;
+  const padL = 30, padR = 14, padT = 26, padB = 28;
+  const chartW = w-padL-padR, chartH = h-padT-padB;
+  if(!scored.length || maxScore<=0){
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="max-width:100%;height:auto;"><text x="${w/2}" y="${h/2}" text-anchor="middle" style="font-size:11px;fill:var(--text-soft);">No data yet</text></svg>`;
+  }
+  const bucketCount = Math.min(10, Math.max(5, Math.round(Math.sqrt(scored.length))));
+  const bucketSize = maxScore/bucketCount;
+  const counts = new Array(bucketCount).fill(0);
+  scored.forEach(x=>{
+    let idx = Math.floor(x.total/bucketSize);
+    if(idx>=bucketCount) idx = bucketCount-1;
+    if(idx<0) idx = 0;
+    counts[idx]++;
+  });
+  const maxCount = Math.max(1, ...counts);
+  const mean = scored.reduce((a,x)=>a+x.total,0)/scored.length;
+  // Points at each bucket's midpoint, plus zero-height anchors at both
+  // ends of the score range so the smoothed curve closes to the baseline.
+  const pts = [{x:0, y:0}];
+  counts.forEach((c,i)=> pts.push({ x:(i+0.5)*bucketSize, y:c }));
+  pts.push({x:maxScore, y:0});
+  const toX = v => padL + (v/maxScore)*chartW;
+  const toY = v => padT + chartH - (v/maxCount)*chartH;
+  const sx = pts.map(p=>toX(p.x)), sy = pts.map(p=>toY(p.y));
+  let d = `M ${sx[0].toFixed(1)} ${sy[0].toFixed(1)}`;
+  for(let i=0;i<sx.length-1;i++){
+    const p0x = sx[i-1] ?? sx[i], p0y = sy[i-1] ?? sy[i];
+    const p1x = sx[i], p1y = sy[i];
+    const p2x = sx[i+1], p2y = sy[i+1];
+    const p3x = sx[i+2] ?? p2x, p3y = sy[i+2] ?? p2y;
+    const c1x = p1x + (p2x-p0x)/6, c1y = p1y + (p2y-p0y)/6;
+    const c2x = p2x - (p3x-p1x)/6, c2y = p2y - (p3y-p1y)/6;
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2x.toFixed(1)} ${p2y.toFixed(1)}`;
+  }
+  const baseline = padT+chartH;
+  const areaPath = `${d} L ${sx[sx.length-1].toFixed(1)} ${baseline.toFixed(1)} L ${sx[0].toFixed(1)} ${baseline.toFixed(1)} Z`;
+  const meanX = toX(Math.min(maxScore, Math.max(0, mean)));
+  const axis = `<line x1="${padL}" y1="${baseline}" x2="${padL+chartW}" y2="${baseline}" style="stroke:var(--rule);stroke-width:1;"/>`;
+  const meanLine = `<line x1="${meanX.toFixed(1)}" y1="${padT-4}" x2="${meanX.toFixed(1)}" y2="${baseline}" style="stroke:var(--seal-red);stroke-width:1.3;stroke-dasharray:4,3;"/>
+    <text x="${meanX.toFixed(1)}" y="${padT-10}" text-anchor="middle" style="font-size:9.5px;font-family:'IBM Plex Mono',monospace;fill:var(--seal-red);">avg ${round1(mean)}</text>`;
+  const endLabels = `<text x="${padL}" y="${h-8}" text-anchor="start" style="font-size:9.5px;font-family:'IBM Plex Mono',monospace;fill:var(--text-soft);">0</text>
+    <text x="${padL+chartW}" y="${h-8}" text-anchor="end" style="font-size:9.5px;font-family:'IBM Plex Mono',monospace;fill:var(--text-soft);">${round1(maxScore)}</text>`;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="max-width:100%;height:auto;">
+    <path d="${areaPath}" style="fill:rgba(163,133,74,0.16);stroke:none;"/>
+    <path d="${d}" style="fill:none;stroke:var(--brass);stroke-width:2;"/>
+    ${axis}${meanLine}${endLabels}
+  </svg>`;
+}
 /* Builds the histogram + performance-band pie for a set of {student,total}
    scores against a fixed maxScore. Used on the Term Test entry page (and
    reusable anywhere a raw-mark distribution needs a quick visual). */
@@ -2071,41 +2205,68 @@ function openAssignScrutinyModal(courseId, itemKey){
   `);
 }
 window.openAssignScrutinyModal = openAssignScrutinyModal;
+/* Whether the Course Coordinator has flagged at least one student with a
+   CC Remark on this item — used to unlock the CC's "Send Back to CI"
+   option (see itemApprovalStatusHtml / App.sendBackItem below). Term Test
+   1/2/3 only, since that's the only item type with a per-student CC
+   remark column (ttStudentRemarkCell) wired up right now — Practical
+   Internal / SEE Practical have no equivalent remark storage yet. */
+function itemHasCCRemark(course, itemKey){
+  const cycle = itemKey==='tt1' ? 'TT1' : itemKey==='tt2' ? 'TT2' : itemKey==='tt3' ? 'TT3' : null;
+  if(!cycle || !course) return false;
+  return (course.students||[]).some(s=>!!((((s.marks||{}).ttRemarks||{})[cycle]||{}).cc||'').trim());
+}
 function itemApprovalStatusHtml(course, itemKey){
   const ia = App.itemApproval(course.id, itemKey);
   if(!ia) return '';
   const actor = App.currentUser();
   const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
-  const canForward =
-    (ia.stage==='cc' && (getCourseCCUser(course.id)?.id===actor.id || actor.systemRole==='ADMIN')) ||
+  // The Course Coordinator's own Verify & Forward / Send Back controls are
+  // deliberately NOT shown here on the shared marks-entry page — this page
+  // is reachable from the CI's own dashboard too (as the assigned CI, or
+  // via a notification deep link), and having the CC's action buttons
+  // appear on what reads as "the CI's page" was confusing. The CC still
+  // reviews marks and types their per-student CC Remark right here; the
+  // actual Forward/Send Back action lives exclusively on the CC's own
+  // "Pending Evaluation" dashboard page instead. An Admin acting as a
+  // general override is unaffected and still gets the buttons from any
+  // page, including this one.
+  const isRealCC = getCourseCCUser(course.id)?.id === actor.id;
+  const hideCCActionsHere = ia.stage==='cc' && isRealCC && actor.systemRole!=='ADMIN';
+  const canForward = !hideCCActionsHere && (
+    (ia.stage==='cc' && (isRealCC || actor.systemRole==='ADMIN')) ||
     (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN')) ||
-    (ia.stage==='scrutiny' && (actor.id===ia.scrutinyUserId || actor.systemRole==='ADMIN'));
-  // The Course Coordinator does NOT get a "Send Back to CI" button — instead
-  // they flag a problem on a particular student via the CC Remark column
-  // (see ttStudentRemarkCell) and simply forward on, leaving the actual
-  // send-back-or-not call to the HOD once they've reviewed those remarks.
-  // So only HOD (or an Admin, as a general override) can send an item back
-  // to the CI. There's no EA step in this chain at all (unlike the Overall
-  // record's flow). The assigned Scrutiny Faculty member gets the same
-  // send-back power the HOD would have had, once it's been handed to them.
-  const canSendBack =
+    (ia.stage==='scrutiny' && (actor.id===ia.scrutinyUserId || actor.systemRole==='ADMIN')));
+  // The Course Coordinator's normal path is to flag a problem on a
+  // particular student via the CC Remark column (see ttStudentRemarkCell)
+  // and forward on, leaving the send-back-or-not call to the HOD. If the
+  // CC HAS left a remark, though, they can now send the item straight back
+  // to the CI themselves instead of routing it through the HOD first — the
+  // remark is the signal that something needs the CI's attention right
+  // away. With no remark, forwarding to the HOD is still the only option.
+  const canSendBack = !hideCCActionsHere && (
     (ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN')) ||
     (ia.stage==='scrutiny' && (actor.id===ia.scrutinyUserId || actor.systemRole==='ADMIN')) ||
-    (ia.stage==='cc' && actor.systemRole==='ADMIN');
+    (ia.stage==='cc' && (actor.systemRole==='ADMIN' || (isRealCC && itemHasCCRemark(course, itemKey)))));
   // Only the HOD (not the Scrutiny Faculty member it might already be
   // delegated to) can hand an item off for scrutiny — it's a one-hop
   // delegation, not a re-delegation chain.
-  const canAssignScrutiny = ia.stage==='hod' && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN');
+  // One-hop delegation only — once Scrutiny has verified and forwarded an
+  // item back (ia.postScrutiny), the HOD can't send it out again; they
+  // approve or send it back themselves (see App.assignItemToScrutiny's
+  // matching guard).
+  const canAssignScrutiny = ia.stage==='hod' && !ia.postScrutiny && (actor.systemRole==='HOD' || actor.systemRole==='ADMIN');
   const actionHtml = (canForward || canSendBack || canAssignScrutiny) ? `<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
       ${canSendBack ? `<button class="btn btn-red btn-sm" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${course.id}','${itemKey}', r);">Send Back to CI</button>` : ''}
       ${canAssignScrutiny ? `<button class="btn btn-outline btn-sm" onclick="openAssignScrutinyModal('${course.id}','${itemKey}')">Send to Scrutiny</button>` : ''}
-      ${canForward ? `<button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${(ia.stage==='hod'||ia.stage==='scrutiny') ? 'Approve' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>` : ''}
-    </div>` : '';
+      ${canForward ? `<button class="btn btn-green btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">${ia.stage==='hod' ? 'Approve' : ia.stage==='scrutiny' ? 'Verify & Forward' : 'Forward to '+ITEM_STAGE_LABELS[ITEM_NEXT_STAGE[ia.stage]]}</button>` : ''}
+    </div>` : (hideCCActionsHere ? `<p class="section-meta" style="margin-top:10px;">Add a CC Remark on any student above if something needs the Course Instructor's attention, then head to <a href="#" onclick="App.navigate('cc-pending-evaluation',{}); return false;">Pending Evaluation</a> to verify and forward this — or send it straight back to the Course Instructor.</p>` : '');
   return `<div class="card">
     <div class="section-title" style="font-size:14px;">${escapeHtml(label)} — Verification Status</div>
     <div style="margin-top:10px;">${itemStageDotsHtml(ia.stage)}</div>
     ${ia.remark ? `<p class="section-meta" style="margin-top:6px;color:var(--seal-red);">Sent back: ${escapeHtml(ia.remark)}</p>` : ''}
     ${ia.stage==='scrutiny' && ia.scrutinyUserId ? `<p class="section-meta" style="margin-top:6px;">Assigned to ${escapeHtml(App.getUserById(ia.scrutinyUserId)?.name || 'Scrutiny Faculty')} for scrutiny.</p>` : ''}
+    ${ia.stage==='hod' && ia.postScrutiny ? `<p class="section-meta" style="margin-top:6px;color:var(--brass);">Verified by ${escapeHtml(App.getUserById(ia.scrutinyUserId)?.name || 'Scrutiny Faculty')} (Scrutiny) — awaiting your final approval.</p>` : ''}
     ${actionHtml}
   </div>`;
 }
@@ -2141,10 +2302,20 @@ function termTestActionBarHtml(course, itemKey, editable, periodFinished, ia){
   const inCIWindow = course.status==='draft' || correctionMode;
   if(!stillCIsTurn || !inCIWindow || !(editable || periodFinished)) return '';
   const saveBtn = editable ? `<button class="btn btn-outline btn-sm" onclick="App.saveItemProgress('${course.id}')">Save Progress</button>` : '';
-  const forwardBtn = `<button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>`;
+  // The CI must tag and upload the Best / Average / Lowest performing
+  // student's scanned answer script (see ttForwardReadiness, SCRIPT_KINDS,
+  // ttScriptUploadCell) before Forward to Course Coordinator is enabled —
+  // this applies whether or not marks entry itself is complete yet, so an
+  // incomplete-marks "forward early" can't be used to skip the script
+  // requirement.
+  const readiness = ttForwardReadiness(course, itemKey);
+  const forwardBtn = readiness.ready
+    ? `<button class="btn btn-sm" onclick="App.forwardItem('${course.id}','${itemKey}')">Forward to Course Coordinator</button>`
+    : `<button class="btn btn-sm" disabled title="Upload the Best, Average and Lowest answer scripts below first.">Forward to Course Coordinator</button>`;
   return `<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;">
     ${saveBtn}${forwardBtn}
-    ${!periodFinished ? `<span class="section-meta" style="font-size:12px;">Forwarding early — verification by the Course Coordinator can start right away, before the entry period ends.</span>` : ''}
+    ${!readiness.ready ? `<span class="section-meta" style="font-size:12px;color:var(--seal-red);">Upload the Best, Average and Lowest answer scripts (Evaluated Script column above) before you can forward this to the Course Coordinator${readiness.allMarksComplete ? '' : ' — even if marks entry isn\'t finished yet'}.</span>`
+      : (!periodFinished ? `<span class="section-meta" style="font-size:12px;">Forwarding early — verification by the Course Coordinator can start right away, before the entry period ends.</span>` : '')}
   </div>`;
 }
 
@@ -3833,13 +4004,31 @@ window.addEventListener('popstate', ()=>{
    back to their own dashboard instead of erroring or landing somewhere
    they have no business being. */
 const ROLE_ALLOWED_VIEWS = {
-  ADMIN: ['admin-users','admin-course-reg','admin-roster-assignment','hod-coordinators','hod-termtest','hod-cc-detail','admin-seating-plan'],
-  HOD: ['hod-list','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview','ci-termtest-entry','ci-component-entry'],
+  // Admin can view every page in the system — every other role's own
+  // dashboard pages (for oversight, since Admin already has override
+  // rights on the actions those pages expose — see the ADMIN checks
+  // throughout forwardItem/sendBackItem/canForward etc.), plus the three
+  // dedicated system-wide overview pages built for CI/CC/Scrutiny (whose
+  // normal pages filter to "items assigned to ME", which doesn't apply to
+  // an Admin) and every admin-only page. Kept as an explicit list (rather
+  // than "allow everything") so this stays a deliberate whitelist same as
+  // every other role below, and a stray/typo'd view name still falls back
+  // to the dashboard instead of silently rendering nothing.
+  ADMIN: ['admin-users','admin-course-reg','admin-roster-assignment','admin-seating-plan',
+    'admin-ci-overview','admin-cc-overview','admin-scrutiny-overview',
+    'hod-coordinators','hod-termtest','hod-cc-detail','hod-list','hod-scrutiny-approvals',
+    'hod-faculty','hod-audit','hod-review','hod-termtest-overview','hod-labint-overview','hod-labext-overview',
+    'ea-list','ea-faculty','ea-students','ea-review','exam-list',
+    'scrutiny-list','verification-status',
+    'ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','ci-subject-detail','ci-entry',
+    'ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext',
+    'cc-list','cc-pending-evaluation','cc-roster','cc-review','cc-termtest-setup'],
+  HOD: ['hod-list','hod-scrutiny-approvals','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview','ci-termtest-entry','ci-component-entry'],
   TTI: ['hod-coordinators','hod-cc-detail','hod-faculty'],
   EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
   SCRUTINY: ['scrutiny-list','ci-termtest-entry','ci-component-entry'],
-  FACULTY: ['ci-sections','ci-evaluation','ci-my-sections','ci-class-progress','ci-pending','ci-audit','cc-list','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
+  FACULTY: ['ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','cc-list','cc-pending-evaluation','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
 };
 function isViewAllowedForRole(role, view){
   const allowed = ROLE_ALLOWED_VIEWS[role];
@@ -3897,6 +4086,11 @@ function canEditTTStudentRemark(course, itemKey, role){
   if(role==='cc') return getCourseCCUser(course.id)?.id === actor.id;
   if(role==='ea') return actor.systemRole==='EA' && !!ia && ia.stage==='ea';
   if(role==='hod') return actor.systemRole==='HOD' && !!ia && ia.stage==='hod';
+  // Scrutiny Faculty can only type a remark while this exact item is
+  // sitting at the 'scrutiny' stage AND is assigned to them specifically
+  // (ia.scrutinyUserId) — matching the same one-person-at-a-time rule the
+  // HOD's own remark box follows at the 'hod' stage.
+  if(role==='scrutiny') return actor.systemRole==='SCRUTINY' && !!ia && ia.stage==='scrutiny' && ia.scrutinyUserId===actor.id;
   return false;
 }
 /* Where the "← Back" button on a shared item-entry page (Term Test or a
@@ -3948,7 +4142,14 @@ const App = {
     if(!course || course.studentsLoaded) return course;
     const { data, error } = await sb.from('students').select('*').eq('course_id', courseId);
     if(error){ toast('Could not load this section\'s roster: ' + (error.message||error), 'err'); return course; }
-    course.students = (data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null, absent:!!s.absent }));
+    // Roll number is the primary key for a section's roster. If the
+    // `students` table ever ends up with two DB rows for the same roll
+    // number under this course (a double import, a retried upload, etc.),
+    // collapse them to one right here — before ANY page reads
+    // course.students — so Term Test 1/2/3, Practical Internal, SEE
+    // Practical, Class Progress, Overall records, exports, and Analytics
+    // all see a single row per student, not just the item-entry tables.
+    course.students = dedupeStudentsByRoll((data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null, absent:!!s.absent })));
     // Supabase returns rows in no particular order (insertion order in
     // practice) — every marks table (Term Test 1/2/3, Lab Internal/External,
     // Other CIE, SIA, SEE, the read-only roll-ups, Analytics, etc.) just
@@ -4071,7 +4272,7 @@ const App = {
         if(getCourseCIUser(course.id)?.id===userId) return { view:'ci-subject-detail', params:{ courseId: course.id } };
         if(getCourseCCUser(course.id)?.id===userId) return { view:'cc-review', params:{ courseId: course.id } };
       }
-      return { view:'ci-sections', params:{} };
+      return { view:'ci-evaluation', params:{} };
     }
     if(u.systemRole==='EA') return course ? { view:'ea-review', params:{ courseId: course.id } } : { view:'ea-list', params:{} };
     if(u.systemRole==='HOD') return course ? { view:'hod-review', params:{ courseId: course.id } } : { view:'hod-list', params:{} };
@@ -4080,10 +4281,10 @@ const App = {
     if(u.systemRole==='ADMIN') return { view:'admin-users', params:{} };
     return null;
   },
-  notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null, link=null){
+  notifyUser(userId, course, title, body, notifyEmail=false, fromEmail=null, link=null, popup=false){
     const resolvedLink = link || this.defaultNotificationLink(userId, course);
     const fullBody = resolvedLink ? `${body}\n\nLogin here: ${buildAppLink(resolvedLink.view, resolvedLink.params)}` : body;
-    const n = { id:bizId('NOTE', [course ? course.code : 'GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:userId, courseId:course.id, title, body: fullBody, ts:Date.now(), read:false, notifyEmail, fromEmail };
+    const n = { id:bizId('NOTE', [course ? course.code : 'GENERAL', this.state.notifications.length+1], this.state.notifications.map(x=>x.id)), forUserId:userId, courseId:course.id, title, body: fullBody, ts:Date.now(), read:false, notifyEmail, fromEmail, popup };
     this.state.notifications.unshift(n);
     syncNotification(n);
     renderBell();
@@ -4852,7 +5053,7 @@ const App = {
       );
       toast(`${course.code} submitted, but has no active Course Coordinator — sent to the Executive Assistant instead.`, 'ok');
     }
-    this.navigate('ci-sections');
+    this.navigate('ci-subject-detail', { courseId });
   },
   ciSaveDraft(courseId){ this.saveMarks(courseId); toast('InProgress saved.', 'ok'); },
 
@@ -5037,6 +5238,23 @@ const App = {
      that one component only — every other component and the Overall
      record are unaffected. SEE Theory never enters this at all; it's the
      Examination Branch's own record, outside this app's marks flow. */
+  /* ---------- CC: mark an item as opened/reviewed ----------
+     The "Pending Evaluation" action row (renderCCPendingEvaluation) only
+     shows "Verify & Forward to HOD" once the CC has actually opened the
+     marks at least once via "Open Marks & Verify" — forwarding sight
+     unseen isn't allowed. This just flips a one-way flag on the item's
+     approval record; it never downgrades stage or clears anything else,
+     so a CC who's already opened an item and comes back to this page
+     later still sees the Forward button straight away. Silently no-ops
+     if the item has moved past the CC stage by the time this fires (e.g.
+     a duplicate click), since there's nothing left to gate at that point. */
+  markItemOpenedByCC(courseId, itemKey){
+    const ia = this.itemApproval(courseId, itemKey);
+    if(!ia || ia.stage!=='cc' || ia.ccOpened) return;
+    ia.ccOpened = true;
+    const course = this.getCourse(courseId);
+    if(course) syncCourse(course);
+  },
   itemApproval(courseId, itemKey){
     const course = this.getCourse(courseId);
     if(!course) return null;
@@ -5052,7 +5270,19 @@ const App = {
     if(ia.stage==='done'){ toast(`${label} is already approved.`, 'err'); return; }
     if(ia.stage==='ci'){
       if(actor.systemRole!=='ADMIN' && !isItemCIFor(course, itemKey)){ toast('Only the faculty assigned to this item can forward it.', 'err'); return; }
+      // Real enforcement point for the Best/Average/Lowest script
+      // requirement — the disabled Forward button (termTestActionBarHtml)
+      // is just UI, so re-check here too before letting the item move to
+      // the Course Coordinator. See ttForwardReadiness.
+      const readiness = ttForwardReadiness(course, itemKey);
+      if(!readiness.ready){ toast('Upload the Best, Average and Lowest answer scripts for every student before forwarding this to the Course Coordinator.', 'err'); return; }
       ia.stage = 'cc';
+      // Fresh review required each time an item lands at the CC stage —
+      // including after a correction round (sent back, fixed, forwarded
+      // again) — so a stale ccOpened flag from a previous round never
+      // lets "Verify & Forward to HOD" show up before this round's marks
+      // have actually been opened. See markItemOpenedByCC above.
+      ia.ccOpened = false;
       const ccAssignee = getActiveAssignment(courseId,'CC');
       if(ccAssignee) this.notifyUser(ccAssignee.userId, course, `${label} ready for verification`, `${course.code} — ${label} has been forwarded by the Course Instructor.`, true, null, itemEntryLink(course, itemKey));
       // Also let the HOD know right away that the CI has submitted — not
@@ -5068,24 +5298,38 @@ const App = {
     } else if(ia.stage==='cc'){
       const ccUser = getCourseCCUser(courseId);
       if(ccUser?.id!==actor.id && actor.systemRole!=='ADMIN'){ toast('Only this section\'s Course Coordinator can forward this.', 'err'); return; }
+      // Real enforcement point for "must open the marks before forwarding"
+      // — the Pending Evaluation page only renders the Forward button once
+      // ia.ccOpened is set (see App.markItemOpenedByCC), but that's just
+      // UI, so re-check here too.
+      if(!ia.ccOpened && actor.systemRole!=='ADMIN'){ toast('Open and verify the marks first — use "Open Marks & Verify" before forwarding.', 'err'); return; }
       ia.stage = 'hod';
-      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} ready for approval`, `${course.code} — ${label} has been forwarded by the Course Coordinator.`, true, null, itemEntryLink(course, itemKey)));
+      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} ready for approval`, `${course.code} — ${label} has been forwarded by the Course Coordinator.`, true, null, itemEntryLink(course, itemKey), true));
     } else if(ia.stage==='hod'){
       if(actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can approve this.', 'err'); return; }
       ia.stage = 'done';
       const ciUser = getCourseCIUser(courseId);
       if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by the HOD.`, true, null, itemEntryLink(course, itemKey));
     } else if(ia.stage==='scrutiny'){
-      if(actor.id!==ia.scrutinyUserId && actor.systemRole!=='ADMIN'){ toast('Only the Scrutiny Faculty this was assigned to can approve it.', 'err'); return; }
-      ia.stage = 'done';
-      const ciUser = getCourseCIUser(courseId);
-      if(ciUser) this.notifyUser(ciUser.id, course, `${label} approved`, `${course.code} — ${label} has been approved by Scrutiny.`, true, null, itemEntryLink(course, itemKey));
-      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} approved by Scrutiny`, `${course.code} — ${label} was verified and approved by ${actor.name} (Scrutiny) on your behalf.`, true, null, itemEntryLink(course, itemKey)));
+      if(actor.id!==ia.scrutinyUserId && actor.systemRole!=='ADMIN'){ toast('Only the Scrutiny Faculty this was assigned to can verify this.', 'err'); return; }
+      // Scrutiny never finalizes an item itself — per the fixed flow
+      // (CI -> CC -> HOD -> Scrutiny -> HOD), it hands verified marks back
+      // to the HOD stage for final sign-off instead of marking it 'done'.
+      // The 'postScrutiny' flag is what lets the HOD's dedicated
+      // "Evaluation Approval" sidebar page (renderHODScrutinyApprovals)
+      // separate these from fresh CC->HOD submissions on the ordinary
+      // "Pending Approval" page, and what stops canAssignScrutiny from
+      // offering to re-delegate an already-scrutinized item.
+      ia.stage = 'hod';
+      ia.postScrutiny = true;
+      this.state.users.filter(u=>u.systemRole==='HOD').forEach(u=>this.notifyUser(u.id, course, `${label} verified by Scrutiny — awaiting your approval`, `${course.code} — ${label} was verified and forwarded by ${actor.name} (Scrutiny). It now needs your final approval.`, true, null, itemEntryLink(course, itemKey), true));
     }
     ia.remark = '';
-    ia.history.push({ by:actor.name, role:actor.systemRole, action: ia.stage==='done' ? 'approved' : `forwarded to ${ITEM_STAGE_LABELS[ia.stage]}`, ts:Date.now() });
+    const wasScrutinyForward = actor.systemRole==='SCRUTINY' && ia.stage==='hod' && ia.postScrutiny;
+    if(ia.stage==='done') ia.postScrutiny = false;
+    ia.history.push({ by:actor.name, role:actor.systemRole, action: ia.stage==='done' ? 'approved' : (wasScrutinyForward ? `verified and forwarded to ${ITEM_STAGE_LABELS[ia.stage]}` : `forwarded to ${ITEM_STAGE_LABELS[ia.stage]}`), ts:Date.now() });
     syncCourse(course);
-    toast(ia.stage==='done' ? `${label} approved.` : `${label} forwarded to ${ITEM_STAGE_LABELS[ia.stage]}.`, 'ok');
+    toast(ia.stage==='done' ? `${label} approved.` : (wasScrutinyForward ? `${label} verified and forwarded to ${ITEM_STAGE_LABELS[ia.stage]}.` : `${label} forwarded to ${ITEM_STAGE_LABELS[ia.stage]}.`), 'ok');
     renderContent();
   },
   /* ---------- HOD: hand an item off to a Scrutiny Faculty member instead
@@ -5103,6 +5347,7 @@ const App = {
     const ia = this.itemApproval(courseId, itemKey);
     const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
     if(ia.stage!=='hod'){ toast(`${label} isn't waiting on HOD action right now.`, 'err'); return; }
+    if(ia.postScrutiny){ toast(`${label} has already been through Scrutiny — approve it or send it back yourself.`, 'err'); return; }
     const scrUser = scrutinyUserId ? this.getUserById(scrutinyUserId) : null;
     if(!scrUser || scrUser.systemRole!=='SCRUTINY'){ toast('Choose a valid Scrutiny Faculty member.', 'err'); return; }
     ia.stage = 'scrutiny';
@@ -5158,12 +5403,15 @@ const App = {
     const ia = this.itemApproval(courseId, itemKey);
     const label = ITEM_FLOW_LABELS[itemKey] || itemKey;
     if(ia.stage==='ci' || ia.stage==='done'){ toast('Nothing to send back from here.', 'err'); return; }
-    // Course Coordinators don't send items back to the CI — that's a HOD
-    // call (or an Admin override). A CC flags a problem with a particular
-    // student via that student's CC Remark box instead, then forwards on
-    // as normal. There's no EA step in this chain at all.
+    // A Course Coordinator can only send an item back once they've flagged
+    // a problem via a per-student CC Remark (see itemHasCCRemark) — that
+    // remark is what tells the CI what needs fixing. With no remark yet,
+    // their only option is to forward it on to the HOD as normal; an Admin
+    // can still send back at this stage unconditionally, as a general
+    // override.
     if(ia.stage==='cc'){
-      if(actor.systemRole!=='ADMIN'){ toast('Course Coordinators don\'t send items back — add a CC Remark for the student instead and forward it on; the HOD can send it back to the Course Instructor.', 'err'); return; }
+      const isRealCC = getCourseCCUser(course.id)?.id===actor.id;
+      if(actor.systemRole!=='ADMIN' && !(isRealCC && itemHasCCRemark(course, itemKey))){ toast('Add a CC Remark for at least one student first — that\'s what tells the Course Instructor what to fix. With no remark, forward it on to the HOD instead.', 'err'); return; }
     } else if(ia.stage==='hod' && actor.systemRole!=='HOD' && actor.systemRole!=='ADMIN'){ toast('Only the HOD can send this back.', 'err'); return; }
     else if(ia.stage==='scrutiny' && actor.id!==ia.scrutinyUserId && actor.systemRole!=='ADMIN'){ toast('Only the Scrutiny Faculty this was assigned to can send this back.', 'err'); return; }
     if(!remark || !remark.trim()){ toast('A remark is required so the Course Instructor knows what to fix.', 'err'); return; }
@@ -5175,7 +5423,7 @@ const App = {
     // roster-assignment faculty if this item has an override, otherwise the
     // section's ordinary registered CI.
     const overrides = getItemRosterOverrides(course, itemKey);
-    const roleLabel = actor.systemRole==='ADMIN' ? 'Admin' : actor.systemRole==='SCRUTINY' ? 'Scrutiny' : 'HOD';
+    const roleLabel = actor.systemRole==='ADMIN' ? 'Admin' : actor.systemRole==='SCRUTINY' ? 'Scrutiny' : (getCourseCCUser(course.id)?.id===actor.id ? 'Course Coordinator' : 'HOD');
     const sentBackMsg = `${course.code} — ${label} was sent back by ${roleLabel} : Remark by ${roleLabel} is "${remark.trim()}"`;
     if(overrides.length) overrides.forEach(o=>this.notifyUser(o.facultyUserId, course, `${label} sent back`, sentBackMsg, true, null, itemEntryLink(course, itemKey)));
     else { const ciUser = getCourseCIUser(courseId); if(ciUser) this.notifyUser(ciUser.id, course, `${label} sent back`, sentBackMsg, true, null, itemEntryLink(course, itemKey)); }
@@ -5337,7 +5585,7 @@ const App = {
       this.notifyUser(u.id, course, `${course.code} correction complete`, `The Course Instructor finished correcting marks for ${course.code} — ${course.name} and re-locked the record.`, true)
     );
     toast('Marks updated and re-locked.', 'ok');
-    this.navigate('ci-sections');
+    this.navigate('ci-subject-detail', { courseId });
   },
 
   /* ---------- CI: submit the Term Test 1/2 + Lab Internal group, or the
@@ -5719,16 +5967,16 @@ const App = {
     scheduleRenderContent();
   },
 
-  /* ---------- CC/EA/HOD: per-student remark on the Term Test entry table
-     (one free-text note per role per student, e.g. flagging a particular
-     answer script for a recheck) — kept in s.marks.ttRemarks[cycle][role]
+  /* ---------- CC/EA/HOD/Scrutiny: per-student remark on the Term Test
+     entry table (one free-text note per role per student, e.g. flagging a
+     particular answer script for a recheck) — kept in s.marks.ttRemarks[cycle][role]
      alongside the marks themselves so it rides along on the same student
      sync. Distinct from the whole-record verification remarks (eaRemark,
      lastRemark, etc); this one is about one student, not the whole class. */
   setTermTestStudentRemark(courseId, studentId, cycle, itemKey, role, value){
     const course = this.getCourse(courseId);
     if(!course){ toast('Course not found.', 'err'); return; }
-    if(!['cc','ea','hod'].includes(role)) return;
+    if(!['cc','ea','hod','scrutiny'].includes(role)) return;
     if(!canEditTTStudentRemark(course, itemKey, role)){ toast('You\'re not allowed to enter this remark right now.', 'err'); return; }
     const s = (course.students||[]).find(x=>x.id===studentId);
     if(!s) return;
@@ -6399,10 +6647,10 @@ window.closeModal = closeModal;
    account never sees the switcher at all. */
 const FACULTY_ROLE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator' };
 const FACULTY_VIEW_ROLE = {
-  'ci-sections':'ci', 'ci-evaluation':'ci', 'ci-my-sections':'ci', 'ci-class-progress':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
+  'ci-sections':'ci', 'ci-evaluation':'ci', 'ci-class-progress':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
   'ci-component-entry':'ci', 'ci-section-view':'ci', 'ci-analytics':'ci', 'ci-termtest':'ci', 'ci-termtest-entry':'ci',
   'ci-labint':'ci', 'ci-labext':'ci',
-  'cc-list':'cc', 'cc-roster':'cc', 'cc-review':'cc', 'cc-termtest-setup':'cc',
+  'cc-list':'cc', 'cc-pending-evaluation':'cc', 'cc-roster':'cc', 'cc-review':'cc', 'cc-termtest-setup':'cc',
 };
 function getFacultyAvailableRoles(user){
   const { ccCourses, ciCourses } = getFacultyCourses(user.id);
@@ -6598,15 +6846,42 @@ function closeThemePanel(){ document.getElementById('theme-panel').classList.add
 /* ---------------- sidebar / routing ---------------- */
 function getNavForUser(user){
   if(user.systemRole==='ADMIN') return [
-    {v:'admin-users', label:'Manage System Accounts'},
-    {v:'admin-course-reg', label:'Course Registrations'},
-    {v:'admin-roster-assignment', label:'Roster Assignment'},
-    {v:'hod-coordinators', label:'Manage Coordinators'},
-    {v:'hod-termtest', label:'Term Test Cycle'},
-    {v:'admin-seating-plan', label:'Seating Plan'},
+    {v:'admin-users', label:'Manage System Accounts', group:'Administration'},
+    {v:'admin-course-reg', label:'Course Registrations', group:'Administration'},
+    {v:'admin-roster-assignment', label:'Roster Assignment', group:'Administration'},
+    {v:'admin-seating-plan', label:'Seating Plan', group:'Administration'},
+    // Admin oversight of every other role — same underlying pages each
+    // role uses (so the data and actions are always identical to what
+    // that role themselves sees; nothing is a separate copy that could
+    // drift), except for CI / Course Coordinator / Scrutiny, which are
+    // normally filtered down to "MY assigned items" for that logged-in
+    // faculty member specifically — an Admin has no assignments of their
+    // own to filter to, so those three get dedicated system-wide overview
+    // pages instead (admin-ci-overview / admin-cc-overview /
+    // admin-scrutiny-overview) that list every section's item with who
+    // it's actually assigned to, linking into the exact same
+    // marks/verification pages that faculty member would use — where the
+    // Admin already has full override rights to act on their behalf.
+    {v:'admin-ci-overview', label:'Course Instructor', group:'Course Instructor'},
+    {v:'admin-cc-overview', label:'Course Coordinator', group:'Course Coordinator'},
+    {v:'hod-coordinators', label:'Manage Coordinators', group:'HOD'},
+    {v:'hod-termtest', label:'Term Test Cycle', group:'HOD'},
+    {v:'hod-list', label:'Pending Approval', group:'HOD'},
+    {v:'hod-scrutiny-approvals', label:'Evaluation Approval', group:'HOD'},
+    {v:'hod-faculty', label:'Faculty Directory', group:'HOD'},
+    {v:'hod-audit', label:'Audit Log', group:'HOD'},
+    {v:'admin-scrutiny-overview', label:'Scrutiny Queue', group:'Scrutiny'},
+    {v:'hod-coordinators', label:'Manage Coordinators', group:'Timetable Incharge'},
+    {v:'hod-faculty', label:'Faculty Directory', group:'Timetable Incharge'},
+    {v:'ea-list', label:'Verification Queue', group:'Executive Assistant'},
+    {v:'ea-faculty', label:'Faculty Directory', group:'Executive Assistant'},
+    {v:'ea-students', label:'Student Directory', group:'Executive Assistant'},
+    {v:'exam-list', label:'Approved Records', group:'Examination Branch'},
+    {v:'verification-status', label:'Verification Status', group:'Cross-Role'},
   ];
   if(user.systemRole==='HOD') return [
     {v:'hod-list', label:'Pending Approval'},
+    {v:'hod-scrutiny-approvals', label:'Evaluation Approval'},
     {v:'verification-status', label:'Verification Status'},
     {v:'hod-faculty', label:'Faculty Directory'},
     {v:'hod-audit', label:'Audit Log'},
@@ -6632,10 +6907,10 @@ function getNavForUser(user){
   if(role==='ci'){
     nav.push({v:'ci-sections', label:'My Subjects'});
     nav.push({v:'ci-evaluation', label:'Evaluation'});
-    nav.push({v:'ci-my-sections', label:'My Sections'});
     nav.push({v:'ci-pending', label:'Pending Approval'});
     nav.push({v:'ci-audit', label:'Audit Log'});
   } else if(role==='cc'){
+    nav.push({v:'cc-pending-evaluation', label:'Pending Evaluation'});
     nav.push({v:'cc-list', label:'My Coordination'});
   }
   if(ciCourses.length || ccCourses.length) nav.push({v:'verification-status', label:'Verification Status'});
@@ -6668,6 +6943,9 @@ function navBadgeCount(viewKey, user){
     });
     return n;
   }
+  if(viewKey==='hod-scrutiny-approvals'){
+    return scrutinyForwardedItems().length;
+  }
   if(viewKey==='ea-list'){
     return App.state.courses.filter(c=>c.branch && c.status==='coordinated').length;
   }
@@ -6677,7 +6955,7 @@ function navBadgeCount(viewKey, user){
   if(viewKey==='ci-evaluation'){
     return myAssignedRosterItems(user.id).filter(it=>it.stage==='ci').length;
   }
-  if(viewKey==='cc-list'){
+  if(viewKey==='cc-pending-evaluation'){
     return myPendingItemActions(user).filter(a=>a.role==='cc').length;
   }
   if(viewKey==='scrutiny-list'){
@@ -6692,18 +6970,59 @@ function navBadgeCount(viewKey, user){
     });
     return n;
   }
+  if(viewKey==='admin-ci-overview'){
+    return adminAllItemRows().filter(r=>r.ia.stage==='ci').length;
+  }
+  if(viewKey==='admin-cc-overview'){
+    return adminAllItemRows().filter(r=>r.ia.stage==='cc').length;
+  }
+  if(viewKey==='admin-scrutiny-overview'){
+    return adminAllItemRows().filter(r=>r.ia.stage==='scrutiny').length;
+  }
   return 0;
 }
+/* Sidebar groups (currently only the Admin nav uses `group` on its items —
+   see getNavForUser) are collapsible, since listing every other role's
+   tabs in one sidebar for an Admin gets long fast. Expand/collapse state
+   lives here, keyed by group name, and persists for the session (not
+   across reloads — that's a nice-to-have, not worth the localStorage
+   plumbing). Not yet touched by the user in this session -> defaults to
+   "only the group containing whatever page is currently open" being
+   expanded, so the sidebar starts focused on where you already are rather
+   than either fully collapsed or fully sprawling. */
+let _sidebarGroupState = {};
+function isSidebarGroupExpanded(group, defaultGroup){
+  if(Object.prototype.hasOwnProperty.call(_sidebarGroupState, group)) return _sidebarGroupState[group];
+  return group === defaultGroup;
+}
+function toggleSidebarGroup(group, defaultGroup){
+  _sidebarGroupState[group] = !isSidebarGroupExpanded(group, defaultGroup);
+  renderSidebar();
+}
+window.toggleSidebarGroup = toggleSidebarGroup;
 function renderSidebar(){
   const user = App.currentUser();
   renderRoleSwitch();
   const nav = getNavForUser(user);
   const sb = document.getElementById('sidebar');
-  sb.innerHTML = nav.map(n=>{
+  const activeEntry = nav.find(n=>n.v===App.ui.view);
+  const activeGroup = activeEntry ? activeEntry.group : null;
+  let lastGroup = undefined;
+  let html = '';
+  nav.forEach(n=>{
+    if(n.group !== lastGroup){
+      lastGroup = n.group;
+      if(n.group){
+        const expanded = isSidebarGroupExpanded(n.group, activeGroup);
+        html += `<button type="button" class="nav-group-label" onclick="toggleSidebarGroup('${n.group}','${activeGroup||''}')"><span>${escapeHtml(n.group)}</span><span class="nav-group-caret">${expanded?'▾':'▸'}</span></button>`;
+      }
+    }
+    if(n.group && !isSidebarGroupExpanded(n.group, activeGroup)) return;
     const count = navBadgeCount(n.v, user);
     const badge = count>0 ? `<span class="nav-badge">${count>99?'99+':count}</span>` : '';
-    return `<button class="nav-item ${App.ui.view===n.v?'active':''}" onclick="App.navigate('${n.v}')"><span>${n.label}</span>${badge}</button>`;
-  }).join('');
+    html += `<button class="nav-item ${App.ui.view===n.v?'active':''}" onclick="App.navigate('${n.v}')"><span>${n.label}</span>${badge}</button>`;
+  });
+  sb.innerHTML = html;
 }
 // Routes that read full course.students (marks/roster), not just the
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
@@ -6747,7 +7066,11 @@ function renderContent(){
     'admin-course-reg': renderAdminCourseRegistrations,
     'admin-roster-assignment': renderAdminRosterAssignment,
     'admin-seating-plan': renderAdminSeatingPlan,
+    'admin-ci-overview': renderAdminCIOverview,
+    'admin-cc-overview': renderAdminCCOverview,
+    'admin-scrutiny-overview': renderAdminScrutinyOverview,
     'hod-list': renderHODList,
+    'hod-scrutiny-approvals': renderHODScrutinyApprovals,
     'hod-review': renderHODReview,
     'hod-termtest-overview': renderHODTermTestOverview,
     'hod-labint-overview': renderHODLabInternalOverview,
@@ -6766,7 +7089,6 @@ function renderContent(){
     'verification-status': renderVerificationStatus,
     'ci-sections': renderCISections,
     'ci-evaluation': renderCIEvaluation,
-    'ci-my-sections': renderCIMySections,
     'ci-class-progress': renderCIClassProgress,
     'ci-subject-detail': renderCISubjectDetail,
     'ci-entry': renderCIEntry,
@@ -6780,6 +7102,7 @@ function renderContent(){
     'ci-pending': renderCIPending,
     'ci-audit': renderCIAudit,
     'cc-list': renderCCList,
+    'cc-pending-evaluation': renderCCPendingEvaluation,
     'cc-roster': renderCCRoster,
     'cc-review': renderCCReview,
     'cc-termtest-setup': renderCCTermTestSetup,
@@ -6813,7 +7136,7 @@ function renderContent(){
   const activeSelStart = activeMarkKey && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null;
   // Snapshot exactly where the focused mark box sits on screen (not just the
   // page's scroll offset) so we can keep it pinned there after rebuild, even
-  // when content ABOVE it (e.g. the Class Performance stats, which flip from
+  // when content ABOVE it (e.g. the Bundle Performance stats, which flip from
   // a one-line placeholder to full stat cards the first time any student in
   // this cycle gets a score) changes height. Restoring the raw scrollY alone
   // doesn't account for that shift, which is what made the box a caller was
@@ -6838,6 +7161,7 @@ function renderContent(){
     // document — hence this runs here, after appendChild, not inside the
     // page-render function itself. See applyStickyTableHeaders' own note.
     applyStickyTableHeaders(c);
+    syncTTMarksScrollbars(c);
 
     // Restore scroll (page + any wide marks table) and focus so re-entering
     // marks doesn't keep bouncing the view back to the top/left.
@@ -7220,6 +7544,31 @@ const SCRIPT_KINDS = { best:'Best', average:'Average', lowest:'Lowest' };
    uploads go through the cycle-scoped path below. */
 function scriptUploadsForCycle(course, cycle){
   return (course.scriptUploads && course.scriptUploads[cycle]) || {};
+}
+/* Gate on the CI -> CC hop for Term Test items: the CI must have uploaded
+   all three of the Best / Average / Lowest scanned answer scripts
+   (SCRIPT_KINDS) before the item is allowed to move on — regardless of
+   whether marks entry is itself complete yet (an incomplete-marks forward
+   is a separate, already-permitted "forward early" path; it must not be
+   used as a side door around the script requirement). Used both to grey
+   out the Forward button (termTestActionBarHtml) and, as the real
+   enforcement point, inside App.forwardItem itself — the button state is
+   just UI, so the check has to be re-run server-side-equivalent there too.
+   Non-TT items (Practical Internal, SEE Practical, etc.) and TT cycles
+   with no matching template component have no such requirement and are
+   always reported ready, matching the old unconditional behaviour. */
+function ttForwardReadiness(course, itemKey){
+  const cycle = itemKey==='tt1' ? 'TT1' : itemKey==='tt2' ? 'TT2' : itemKey==='tt3' ? 'TT3' : null;
+  if(!cycle) return { applicable:false, allMarksComplete:true, scriptsComplete:true, ready:true };
+  const template = course.evalType ? getCourseTemplate(course) : null;
+  const compKey = template ? termTestComponentKey(template, cycle) : null;
+  if(!compKey) return { applicable:false, allMarksComplete:true, scriptsComplete:true, ready:true };
+  const entryStudents = itemEntryStudents(course, itemKey);
+  const allMarksComplete = entryStudents.length>0 && entryStudents.every(st=>
+    isAbsentForComponent(st, compKey) || isTTFullyEntered((st.marks && st.marks.ttDetail && st.marks.ttDetail[cycle]) || {}));
+  const uploads = scriptUploadsForCycle(course, cycle);
+  const scriptsComplete = Object.keys(SCRIPT_KINDS).every(k=>!!uploads[k]);
+  return { applicable:true, allMarksComplete, scriptsComplete, ready: scriptsComplete };
 }
 function legacyScriptUploads(course){
   const su = course.scriptUploads || {};
@@ -9960,7 +10309,7 @@ function renderAdminRosterAssignment(params){
       <div class="page-head">
         <div class="page-eyebrow">Administrator</div>
         <h2>Roster Assignment</h2>
-        <p>Assign specific students, roll number by roll number, to a faculty member for Term Test 1/2/3, Practical Internal Test or SEE Practical — independent of the section's regular Course Instructor. Everything else on the course (every other CIE/SEE component, the Overall record) is untouched and keeps coming from Course Registration as usual. Pick a section below to get started.</p>
+        <p>Assign specific students, roll number by roll number, to a faculty member for Term Test 1/2/3 — independent of the section's regular Course Instructor. Practical Internal Test and SEE Practical are no longer assigned per-faculty here; every Course Instructor enters them directly from "My Subjects" against the ordinary Course Registration roster, and only their entry time window is set below. Everything else on the course (every other CIE/SEE component, the Overall record) is untouched and keeps coming from Course Registration as usual. Pick a section below to get started.</p>
       </div>
       ${practicalWindowsCardHtml()}
       <div class="card">
@@ -10028,7 +10377,12 @@ function renderAdminRosterAssignment(params){
       <h2>${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${escapeHtml(course.section||'')} · ${escapeHtml(branchLabel(course.branch))}</p>
     </div>
-    ${ITEM_FLOW_KEYS.map(itemCardHtml).join('') || emptyStateHtml('Nothing applicable','This Evaluation Type has none of the 5 item flows.')}
+    ${TERM_TEST_ITEM_KEYS.map(itemCardHtml).join('') || emptyStateHtml('Nothing applicable','This Evaluation Type has none of the Term Test cycles.')}
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Practical Internal Test &amp; SEE Practical</div>
+      <p class="section-meta" style="margin-top:6px;">These are no longer assigned to individual faculty per section here — every Course Instructor enters them directly from "My Subjects" against the ordinary Course Registration roster. Only the entry <strong>time window</strong> is set for them, and that's done once, department-wide, from the main Roster Assignment page.</p>
+      <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="App.navigate('admin-roster-assignment')">Set Practical Internal Test / SEE Practical window</button>
+    </div>
   `;
   return wrap;
 }
@@ -10140,7 +10494,12 @@ function pendingTermTestApprovalsHtml(){
     ['tt1','tt2'].forEach(key=>{
       if(!itemFlowApplicable(template, key)) return;
       const ia = App.itemApproval(c.id, key);
-      if(ia && ia.stage==='hod') hodRows.push({ c, key });
+      // Items Scrutiny has already verified and forwarded back
+      // (ia.postScrutiny) are deliberately excluded here — they show up
+      // on their own dedicated "Evaluation Approval" sidebar page instead
+      // (renderHODScrutinyApprovals), separately from fresh CC->HOD
+      // submissions the HOD hasn't delegated anywhere yet.
+      if(ia && ia.stage==='hod' && !ia.postScrutiny) hodRows.push({ c, key });
       else if(ia && ia.stage==='scrutiny') scrutinyRows.push({ c, key, ia });
     });
   });
@@ -10209,6 +10568,43 @@ function pendingEtRequestsHtml(){
    CHECKPOINT D — HOD Dashboard: status counts across all sections,
    plus faculty-wise (Course Instructor) completion status.
    ============================================================ */
+/* One row per faculty member who currently holds at least one "Bundle"
+   for this item — a Bundle is the same atomic unit of evaluation
+   responsibility used everywhere else (Pending Approval Subject Summary,
+   the CI's own "Evaluation" tab numbering): either a Roster Assignment
+   dispatch-list slice (getItemRosterOverrides) when an Admin has split a
+   section's item across faculty, or the whole section itself (credited
+   to its registered Course Instructor, scripts = that section's roster
+   size) when no such split exists — mirrors the same either/or logic
+   isItemCIFor/itemEntryStudents use to decide who actually owns a given
+   item's marks-entry page. "Submitted" reflects the course+item's own
+   single approval stage (App.itemApproval), shared by every bundle under
+   that course/item since the chain moves as one record regardless of how
+   many faculty are splitting it. */
+function facultyBundleRowsForItem(eligible, itemKey){
+  const byFaculty = {};
+  eligible.forEach(c=>{
+    const stage = App.itemApproval(c.id, itemKey)?.stage || 'ci';
+    const submitted = stage !== 'ci';
+    const overrides = getItemRosterOverrides(c, itemKey);
+    if(overrides.length){
+      overrides.forEach(o=>{
+        const row = byFaculty[o.facultyUserId] || (byFaculty[o.facultyUserId] = { name:o.facultyName, total:0, submitted:0, scripts:0 });
+        row.total++;
+        row.scripts += (o.rollNos ? o.rollNos.length : 0);
+        if(submitted) row.submitted++;
+      });
+    } else {
+      const ci = getCourseCIUser(c.id);
+      if(!ci) return;
+      const row = byFaculty[ci.id] || (byFaculty[ci.id] = { name:ci.name, total:0, submitted:0, scripts:0 });
+      row.total++;
+      row.scripts += (c.studentCount || (c.students ? c.students.length : 0));
+      if(submitted) row.submitted++;
+    }
+  });
+  return Object.values(byFaculty).sort((a,b)=>a.name.localeCompare(b.name));
+}
 function hodDashboardSummaryHtml(all, itemKey){
   const stat = (label, val) => `<div style="flex:1;min-width:120px;padding:10px 14px;background:#F3EEDD;border:1px solid var(--rule);border-radius:8px;">
     <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;color:var(--ink);">${val}</div>
@@ -10241,15 +10637,7 @@ function hodDashboardSummaryHtml(all, itemKey){
       const stage = App.itemApproval(c.id, itemKey)?.stage || 'ci';
       counts[stage] = (counts[stage]||0) + 1;
     });
-    const byCI = {};
-    eligible.forEach(c=>{
-      const ci = getCourseCIUser(c.id);
-      if(!ci) return;
-      byCI[ci.id] = byCI[ci.id] || { name:ci.name, total:0, submitted:0 };
-      byCI[ci.id].total++;
-      if((App.itemApproval(c.id, itemKey)?.stage || 'ci') !== 'ci') byCI[ci.id].submitted++;
-    });
-    const facultyRows = Object.values(byCI).sort((a,b)=>a.name.localeCompare(b.name));
+    const facultyRows = facultyBundleRowsForItem(eligible, itemKey);
     return `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Evaluation Status Overview — ${escapeHtml(label)}</div>
@@ -10266,8 +10654,8 @@ function hodDashboardSummaryHtml(all, itemKey){
         <div class="section-title" style="font-size:15px;">Faculty-wise Completion Status — ${escapeHtml(label)}</div>
         ${facultyRows.length===0 ? `<p class="section-meta" style="margin-top:8px;">No subjects currently use ${escapeHtml(label)}.</p>` : `
         <div class="table-scroll" style="margin-top:8px;">
-          <table class="data-table"><thead><tr><th>Course Instructor</th><th>Sections assigned</th><th>Sections submitted+</th></tr></thead><tbody>
-            ${facultyRows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${r.total}</td><td>${r.submitted}</td></tr>`).join('')}
+          <table class="data-table"><thead><tr><th>Course Instructor</th><th>Bundles Assigned</th><th>Bundles Submitted</th><th>Total Scripts</th></tr></thead><tbody>
+            ${facultyRows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${r.total}</td><td>${r.submitted}</td><td>${r.scripts}</td></tr>`).join('')}
           </tbody></table>
         </div>`}
       </div>`;
@@ -10415,7 +10803,166 @@ function hodExamCycleBannerHtml(){
     <select style="width:auto;min-width:180px;" onchange="setHodExamCycleSelection(this.value)" aria-label="Choose which exam's cycle to view">${options}</select>
   </div>`;
 }
+/* A regular bell notification is easy to miss on a busy Pending Approval
+   day, so anything flagged popup:true on notifyUser (currently: a Course
+   Coordinator forwarding an item to the HOD) also surfaces as an actual
+   modal the moment the HOD lands on their dashboard — not on every
+   re-render (this page redraws often while other things change), just
+   once per notification. App.shownPopupNoteIds tracks which ones this
+   browser session has already shown, so re-visiting the page doesn't
+   re-pop the same alert. */
+function maybeShowHodApprovalPopup(){
+  const user = App.currentUser();
+  if(!user || user.systemRole!=='HOD') return;
+  App.shownPopupNoteIds = App.shownPopupNoteIds || new Set();
+  const pending = App.state.notifications.filter(n=>n.forUserId===user.id && n.popup && !App.shownPopupNoteIds.has(n.id));
+  if(!pending.length) return;
+  pending.forEach(n=>App.shownPopupNoteIds.add(n.id));
+  openModal(`
+    <h3 style="margin:0 0 10px;">${pending.length===1 ? 'Forwarded for your approval' : `${pending.length} items forwarded for your approval`}</h3>
+    ${pending.map(n=>`
+      <div style="padding:10px 0;border-top:1px solid var(--rule-light);">
+        <div style="font-weight:600;font-size:14px;">${escapeHtml(n.title)}</div>
+        <div class="section-meta" style="margin-top:4px;">${escapeHtml(n.body.split('\n\nLogin here:')[0])}</div>
+      </div>`).join('')}
+    <div style="margin-top:16px;"><button class="btn" onclick="closeModal()">OK</button></div>
+  `);
+}
+/* ---------- HOD Pending Approval: subject-summary table ----------
+   One row per SUBJECT (course code), rolling up every section running
+   under it. "Bundles" and "Scripts" come from the Administrator's own
+   Roster Assignment uploads (see getItemRosterOverrides / renderCIEvaluation's
+   "Bundle 1/2/3..." numbering) — each dispatch_list.xlsx an Admin uploads
+   there for a given exam item (Term Test 1/2, Practical Internal, SEE
+   Practical) on a section is one Bundle, and that bundle's roll-number
+   count is its Scripts. A subject with no Roster Assignment uploads for
+   the selected exam simply shows 0/0 here — that's accurate, not a bug;
+   nothing has been dispatched for evaluation yet. Assigned for Evaluation
+   is unrelated to bundles — it's how many of the subject's sections
+   currently have a Course Instructor actually mapped (getCourseCIUser).
+   Semester is NOT read off course.semester (unreliable/blank on plenty
+   of imported sections) — it's derived from the subject's Regulation,
+   per the department's fixed mapping for the two batches currently
+   running: R24 -> Semester 5, R25 -> Semester 3. Any other/blank
+   regulation falls back to whatever course.semester already holds. */
+function pendingApprovalSemesterFor(course){
+  const reg = String(course.regulation||'').trim().toUpperCase();
+  if(reg==='R24') return 5;
+  if(reg==='R25') return 3;
+  return course.semester || '—';
+}
+function pendingApprovalSubjectRows(all, examKey){
+  // Same eligibility rule hodDashboardSummaryHtml uses: Evaluation Type
+  // fixed, a Course Coordinator actually assigned, and — when a specific
+  // exam cycle is selected rather than "All Exams" — that Evaluation
+  // Type's template actually carries this item.
+  const eligible = all.filter(c=>c.evalType && getCourseCCUser(c.id) && (!examKey || itemFlowApplicable(getCourseTemplate(c), examKey)));
+  const bySubject = {};
+  eligible.forEach(c=>{
+    const g = bySubject[c.code] || (bySubject[c.code] = { code:c.code, name:c.name, sections:[] });
+    g.sections.push(c);
+  });
+  return Object.values(bySubject).map(g=>{
+    // Bundles/Scripts read straight from Roster Assignment's uploaded
+    // dispatch lists for THIS exam item, across every section of the
+    // subject. With a specific exam cycle selected (examKey set) this is
+    // exact. With "All Exams" selected there's no single item to point
+    // at — a subject's Term Test 1 bundles and SEE Practical bundles are
+    // separate uploads, not additive — so fall back to a per-section
+    // estimate there instead (one implied bundle per section, sized by
+    // whatever roster/script count the section already carries).
+    let bundles, scripts;
+    if(examKey){
+      const overrides = g.sections.flatMap(c=>getItemRosterOverrides(c, examKey));
+      bundles = overrides.length;
+      scripts = overrides.reduce((sum,o)=>sum + (o.rollNos ? o.rollNos.length : 0), 0);
+    } else {
+      bundles = g.sections.length;
+      scripts = g.sections.reduce((sum,c)=>sum + (c.studentCount || (c.students ? c.students.length : 0)), 0);
+    }
+    return {
+      code: g.code,
+      name: g.name,
+      semester: pendingApprovalSemesterFor(g.sections[0]),
+      bundles,
+      scripts,
+      assigned: g.sections.filter(c=>!!getCourseCIUser(c.id)).length,
+    };
+  }).sort((a,b)=>a.code.localeCompare(b.code));
+}
+function pendingApprovalSubjectTableHtml(all, examKey){
+  const rows = pendingApprovalSubjectRows(all, examKey);
+  return `<div class="card">
+    <div class="section-title" style="font-size:15px;">Pending Approval — Subject Summary</div>
+    <p class="section-meta" style="margin-top:4px;">One row per subject.${examKey ? ` Bundles = dispatch lists uploaded under Roster Assignment for ${escapeHtml(ITEM_FLOW_LABELS[examKey]||examKey)} (the same "Bundle" a Course Instructor sees on their own Evaluation tab). Scripts = total roll numbers across those dispatch lists.` : ` Switch to a specific exam above for exact Bundles/Scripts from Roster Assignment's dispatch lists — "All Exams" shows a rough per-section estimate instead.`} Assigned for Evaluation = how many of the subject's sections currently have a Course Instructor mapped to evaluate them.</p>
+    ${rows.length===0 ? `<p class="section-meta" style="margin-top:10px;">No subjects to show yet.</p>` : `
+    <div class="table-scroll" style="margin-top:10px;">
+      <table class="data-table">
+        <thead><tr>
+          <th>Course Code</th><th>Course Name</th><th>Semester</th><th>Bundles</th><th>Scripts</th><th>Assigned for Evaluation</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr>
+            <td class="mono">${escapeHtml(r.code)}</td>
+            <td>${escapeHtml(r.name)}</td>
+            <td style="text-align:center;">${escapeHtml(String(r.semester))}</td>
+            <td style="text-align:center;">${r.bundles}</td>
+            <td style="text-align:center;">${r.scripts}</td>
+            <td style="text-align:center;">${r.assigned}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`}
+  </div>`;
+}
+/* ---------- HOD: Evaluation Approval — items Scrutiny has verified and
+   forwarded back for final sign-off (ia.postScrutiny, set in
+   App.forwardItem's 'scrutiny' branch). Scans all four item flows (Term
+   Test 1/2, Practical Internal, SEE Practical), not just Term Test, since
+   Send to Scrutiny is available on any of them via itemApprovalStatusHtml.
+   Kept as its own sidebar page so these are never mixed in with the
+   ordinary "Pending Approval" page's fresh CC->HOD submissions. ---------- */
+function scrutinyForwardedItems(){
+  const rows = [];
+  App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
+    const template = getCourseTemplate(c);
+    ['tt1','tt2','pracInternal','seePractical'].forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      const ia = App.itemApproval(c.id, key);
+      if(ia && ia.stage==='hod' && ia.postScrutiny) rows.push({ c, key, ia });
+    });
+  });
+  return rows;
+}
+function renderHODScrutinyApprovals(){
+  const rows = scrutinyForwardedItems();
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Head of Department</div>
+      <h2>Evaluation Approval</h2>
+      <p>Items a Scrutiny Faculty member has verified and forwarded back to you — give final approval, or send it back with correction remarks. Scrutiny can't approve these directly; this is always the last step.</p>
+    </div>
+    <div class="card">
+      ${rows.length===0 ? emptyStateHtml('Nothing waiting here', 'Once a Scrutiny Faculty member verifies and forwards an item you delegated, it will show up here for your final sign-off.') : rows.map(({c,key,ia})=>`
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+          <div>
+            <div class="section-title" style="font-size:14px;">${escapeHtml(c.name)} — ${ITEM_FLOW_LABELS[key]}</div>
+            ${courseMetaBlock(c)}
+            <p class="section-meta" style="margin-top:4px;color:var(--brass);">Verified by ${escapeHtml(App.getUserById(ia.scrutinyUserId)?.name || 'Scrutiny Faculty')} — awaiting your final approval.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="${itemActionNavigateAttr(c, key)}">Review</button>
+            <button class="btn btn-sm btn-outline" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${c.id}','${key}', r);">Send Back</button>
+            <button class="btn btn-sm" onclick="App.forwardItem('${c.id}','${key}')">Approve</button>
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+  return wrap;
+}
 function renderHODList(){
+  maybeShowHodApprovalPopup();
   const all = sortCoursesByBranch(App.state.courses.filter(c=>c.branch));
   // Resolve the exam-cycle dropdown up front (same value the banner and
   // summary below will use) so the course cards can be scoped to it too.
@@ -10447,6 +10994,7 @@ function renderHODList(){
       <p>Give final approval to lock a record, or send it back with correction remarks to restart the cycle.</p>
     </div>
     ${hodExamCycleBannerHtml()}
+    ${pendingApprovalSubjectTableHtml(all, examKey)}
     ${pendingTermTestApprovalsHtml()}
     ${hodDashboardSummaryHtml(all, examKey)}
     ${pendingEtRequestsHtml()}
@@ -11996,16 +12544,11 @@ function renderCISections(){
 function renderCISubjectDetail(params){
   const course = App.getCourse(params.courseId);
   const wrap = el('<div></div>');
-  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>`;
+  const backBtn = `<button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to My Subjects</button>`;
   if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Subject not found','')}`; return wrap; }
   if(!isCourseOwnerCI(course)){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${notYourSubjectHtml()}`; return wrap; }
   const enterMode = course.status==='draft' || course.editUnlocked;
   const template = course.evalType ? getCourseTemplate(course) : null;
-  // Only the Term Test cycle the Administrator currently has fixed as
-  // active is open here — e.g. while TT1 is active, "Enter Term Test 2"
-  // stays disabled (and vice versa), so the CI can't get ahead of the
-  // cycle that's actually been opened for the whole department.
-  const activeCycle = App.state.currentTermTest?.cycle || null;
   let actions = null;
   if(template){
     const tt1Key = termTestComponentKey(template, 'TT1');
@@ -12025,15 +12568,24 @@ function renderCISubjectDetail(params){
     const completedBtn = (label, onclick) => `<button class="btn btn-green btn-sm" style="white-space:nowrap;" onclick="${onclick}">✓ ${label} Completed</button>`;
     actions = {
       component(comp, section){
+        // Term Test 1/2 are never enterable from "My Subjects" — they're
+        // entered only from the "Evaluation" tab, against the roll-number
+        // slice an Administrator has assigned via Roster Assignment (see
+        // renderCIEvaluation / itemEntryStudents' TERM_TEST_ITEM_KEYS gate).
+        // Here they stay a disabled button once verified they still show
+        // the green "Verified" state (still clickable, to view what was
+        // entered) — otherwise a permanently disabled button pointing to
+        // the Evaluation tab instead of the old active-cycle enter/disable
+        // logic.
         if(comp.key===tt1Key){
           const onclick = `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`;
           if(App.itemApproval(course.id,'tt1')?.stage==='done') return verifiedBtn('Term Test 1', onclick);
-          return activeCycle==='TT1' ? enterBtn('Enter Term Test 1', onclick) : disabledBtn('Enter Term Test 1', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
+          return disabledBtn('Enter Term Test 1', 'Term Test 1 marks are entered from the Evaluation tab, not here.');
         }
         if(comp.key===tt2Key){
           const onclick = `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`;
           if(App.itemApproval(course.id,'tt2')?.stage==='done') return verifiedBtn('Term Test 2', onclick);
-          return activeCycle==='TT2' ? enterBtn('Enter Term Test 2', onclick) : disabledBtn('Enter Term Test 2', activeCycle ? `${TERM_TEST_LABELS[activeCycle]} is the active cycle right now` : 'No Term Test cycle is active yet');
+          return disabledBtn('Enter Term Test 2', 'Term Test 2 marks are entered from the Evaluation tab, not here.');
         }
         // SEE Theory is entered and evaluated separately by the
         // Examination Branch (see seeDisplayComponents) — it never opens
@@ -12116,11 +12668,13 @@ function renderCISubjectDetail(params){
   `;
   return wrap;
 }
-/* ---------- CI: "Evaluation" — every Term Test 1/2/3, Practical Internal,
-   or SEE Practical roll-number slice an Administrator has assigned to
-   THIS faculty member via Roster Assignment (App.setItemRosterOverride),
-   across EVERY course in the system — not just sections they're the
-   registered Course Instructor for. An Administrator can hand a slice of
+/* ---------- CI: "Evaluation" — every Term Test 1/2 roll-number slice an
+   Administrator has assigned to THIS faculty member via Roster Assignment
+   (App.setItemRosterOverride), across EVERY course in the system — not
+   just sections they're the registered Course Instructor for. Practical
+   Internal Test and SEE Practical are entered from "My Subjects" instead
+   (see itemEntryStudents' TERM_TEST_ITEM_KEYS gate). An Administrator can
+   hand a slice of
    any section's item to any faculty member (see getItemRosterOverrides
    above), independent of who that section's own registered CI is; before
    this tab existed, such an assignment was only reachable by already
@@ -12131,7 +12685,11 @@ function myAssignedRosterItems(userId){
   const out = [];
   App.state.courses.filter(c=>c.branch && c.evalType).forEach(c=>{
     const template = getCourseTemplate(c);
-    ITEM_FLOW_KEYS.forEach(key=>{
+    // Evaluation only ever surfaces Term Test 1/2 — Practical Internal Test
+    // and SEE Practical are now entered directly from "My Subjects" against
+    // the ordinary Course Registration roster (see itemEntryStudents'
+    // TERM_TEST_ITEM_KEYS gate), so they no longer need a page here.
+    ['tt1','tt2'].forEach(key=>{
       if(!itemFlowApplicable(template, key)) return;
       const mine = getItemRosterOverrides(c, key).find(o=>o.facultyUserId===userId);
       if(!mine) return;
@@ -12149,23 +12707,150 @@ function itemStagePillHtml(stage){
   if(stage==='ci') return `<span class="status-pill status-draft">Not yet entered</span>`;
   return `<span class="status-pill status-submitted">With ${escapeHtml(ITEM_STAGE_LABELS[stage]||stage)}</span>`;
 }
+/* ---------- Administrator oversight: system-wide equivalents of the
+   Course Instructor / Course Coordinator / Scrutiny dashboards.
+   Those three roles normally see only items assigned to THEM (via
+   myAssignedRosterItems / getFacultyCourses / ia.scrutinyUserId) — an
+   Admin has no assignments of their own to filter to, so these list every
+   section's item system-wide instead, showing who it's actually assigned
+   to, and link straight into the same marks/verification pages that
+   faculty member would use. The Admin already has full override rights
+   on those pages (see canForward/canSendBack/forwardItem's ADMIN checks),
+   so no separate action buttons are duplicated here — this is purely an
+   index into the real pages. ---------- */
+function adminAllItemRows(){
+  const rows = [];
+  sortCoursesByBranch(App.state.courses.filter(c=>c.branch && c.evalType)).forEach(c=>{
+    const template = getCourseTemplate(c);
+    ITEM_FLOW_KEYS.forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      const ia = App.itemApproval(c.id, key);
+      if(!ia) return;
+      rows.push({ course:c, itemKey:key, ia });
+    });
+  });
+  return rows;
+}
+function renderAdminCIOverview(){
+  const rows = adminAllItemRows();
+  const pending = rows.filter(r=>r.ia.stage==='ci');
+  const wrap = el('<div></div>');
+  const rowHtml = (r, showStage) => `
+    <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div class="section-title" style="font-size:13.5px;">${escapeHtml(r.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[r.itemKey])}</div>
+        <div class="section-meta">${courseMeta(r.course)}${(() => { const u = getCourseCIUser(r.course.id); return u ? ` · CI: ${escapeHtml(u.name)}` : ' · No Course Instructor assigned'; })()}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${showStage ? itemStagePillHtml(r.ia.stage) : ''}
+        <button class="btn btn-outline btn-sm" onclick="${itemActionNavigateAttr(r.course, r.itemKey)}">${r.ia.stage==='ci' ? 'Enter / View Marks' : 'View'}</button>
+      </div>
+    </div>`;
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Administrator — Course Instructor view</div>
+      <h2>Course Instructor Overview</h2>
+      <p>Every Term Test / Practical Internal / SEE Practical item, across every section, with who it's assigned to — the same information each Course Instructor sees on their own dashboard, just system-wide. Opening one takes you to the exact marks-entry page they use; you can act on their behalf there.</p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Still with the Course Instructor (${pending.length})</div>
+      ${pending.length===0 ? `<p class="section-meta" style="margin-top:8px;">Nothing is currently sitting at the Course Instructor stage.</p>` : pending.map(r=>rowHtml(r,false)).join('')}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <div class="section-title" style="font-size:15px;">Every item (${rows.length})</div>
+      ${rows.length===0 ? `<p class="section-meta" style="margin-top:8px;">No sections with an Evaluation Type set yet.</p>` : rows.map(r=>rowHtml(r,true)).join('')}
+    </div>
+  `;
+  return wrap;
+}
+function renderAdminCCOverview(){
+  const rows = adminAllItemRows().filter(r=>r.ia.stage!=='ci');
+  const pending = rows.filter(r=>r.ia.stage==='cc');
+  const wrap = el('<div></div>');
+  const rowHtml = (r, showStage) => `
+    <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div class="section-title" style="font-size:13.5px;">${escapeHtml(r.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[r.itemKey])}</div>
+        <div class="section-meta">${courseMeta(r.course)}${(() => { const u = getCourseCCUser(r.course.id); return u ? ` · CC: ${escapeHtml(u.name)}` : ' · No Course Coordinator assigned'; })()}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${showStage ? itemStagePillHtml(r.ia.stage) : ''}
+        <button class="btn btn-outline btn-sm" onclick="${itemActionNavigateAttr(r.course, r.itemKey)}">View</button>
+      </div>
+    </div>`;
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Administrator — Course Coordinator view</div>
+      <h2>Course Coordinator Overview</h2>
+      <p>Every item that has reached (or passed) the Course Coordinator stage, across every section, with who coordinates it — the same information each Course Coordinator sees on their own "Pending Evaluation" page, just system-wide.</p>
+    </div>
+    <div class="card">
+      <div class="section-title" style="font-size:15px;">Awaiting Course Coordinator verification (${pending.length})</div>
+      ${pending.length===0 ? `<p class="section-meta" style="margin-top:8px;">Nothing is currently sitting at the Course Coordinator stage.</p>` : pending.map(r=>rowHtml(r,false)).join('')}
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <div class="section-title" style="font-size:15px;">Everything tracked from here on (${rows.length})</div>
+      ${rows.length===0 ? `<p class="section-meta" style="margin-top:8px;">Nothing has reached the Course Coordinator stage yet.</p>` : rows.map(r=>rowHtml(r,true)).join('')}
+    </div>
+  `;
+  return wrap;
+}
+function renderAdminScrutinyOverview(){
+  const rows = adminAllItemRows().filter(r=>r.ia.stage==='scrutiny');
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Administrator — Scrutiny view</div>
+      <h2>Scrutiny Queue (All Faculty)</h2>
+      <p>Every item currently out for scrutiny, across every Scrutiny Faculty member the HOD has delegated to — each Scrutiny Faculty member's own queue only shows the items assigned to them personally.</p>
+    </div>
+    <div class="card">
+      ${rows.length===0 ? emptyStateHtml('Nothing out for scrutiny', 'Items the HOD hands off to a Scrutiny Faculty member will appear here.') : rows.map(r=>{
+        const su = App.getUserById(r.ia.scrutinyUserId);
+        return `
+        <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="section-title" style="font-size:13.5px;">${escapeHtml(r.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[r.itemKey])}</div>
+            <div class="section-meta">${courseMeta(r.course)} · Assigned to ${escapeHtml(su ? su.name : 'Unknown')}</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="${itemActionNavigateAttr(r.course, r.itemKey)}">View</button>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+  return wrap;
+}
 function renderCIEvaluation(){
   const user = App.currentUser();
   const items = myAssignedRosterItems(user.id);
+  // Bundle numbering — within this faculty member's own assigned-items
+  // list, each distinct subject (course.code) gets its own 1, 2, 3...
+  // counter in the order its sections appear here, so "Section C3" /
+  // "Section C6" etc. read as "Bundle 1" / "Bundle 2" instead. Purely a
+  // display label for this page — course.section and everywhere else in
+  // the app (Roster Assignment, Class Progress, etc.) still show the real
+  // section letter as before.
+  const bundleCounters = {};
+  const itemsWithBundle = items.map(it=>{
+    const key = it.course.code;
+    bundleCounters[key] = (bundleCounters[key]||0) + 1;
+    return Object.assign({}, it, { bundleNo: bundleCounters[key] });
+  });
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Instructor</div>
       <h2>Evaluation</h2>
-      <p>Every Term Test 1/2, Practical Internal Test, and SEE Practical roll-number slice an Administrator has currently assigned to you from Roster Assignment — across every section, including ones you aren't the registered Course Instructor for. Open one to enter marks for just your assigned roll numbers.</p>
+      <p>Every Term Test 1/2 roll-number slice an Administrator has currently assigned to you from Roster Assignment — across every section, including ones you aren't the registered Course Instructor for. Open one to enter marks for just your assigned roll numbers. Every other component (Practical Internal Test, SEE Practical, and the rest) is entered from "My Subjects" instead.</p>
     </div>
-    ${items.length===0 ? emptyStateHtml('Nothing assigned yet', 'An Administrator hasn\'t assigned you a roll-number slice for any Term Test, Practical Internal, or SEE Practical item yet — check with them under Roster Assignment. Sections where you\'re the registered Course Instructor still appear under "My Subjects" as usual.') :
-      items.map(it=>`
+    ${itemsWithBundle.length===0 ? emptyStateHtml('Nothing assigned yet', 'An Administrator hasn\'t assigned you a roll-number slice for Term Test 1 or 2 yet — check with them under Roster Assignment. Practical Internal Test, SEE Practical, and every other component are entered from "My Subjects" instead.') :
+      itemsWithBundle.map(it=>`
       <div class="card">
         <div class="card-row">
           <div>
             <div class="section-title">${escapeHtml(it.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[it.itemKey])}</div>
-            ${courseMetaBlock(it.course)}
+            <div class="section-meta">${escapeHtml(it.course.code)} · Bundle ${it.bundleNo} · ${branchLabel(it.course.branch)}${it.course.regulation ? ` · ${escapeHtml(it.course.regulation)}` : ''}</div>
+            <div class="section-meta" style="margin-top:2px;">${assignmentSummary(it.course.id)}</div>
             <div class="section-meta" style="margin-top:6px;">${it.rollCount} roll number${it.rollCount===1?'':'s'} assigned to you</div>
           </div>
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
@@ -12200,42 +12885,6 @@ function canViewClassProgress(course){
   if(isCourseOwnerCI(course)) return true;
   if(getCourseCCUser(course.id)?.id === actor.id) return true;
   return ITEM_FLOW_KEYS.some(key => getItemRosterOverrides(course, key).some(o=>o.facultyUserId===actor.id));
-}
-/* ---------- CI: "My Sections" — the default, unfiltered student list for
-   every section this faculty member is the registered Course Instructor
-   of, straight from Course Registration (course.students), not narrowed
-   to any Roster Assignment slice. Distinct from "My Subjects" (which is
-   for entering this CI's OWN marks) — this tab is purely for looking at
-   the whole class's progress, including Term Test 1/2 and Practical
-   Internal/SEE Practical marks entered by another faculty member on a
-   different roll-number slice of the same item (see
-   getItemRosterOverrides/canViewClassProgress below). Each card opens the
-   read-only Class Progress table for that section. */
-function renderCIMySections(){
-  const user = App.currentUser();
-  const { ciCourses } = getFacultyCourses(user.id);
-  const wrap = el('<div></div>');
-  wrap.innerHTML = `
-    <div class="page-head">
-      <div class="page-eyebrow">Course Instructor</div>
-      <h2>My Sections</h2>
-      <p>Your registered sections' full roster, straight from Course Registration. View every student's currently entered marks for Term Test 1/2, Practical Internal Test, SEE Practical, and every other component — including marks entered by another faculty member on a Roster Assignment slice of the same item. Read-only; enter marks from "My Subjects" (your own components) or "Evaluation" (any roll-number slice assigned to you).</p>
-    </div>
-    ${ciCourses.length===0 ? emptyStateHtml('No sections yet', 'You aren\'t the registered Course Instructor on any section yet — once one is assigned, its full class roster will appear here.') :
-      ciCourses.map(c=>`
-      <div class="card" style="cursor:pointer;" onclick="App.navigate('ci-class-progress',{courseId:'${c.id}'})" role="button" tabindex="0" onkeydown="if(event.key==='Enter') App.navigate('ci-class-progress',{courseId:'${c.id}'})">
-        <div class="section-title">${escapeHtml(c.name)}</div>
-        ${courseMetaBlock(c)}
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:8px;">
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-            ${statusPill(c)}
-            ${etPill(c)}
-          </div>
-          <span class="section-meta" style="color:var(--brass);font-weight:600;">View class roster &amp; marks →</span>
-        </div>
-      </div>`).join('')}
-  `;
-  return wrap;
 }
 function renderCIClassProgress(params){
   const course = App.getCourse(params.courseId);
@@ -12380,6 +13029,76 @@ function renderCITermTestSections(params={}){
   `;
   return wrap;
 }
+/* Term Test marks table — right/left-edge hover auto-scroll, plus an
+   explicit horizontal scroll slider (.tt-marks-scrollbar, added right
+   below .tt-marks-scroll in renderCITermTestEntry). The table is
+   min-width:1400px and its own native scrollbar sits as a thin strip at
+   the very bottom of .table-scroll — easy to miss, especially outside
+   Full Screen where the browser window (and so the visible slice of the
+   table) may only be half the screen. This gives two more ways to move
+   it: hovering near either edge scrolls that direction without needing to
+   grab anything, and the slider mirrors/drives the same scrollLeft
+   directly, hiding itself once the real (post-layout) width shows the
+   table isn't wide enough to need it.
+   Re-run after every render via the same call sites that already
+   recompute the sticky header offsets (applyStickyTableHeaders) — see
+   those call sites for why (renderContent rebuilds the whole table on
+   every mark saved). Everything here lives on DOM nodes that rebuild
+   replaces wholesale each time, so fresh listeners on THOSE are never a
+   leak — except the one setInterval driving the edge-scroll, which can
+   outlive its container if a rebuild happens while the mouse is still
+   sitting in the hot zone (e.g. entering a mark near the right edge). It's
+   tracked in a module-level var and always cleared at the top of this
+   function, before any new interval is armed, so a stale one from the
+   previous render's (now-detached) container never keeps running. */
+let ttEdgeScrollTimer = null, ttEdgeScrollDir = 0;
+let ttScrollResizeHandler = null;
+function syncTTMarksScrollbars(root){
+  if(ttEdgeScrollTimer){ clearInterval(ttEdgeScrollTimer); ttEdgeScrollTimer = null; ttEdgeScrollDir = 0; }
+  const scope = root || document;
+  const containers = Array.from(scope.querySelectorAll('.tt-marks-scroll'));
+  const refreshSlider = (container, slider) => {
+    const max = Math.max(0, container.scrollWidth - container.clientWidth);
+    slider.max = String(max);
+    if(document.activeElement !== slider) slider.value = String(container.scrollLeft);
+    const row = slider.closest('.tt-marks-scrollbar-row');
+    if(row) row.style.display = max > 0 ? '' : 'none';
+  };
+  containers.forEach(container=>{
+    const slider = container.parentElement && container.parentElement.querySelector('.tt-marks-scrollbar');
+    if(!slider) return;
+    const sync = () => refreshSlider(container, slider);
+    const setDir = (dir) => {
+      if(dir === ttEdgeScrollDir && ttEdgeScrollTimer) return;
+      if(ttEdgeScrollTimer){ clearInterval(ttEdgeScrollTimer); ttEdgeScrollTimer = null; }
+      ttEdgeScrollDir = dir;
+      if(!dir) return;
+      ttEdgeScrollTimer = setInterval(()=>{ container.scrollLeft += dir*18; sync(); }, 16);
+    };
+    const zone = 56; // px from either edge that counts as the "hot" auto-scroll strip
+    container.addEventListener('mousemove', (e)=>{
+      const rect = container.getBoundingClientRect();
+      const fromRight = rect.right - e.clientX, fromLeft = e.clientX - rect.left;
+      if(fromRight>=0 && fromRight<zone) setDir(1);
+      else if(fromLeft>=0 && fromLeft<zone) setDir(-1);
+      else setDir(0);
+    });
+    container.addEventListener('mouseleave', ()=>setDir(0));
+    container.addEventListener('scroll', sync);
+    slider.addEventListener('input', ()=>{ container.scrollLeft = Number(slider.value); });
+    sync();
+  });
+  // The resize listener is the one thing NOT thrown away by the next
+  // render (window itself never gets rebuilt), so it's dedup'd manually —
+  // otherwise every mark saved would pile on one more permanent listener
+  // for the lifetime of the tab.
+  if(ttScrollResizeHandler) window.removeEventListener('resize', ttScrollResizeHandler);
+  ttScrollResizeHandler = () => containers.forEach(container=>{
+    const slider = container.parentElement && container.parentElement.querySelector('.tt-marks-scrollbar');
+    if(slider) refreshSlider(container, slider);
+  });
+  window.addEventListener('resize', ttScrollResizeHandler);
+}
 function ttNum(v){ return (v===undefined||v===null||isNaN(v)) ? '' : v; }
 /* Toggles Full Screen mode for Term Test marks entry. Fullscreens
    document.documentElement (the whole page) — deliberately NOT the marks
@@ -12415,22 +13134,29 @@ function toggleTTFullscreen(){
   // recalculating against the new sizes, not just set once at initial
   // render. Deferred a tick so it runs after the tt-fs-active class change
   // (and the fullscreen request itself) has actually repainted.
-  requestAnimationFrame(()=> applyStickyTableHeaders(document.getElementById('content')));
+  requestAnimationFrame(()=> { applyStickyTableHeaders(document.getElementById('content')); syncTTMarksScrollbars(document.getElementById('content')); });
 }
 document.addEventListener('fullscreenchange', ()=>{
   if(!document.fullscreenElement) document.body.classList.remove('tt-fs-active');
-  requestAnimationFrame(()=> applyStickyTableHeaders(document.getElementById('content')));
+  requestAnimationFrame(()=> { applyStickyTableHeaders(document.getElementById('content')); syncTTMarksScrollbars(document.getElementById('content')); });
 });
 /* One <td> of the CC/EA/HOD per-student remark trio at the end of the Term
    Test entry table — see canEditTTStudentRemark for who can type into it. */
 function ttStudentRemarkCell(course, itemKey, cycle, s, role){
   const val = (((s.marks||{}).ttRemarks||{})[cycle]||{})[role] || '';
   const canEdit = canEditTTStudentRemark(course, itemKey, role);
-  const roleLabel = role==='cc' ? 'CC' : role==='ea' ? 'EA' : 'HOD';
+  const roleLabel = role==='cc' ? 'CC' : role==='ea' ? 'EA' : role==='hod' ? 'HOD' : 'Scrutiny';
+  // Once the CC has verified and this item has moved on (to HOD, Scrutiny,
+  // or Approved), an empty CC Remark box reads as broken/unfinished rather
+  // than "nothing flagged" — show a plain '-' instead so it's clearly a
+  // deliberate, completed no-remark. This is a display-only stand-in: it's
+  // never written back as the stored value unless the CC actually edits it.
+  const ia = App.itemApproval(course.id, itemKey);
+  const displayVal = (role==='cc' && !val && ia && ia.stage!=='ci' && ia.stage!=='cc') ? '-' : val;
   return `<td><input type="text" style="width:130px;padding:5px 7px;font-size:12.5px;border:1px solid var(--rule);border-radius:6px;background:${canEdit?'#fff':'var(--parchment-2)'};"
     placeholder="${roleLabel} remark" title="${roleLabel} remark for ${escapeHtml(s.name)}"
     data-markkey="${course.id}|${s.id}|${cycle}_remark_${role}"
-    value="${escapeHtml(val)}" ${canEdit?'':'disabled'}
+    value="${escapeHtml(displayVal)}" ${canEdit?'':'disabled'}
     onchange="App.setTermTestStudentRemark('${course.id}','${s.id}','${cycle}','${itemKey}','${role}',this.value)"></td>`;
 }
 /* Structured Term Test entry — Q1-Q5 short answers (2 marks each) then
@@ -12547,7 +13273,7 @@ function renderCITermTestEntry(params){
   // off only the FULLY entered students, not every student with any nonzero
   // total — otherwise a student with just one question typed in could get
   // flagged "Lowest" and prompted to upload a script before their marks are
-  // even finished. The Class Performance stat cards above still use the
+  // even finished. The Bundle Performance stat cards above still use the
   // broader `scored` list as-is, since "current running Highest/Average" is
   // useful progress info even mid-entry; it's specifically the upload
   // prompt that should wait for a complete entry.
@@ -12565,14 +13291,44 @@ function renderCITermTestEntry(params){
     cc: anyRemark('cc') || canEditTTStudentRemark(course, itemKey, 'cc'),
     ea: anyRemark('ea') || canEditTTStudentRemark(course, itemKey, 'ea'),
     hod: anyRemark('hod') || canEditTTStudentRemark(course, itemKey, 'hod'),
+    scrutiny: anyRemark('scrutiny') || canEditTTStudentRemark(course, itemKey, 'scrutiny'),
   };
+  // Students flagged by name/roll number via a CC / HOD / Scrutiny remark
+  // on this cycle — this is the "send back marks to CI for a particular
+  // student" signal referenced below when the item comes back to the CI.
+  const flaggedStudentIds = new Set(entryStudents.filter(st=>
+    ['cc','hod','scrutiny'].some(role=>!!((((st.marks||{}).ttRemarks||{})[cycle]||{})[role]))
+  ).map(st=>st.id));
+  // Whether EVERY (non-absent) student already has a fully-entered score
+  // for this cycle — computed off the marks as they stand right now (i.e.
+  // before whatever the CI is about to edit in this correction pass).
+  const allMarksAlreadyComplete = entryStudents.every(st=>
+    isAbsentForComponent(st, compKey) || isTTFullyEntered((st.marks && st.marks.ttDetail && st.marks.ttDetail[cycle]) || {})
+  );
+  // Once a record with fully-entered marks is sent back to the CI over a
+  // CC/HOD/Scrutiny remark on one or more specific students, re-opening the
+  // whole class back up would let the CI silently touch every other
+  // already-verified student too. So in that one situation — sent back for
+  // correction, marks were already complete, and at least one student is
+  // actually flagged — only the flagged student(s) stay editable; everyone
+  // else is locked to what they already had. If marks were NOT already
+  // complete (the CI hadn't finished the exam yet), editing stays open for
+  // everyone as normal so they can finish entering the class.
+  const restrictEditToFlagged = sentBackForCorrection && allMarksAlreadyComplete && flaggedStudentIds.size>0;
 
   const rows = entryStudents.map(s=>{
     const absentHere = isAbsentForComponent(s, compKey);
-    const rowEditable = editable && !absentHere;
+    // This student's own share of `editable` — full page edit rights,
+    // narrowed further to just the flagged student(s) when a completed
+    // record was sent back over a specific student's remark (see
+    // restrictEditToFlagged above). Covers the Absent toggle and the
+    // Evaluated Script upload control too, not just the mark boxes, so an
+    // unflagged, already-verified student can't be touched at all.
+    const rowEffEditable = editable && (!restrictEditToFlagged || flaggedStudentIds.has(s.id));
+    const rowEditable = rowEffEditable && !absentHere;
     const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
     const calc = computeTermTestRaw(detail);
-    const absentCell = `<td style="text-align:center;"><input type="checkbox" ${absentHere?'checked':''} ${editable?'':'disabled'}
+    const absentCell = `<td style="text-align:center;"><input type="checkbox" ${absentHere?'checked':''} ${rowEffEditable?'':'disabled'}
       title="Absent for ${escapeHtml(cycleLabel)} only — clears just this exam's marks"
       onchange="if(confirm(this.checked ? 'Mark ${escapeHtml(s.name)} absent for ${escapeHtml(cycleLabel)}? This clears only this exam\\'s marks.' : 'Mark ${escapeHtml(s.name)} present again for ${escapeHtml(cycleLabel)}?')) App.setComponentAbsent('${course.id}','${s.id}','${compKey}',this.checked); else this.checked=!this.checked;"></td>`;
     const shortCells = absentHere ? `<td colspan="${TT_SHORT_KEYS.length}" class="mono" style="color:var(--text-soft);font-size:12px;text-align:center;">Absent</td>` : TT_SHORT_KEYS.map(k=>{
@@ -12633,14 +13389,15 @@ function renderCITermTestEntry(params){
       <td class="total-cell hl-total">${absentHere?'—':calc.longRaw}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_LONG_RAW_MAX}</span></td>
       <td class="total-cell hl-total">${absentHere?'—':calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${TT_TOTAL_MAX}</span></td>
       <td class="total-cell" style="font-weight:700;">${absentHere?'—':cieScaled}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>
-      <td>${absentHere?'—':ttScriptUploadCell(course, cycle, s, editable, autoPicks)}</td>
+      <td>${absentHere?'—':ttScriptUploadCell(course, cycle, s, rowEffEditable, autoPicks)}</td>
       ${showRemarkCol.cc ? ttStudentRemarkCell(course, itemKey, cycle, s, 'cc') : ''}
       ${showRemarkCol.ea ? ttStudentRemarkCell(course, itemKey, cycle, s, 'ea') : ''}
       ${showRemarkCol.hod ? ttStudentRemarkCell(course, itemKey, cycle, s, 'hod') : ''}
+      ${showRemarkCol.scrutiny ? ttStudentRemarkCell(course, itemKey, cycle, s, 'scrutiny') : ''}
     </tr>`;
   }).join('');
 
-  let statsHtml = `<p class="section-meta">No marks entered yet for ${escapeHtml(cycleLabel)} — class stats will appear once at least one student has a score.</p>`;
+  let statsHtml = `<p class="section-meta">No marks entered yet for ${escapeHtml(cycleLabel)} — bundle stats will appear once at least one student has a score.</p>`;
   if(scored.length){
     const max = Math.max(...scored.map(x=>x.total));
     const min = Math.min(...scored.map(x=>x.total));
@@ -12687,6 +13444,9 @@ function renderCITermTestEntry(params){
     ${!forwarded ? emptyStateHtml('Marks entry locked', `Waiting on your Course Coordinator to finish and forward the ${escapeHtml(cycleLabel)} Question Paper Setup.`) : `
     <div class="tt-fs-hide">${itemApprovalStatusHtml(course, itemKey)}</div>
     <div class="tt-fs-hide">${lockBannerHtml}</div>
+    ${restrictEditToFlagged ? `<div class="tt-fs-hide card" style="border-left:3px solid var(--warn);">
+      <p class="section-meta" style="margin:0;"><strong>Correction limited to the flagged student${flaggedStudentIds.size===1?'':'s'} only.</strong> ${escapeHtml(cycleLabel)} was already fully entered when this was sent back — so to protect everyone else's already-verified marks, editing here is open only for ${escapeHtml(entryStudents.filter(st=>flaggedStudentIds.has(st.id)).map(st=>`${st.name}${st.rollNo?' ('+st.rollNo+')':''}`).join(', '))}. Every other student's row is read-only.</p>
+    </div>` : ''}
     ${!getItemRosterOverrides(course, itemKey).length ? `<div class="card tt-fs-hide" style="border-left:3px solid var(--warn);">
       <p class="section-meta" style="margin:0;">No roll-number list has been assigned for ${escapeHtml(cycleLabel)} yet — student roll numbers are <strong>not</strong> pulled in from Course Registration here. ${App.currentUser().systemRole==='ADMIN' ? `An Administrator needs to upload the roster first: <button class="btn btn-outline btn-sm" style="margin-left:6px;" onclick="App.navigate('admin-roster-assignment',{courseId:'${course.id}', itemKey:'${itemKey}'})">Assign Roster</button>` : 'Ask an Administrator to upload the roster from Roster Assignment before marks can be entered here.'}</p>
     </div>` : ''}
@@ -12697,9 +13457,15 @@ function renderCITermTestEntry(params){
       </div>
       ${isInlineAnalyticsOpen(course.id+'|'+cycle) ? buildScoreAnalyticsCharts(scored, TT_TOTAL_MAX) : ''}
     </div>
-    <div class="card tt-fs-hide">
-      <div class="section-title" style="font-size:14px;">Class Performance — ${escapeHtml(cycleLabel)}</div>
-      <div style="margin-top:8px;">${statsHtml}</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;">
+      <div class="card tt-fs-hide" style="flex:2;min-width:320px;">
+        <div class="section-title" style="font-size:14px;">Bundle Performance — ${escapeHtml(cycleLabel)}</div>
+        <div style="margin-top:8px;">${statsHtml}</div>
+      </div>
+      <div class="card tt-fs-hide" style="flex:1;min-width:280px;">
+        <div class="section-title" style="font-size:14px;">Bundle Average</div>
+        <div style="margin-top:8px;">${svgBellCurveChart(scored, TT_TOTAL_MAX, {width:340, height:180})}</div>
+      </div>
     </div>
     <div class="card tt-fs-wrap" id="${ttFsWrapId}">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
@@ -12718,7 +13484,7 @@ function renderCITermTestEntry(params){
           <span class="tt-fs-enter-label">⛶ Full Screen</span><span class="tt-fs-exit-label">✕ Exit Full Screen</span>
         </button>
       </div>
-      <div class="table-scroll" style="margin-top:10px;border-radius:6px;overflow:auto;box-shadow:var(--shadow-sm);border:1px solid var(--rule);">
+      <div class="table-scroll tt-marks-scroll" style="margin-top:10px;border-radius:6px;overflow:auto;box-shadow:var(--shadow-sm);border:1px solid var(--rule);">
 
         <!-- overflow:hidden was deliberately REMOVED from this table (unlike
              other .data-table instances) — an element with overflow!=visible
@@ -12745,12 +13511,26 @@ function renderCITermTestEntry(params){
               ${showRemarkCol.cc ? `<th rowspan="3" style="vertical-align:middle;">CC<br>Remark</th>` : ''}
               ${showRemarkCol.ea ? `<th rowspan="3" style="vertical-align:middle;">EA<br>Remark</th>` : ''}
               ${showRemarkCol.hod ? `<th rowspan="3" style="vertical-align:middle;">HOD<br>Remark</th>` : ''}
+              ${showRemarkCol.scrutiny ? `<th rowspan="3" style="vertical-align:middle;">Scrutiny<br>Remark</th>` : ''}
             </tr>
             <tr>${shortHeadGrp.top}${longHeadGrp.top}</tr>
             <tr>${shortHeadGrp.sub}${longHeadGrp.sub}</tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
+      </div>
+      <!-- Explicit horizontal scroll slider for the marks table above — see
+           syncTTMarksScrollbars(). The table's own native scrollbar is
+           hidden (see .tt-marks-scroll in the stylesheet) in favor of this
+           one, which is taller and easier to spot/grab — especially
+           outside Full Screen where the browser window (and so the
+           visible slice of a 1400px-wide table) may only be half the
+           screen. It's hidden automatically (via JS, once the real width
+           is known) when the table isn't wide enough to need it. -->
+      <div class="tt-marks-scrollbar-row" style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+        <span aria-hidden="true" style="font-size:12px;color:var(--text-soft);flex-shrink:0;">◀</span>
+        <input type="range" class="tt-marks-scrollbar" min="0" max="0" value="0" step="1" style="flex:1;" aria-label="Scroll marks table horizontally">
+        <span aria-hidden="true" style="font-size:12px;color:var(--text-soft);flex-shrink:0;">▶</span>
       </div>
       ${termTestActionBarHtml(course, itemKey, editable, periodFinished, ia)}
     </div>`}
@@ -12990,9 +13770,6 @@ function renderCIComponentEntry(params){
     </div>
     ${itemKey ? itemApprovalStatusHtml(course, itemKey) : ''}
     ${lockBannerHtml}
-    ${itemKey && !getItemRosterOverrides(course, itemKey).length ? `<div class="card" style="border-left:3px solid var(--warn);">
-      <p class="section-meta" style="margin:0;">No roll-number list has been assigned for ${escapeHtml(comp.label)} yet — student roll numbers are <strong>not</strong> pulled in from Course Registration here. ${App.currentUser().systemRole==='ADMIN' ? `An Administrator needs to upload the roster first: <button class="btn btn-outline btn-sm" style="margin-left:6px;" onclick="App.navigate('admin-roster-assignment',{courseId:'${course.id}', itemKey:'${itemKey}'})">Assign Roster</button>` : 'Ask an Administrator to upload the roster from Roster Assignment before marks can be entered here.'}</p>
-    </div>` : ''}
     <div class="card">
       <p class="section-meta" style="margin-bottom:10px;">
         ${escapeHtml(comp.label)} — raw /${comp.rawMax} scaled to /${comp.scaledMax}. ${note}
@@ -13221,7 +13998,7 @@ function renderCIEntry(params){
   const course = App.getCourse(params.courseId);
   if(course && !isCourseOwnerCI(course)){
     const wrapDenied = el('<div></div>');
-    wrapDenied.innerHTML = `<div class="page-head"><button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button></div>${notYourSubjectHtml()}`;
+    wrapDenied.innerHTML = `<div class="page-head"><button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course.name)}</button></div>${notYourSubjectHtml()}`;
     return wrapDenied;
   }
   const correctionMode = course.status==='approved' && course.editUnlocked;
@@ -13231,7 +14008,7 @@ function renderCIEntry(params){
   const approvedNotEditing = course.status==='approved' && !correctionMode;
   wrap.innerHTML = `
     <div class="page-head">
-      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-sections')">← Back to my subjects</button>
+      <button class="ghost-btn no-print" style="color:var(--ink);border-color:var(--rule);margin-bottom:14px;" onclick="App.navigate('ci-subject-detail',{courseId:'${params.courseId}'})">← Back to ${escapeHtml(course.name)}</button>
       <div class="page-eyebrow">${correctionMode ? 'Correction unlocked' : 'Stage 1 · Submission'}</div>
       <h2>Subject: ${escapeHtml(course.name)}</h2>
       <p>Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${course.section} · ${branchLabel(course.branch)} ${statusPill(course)} ${etPill(course)}</p>
@@ -13399,6 +14176,78 @@ function refreshCCRegGroups(){
 }
 window.refreshCCRegGroups = refreshCCRegGroups;
 
+function renderCCPendingEvaluation(){
+  const user = App.currentUser();
+  const { ccCourses } = getFacultyCourses(user.id);
+  const pendingCCActions = myPendingItemActions(user).filter(a=>a.role==='cc');
+  // Everything that has already reached (or passed) the CC's own stage, for
+  // a full picture of the evaluation pipeline on this page — not just the
+  // items that need action from the CC right this moment.
+  const allItems = [];
+  ccCourses.forEach(c=>{
+    const template = c.evalType ? getCourseTemplate(c) : null;
+    if(!template) return;
+    ITEM_FLOW_KEYS.forEach(key=>{
+      if(!itemFlowApplicable(template, key)) return;
+      const ia = App.itemApproval(c.id, key);
+      if(!ia || ia.stage==='ci') return;
+      allItems.push({ course:c, itemKey:key, ia });
+    });
+  });
+  const wrap = el('<div></div>');
+  wrap.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">Course Coordinator</div>
+      <h2>Pending Evaluation</h2>
+      <p>Term Test / Practical Internal Test / SEE Practical scripts your Course Instructors have entered and forwarded. Verify the marks, add a CC Remark on any student who needs a second look, then forward to the HOD — or send the item straight back to the Course Instructor if you've flagged a remark.</p>
+    </div>
+    ${pendingCCActions.length ? `
+      <div class="card" style="border-left:3px solid var(--brass);">
+        <div class="section-title" style="font-size:15px;">Action needed from you</div>
+        ${pendingCCActions.map(a=>{
+          // "Verify & Forward to HOD" only appears once the CC has actually
+          // opened the marks at least once this round (ia.ccOpened, set by
+          // App.markItemOpenedByCC) — before that, forwarding sight unseen
+          // isn't an option and the row shows just the Open button. Once
+          // opened, both stay available: the CC can go back in for another
+          // look (e.g. to add/edit a remark) or forward straight away.
+          const ia = App.itemApproval(a.course.id, a.itemKey);
+          const opened = !!(ia && ia.ccOpened);
+          const openBtn = `<button class="btn btn-outline btn-sm" onclick="App.markItemOpenedByCC('${a.course.id}','${a.itemKey}'); ${itemActionNavigateAttr(a.course, a.itemKey)}">Open Marks &amp; Verify</button>`;
+          const forwardBtn = `<button class="btn btn-sm" onclick="if(confirm('Forward ${escapeHtml(a.course.name).replace(/'/g,"\\'")} — ${escapeHtml(ITEM_FLOW_LABELS[a.itemKey])} to the HOD?')) App.forwardItem('${a.course.id}','${a.itemKey}')">Verify &amp; Forward to HOD</button>`;
+          return `
+          <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;flex-wrap:wrap;gap:10px;">
+            <div>
+              <div class="section-title" style="font-size:13.5px;">${escapeHtml(a.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[a.itemKey])}</div>
+              <div class="section-meta">${courseMeta(a.course)}</div>
+              ${!opened ? `<div class="section-meta" style="margin-top:2px;">Open the marks first — Verify &amp; Forward to HOD will appear once you have.</div>` : ''}
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              ${openBtn}
+              ${opened && itemHasCCRemark(a.course, a.itemKey) ? `<button class="btn btn-red btn-sm" onclick="const r=prompt('What needs to be corrected?'); if(r && r.trim()) App.sendBackItem('${a.course.id}','${a.itemKey}', r);">Send Back to CI</button>` : ''}
+              ${opened ? forwardBtn : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : emptyStateHtml('Nothing needs your verification right now', 'Once a Course Instructor forwards Term Test / Practical Internal / SEE Practical marks for a section you coordinate, it will show up here.')}
+    ${allItems.length ? `
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title" style="font-size:15px;">Everything you're tracking</div>
+        ${allItems.map(({course:c, itemKey, ia})=>`
+          <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
+            <div>
+              <div class="section-title" style="font-size:13.5px;">${escapeHtml(c.name)} — ${escapeHtml(ITEM_FLOW_LABELS[itemKey])}</div>
+              <div class="section-meta">${courseMeta(c)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              ${itemStagePillHtml(ia.stage)}
+              <button class="btn btn-outline btn-sm" onclick="${itemActionNavigateAttr(c, itemKey)}">View</button>
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
+  `;
+  return wrap;
+}
 function renderCCList(){
   const user = App.currentUser();
   const { ccCourses } = getFacultyCourses(user.id);
@@ -13408,31 +14257,18 @@ function renderCCList(){
   const baseList = [];
   ccCourses.forEach(c=>{ const k = norm(c.name); if(!seenNames[k]){ seenNames[k]=true; baseList.push(c); } });
   const initialBase = baseList[0] || null;
-  const pendingCCActions = myPendingItemActions(user).filter(a=>a.role==='cc');
   wrap.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">Course Coordinator</div>
       <h2>My Coordination</h2>
     </div>
     ${termTestPeriodBannerHtml()}
-    ${pendingCCActions.length ? `
-      <div class="card" style="border-left:3px solid var(--brass);">
-        <div class="section-title" style="font-size:15px;">Action needed from you</div>
-        <p class="section-meta" style="margin-top:2px;">Term Test / Practical Internal Test / SEE Practical items your Course Instructors have forwarded — verify and pass them on to the HOD.</p>
-        ${pendingCCActions.map(a=>`
-          <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
-            <div>
-              <div class="section-title" style="font-size:13.5px;">${escapeHtml(a.course.name)} — ${escapeHtml(ITEM_FLOW_LABELS[a.itemKey])}</div>
-              <div class="section-meta">${courseMeta(a.course)}</div>
-            </div>
-            <button class="btn btn-sm" onclick="${itemActionNavigateAttr(a.course, a.itemKey)}">Verify &amp; Forward to HOD</button>
-          </div>`).join('')}
-      </div>` : ''}
     ${ccCourses.length===0 ? emptyStateHtml('No courses coordinated','Once the Timetable Incharge assigns you as coordinator for a subject, it will appear here.') : `
       <div class="card">
         <div class="section-title" style="font-size:15px;">Assign Course Instructor</div>
         <p class="section-meta" style="margin-top:2px;">Sections, instructors, and rosters come straight from the imported Course Registration sheet — pick a coordination below and assign with one click. No Branch or Section to fill in by hand.</p>
         <table class="form-table">
+
           <tbody>
             <tr>
               <td class="ft-label">Coordination</td>
