@@ -14920,18 +14920,24 @@ function renderCITermTestView(params){
     return wrap;
   }
   const comp = template.cie.find(c=>c.key===compKey);
-  const students = dedupeStudentsByRoll(course.students || []);
+  const students = sortStudentsByRollNo(dedupeStudentsByRoll(course.students || []));
+  const rawScale = componentRawScale(comp);
   const rows = students.map(s=>{
     const absentHere = isAbsentForComponent(s, compKey);
-    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
-    const calc = computeTermTestRaw(detail, course, cycle);
-    const entered = ttHasAnyEntry(detail);
-    const scaledVal = entered ? round1((Math.min(calc.total,50)/50)*comp.scaledMax) : null;
-    const rawCell = absentHere ? 'Absent' : (entered ? `<span style="${!calc.valid?'color:var(--seal-red);font-weight:600;':''}">${calc.total}</span>` : '—');
+    // Read the same canonical value every other read-only roll-up reads
+    // (s.marks[comp.key] — see marksViewTable's cellHtml) instead of
+    // recomputing from the Q-by-Q ttDetail breakdown, which is only ever
+    // populated for whoever actually typed the marks in on the real entry
+    // page — a mismatch there was showing "—" here even once another
+    // faculty member had already entered and saved a student's Term Test.
+    const v = s.marks ? s.marks[compKey] : undefined;
+    const overMax = typeof v==='number' && (v>rawScale || v<0);
+    const scaledVal = typeof v==='number' ? round1((Math.min(v,rawScale)/rawScale)*comp.scaledMax) : null;
+    const rawCell = absentHere ? 'Absent' : (v===undefined||v===null ? '—' : `<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`);
     const scaledCell = absentHere ? 'Absent' : (scaledVal===null ? '—' : scaledVal);
     return `<tr>
       <td>${studentNameCell(s)}</td>
-      <td>${rawCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/50</span>`}</td>
+      <td>${rawCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span>`}</td>
       <td>${scaledCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span>`}</td>
     </tr>`;
   }).join('');
