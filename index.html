@@ -14943,31 +14943,6 @@ function itemStudentRemarkCell(course, itemKey, s, role){
    students already visible on the SIA / MOOCs / Practical Internal / Regular
    Lab Performance pages — alongside whatever Term Test total (if any) has
    been entered for that cycle so far, purely for reference. */
-/* The set of roll numbers actually registered for THIS specific course row
-   (subject + section + branch + semester), per the imported Course
-   Registration sheet — the same source of truth
-   App.activateCourseRegistrationGroup itself builds a section's roster
-   from (it filters course_registrations by exactly these four fields
-   before writing course.students — see that function). A course's own
-   `students` rows can end up carrying MORE roll numbers than that — e.g.
-   a stale import, or rows left over from before a Refresh Roster — so any
-   read-only roll-up that must show ONLY this section's real registrants,
-   not whatever else happens to be attached to this course_id, should
-   filter against this instead of trusting course.students wholesale.
-   Returns null ("don't filter — nothing to check against") if this
-   subject+section has no matching Course Registration rows at all, so a
-   course predating Course Registration import never has its whole roster
-   hidden by this. */
-function courseRegisteredRollSet(course){
-  const norm = s => String(s||'').trim().toLowerCase();
-  const regs = (App.state.courseRegistrations||[]).filter(r=>
-    norm(r.subjectName)===norm(course.name) &&
-    (r.sectionCode||'—')===(course.section||'—') &&
-    r.branch===course.branch &&
-    (r.semester||'—')===(course.semester||'—'));
-  if(!regs.length) return null;
-  return new Set(regs.map(r=>String(r.rollNo||'').trim().toUpperCase()));
-}
 function renderCITermTestView(params){
   const course = App.getCourse(params.courseId);
   const backBtn = itemViewerBackBtnHtml(course, 'ci-subject-detail', {courseId:params.courseId}, `← Back to ${course ? course.name : 'subject'}`);
@@ -14989,15 +14964,7 @@ function renderCITermTestView(params){
   // wrong students under the wrong section). Cross-section comparisons
   // belong on the dedicated Term Test Comparison card (termTestComparisonHtml)
   // instead, not this read-only roster view.
-  // Some course rows have picked up roll numbers beyond their own actual
-  // Course Registration import (e.g. 25CSE2102 Section B1 showing another
-  // section's roll numbers with every mark blank) — filter down to just
-  // the roll numbers genuinely registered for THIS section wherever that
-  // data is available (see courseRegisteredRollSet); course.students is
-  // only trusted as-is when no registration data exists to check against.
-  const registeredRolls = courseRegisteredRollSet(course);
-  const allStudents = sortStudentsByRollNo(dedupeStudentsByRoll(course.students || []));
-  const students = registeredRolls ? allStudents.filter(s=>registeredRolls.has(String(s.rollNo||'').trim().toUpperCase())) : allStudents;
+  const students = sortStudentsByRollNo(dedupeStudentsByRoll(course.students || []));
   const rawScale = componentRawScale(comp);
   const rows = students.map(s=>{
     const absentHere = isAbsentForComponent(s, compKey);
