@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15810,19 +15809,18 @@ function renderCISectionView(params){
   if(!course || !course.evalType){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Not available','This section has no Evaluation Type fixed yet.')}`; return wrap; }
   const section = params.section==='see' ? 'see' : params.section==='total' ? 'total' : 'cie';
   const pageTitle = section==='cie' ? 'CIE Marks — view only' : section==='see' ? 'SEE Marks — view only' : 'Total Marks — view only';
-  // "View CIE Marks" and "View Total Marks" both hide Term Test 1/2/3 —
-  // per the Admin's rule, the CI only sees SIA / Regular Lab Performance
-  // Assessment / Practical Internal Test / any other non-Term-Test
-  // component here, and no combined total (a "CIE Total"/"Total" would be
-  // incomplete without the Term Test scores it's deliberately missing).
-  // "View SEE Marks" is untouched — Term Test is a CIE-side thing only.
-  const bodyHtml = section==='total' ? marksViewTable(course, false, true) : (()=>{
+  // "View CIE Marks" and "View Total Marks" now show Term Test 1/2/3
+  // alongside SIA / Regular Lab Performance Assessment / Practical Internal
+  // Test / any other CIE component — all as plain read-only cells (this page
+  // has no inputs anywhere, so Term Test stays exactly as un-editable here
+  // as everything else always was). Totals are shown too since nothing's
+  // being deliberately left out anymore.
+  const bodyHtml = section==='total' ? marksViewTable(course, false, false) : (()=>{
     const template = getCourseTemplate(course);
-    const hideTermTest = section==='cie';
-    const comps = section==='cie' ? nonTermTestCieComponents(template) : seeDisplayComponents(template);
-    const sectionMax = section==='cie' ? null : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
+    const comps = section==='cie' ? template.cie : seeDisplayComponents(template);
+    const sectionMax = section==='cie' ? CIE_MAX : round1(comps.reduce((a,c)=>a+c.scaledMax,0));
     const rows = course.students.map(s=>{
-      const calc = hideTermTest ? null : computeCIE(s, comps);
+      const calc = computeCIE(s, comps);
       const cells = comps.map(comp=>{
         const v = s.marks[comp.key];
         const rawScale = componentRawScale(comp);
@@ -15834,13 +15832,12 @@ function renderCISectionView(params){
         const scaledVal = typeof v==='number' ? round1((Math.min(v,rawScale)/rawScale)*comp.scaledMax) : null;
         return `<td>${scaledVal===null?'—':`<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${scaledVal}</span>`} <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span></td>`;
       }).join('');
-      const totalCell = hideTermTest ? '' : `<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td>`;
+      const totalCell = `<td class="total-cell">${calc.total}<span class="mono" style="font-weight:400;color:var(--text-soft);font-size:11px;">/${sectionMax}</span></td>`;
       return `<tr><td>${studentNameCell(s)}</td>${cells}${totalCell}</tr>`;
     }).join('');
     const head = comps.map(comp=>`<th>${comp.label}<br><span style="text-transform:none;">max ${comp.scaledMax}</span></th>`).join('');
-    const totalHead = hideTermTest ? '' : `<th>${section==='cie'?'CIE':'SEE'} Total</th>`;
-    const note = hideTermTest ? `<p class="section-meta" style="margin-bottom:10px;">Term Test 1/2/3 marks are entered and viewed on their own dedicated pages, not here — this view only covers SIA, Regular Lab Performance Assessment, Practical Internal Test, and any other non-Term-Test component, so no CIE Total is shown (it would be incomplete without the Term Test scores).</p>` : '';
-    return comps.length ? `${note}<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}${totalHead}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'non-Term-Test CIE':'SEE'} components on this Evaluation Type.</p>`;
+    const totalHead = `<th>${section==='cie'?'CIE':'SEE'} Total</th>`;
+    return comps.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${head}${totalHead}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="section-meta">No ${section==='cie'?'CIE':'SEE'} components on this Evaluation Type.</p>`;
   })();
   wrap.innerHTML = `
     <div class="page-head">
