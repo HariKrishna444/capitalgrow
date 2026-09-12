@@ -4446,14 +4446,14 @@ const ROLE_ALLOWED_VIEWS = {
     'ea-list','ea-faculty','ea-students','ea-review','exam-list',
     'scrutiny-list','verification-status',
     'ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','ci-subject-detail','ci-entry',
-    'ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext',
+    'ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-termtest-view','ci-labint','ci-labext',
     'cc-list','cc-pending-evaluation','cc-roster','cc-review','cc-termtest-setup'],
   HOD: ['hod-list','hod-scrutiny-approvals','verification-status','hod-faculty','hod-audit','hod-review','hod-cc-detail','hod-termtest-overview','hod-labint-overview','hod-labext-overview','hod-student-lookup','ci-termtest-entry','ci-component-entry'],
   TTI: ['hod-coordinators','hod-cc-detail','hod-faculty'],
   EA: ['ea-list','ea-faculty','ea-students','ea-review','ci-termtest-entry','ci-component-entry'],
   EXAM: ['exam-list'],
   SCRUTINY: ['scrutiny-list','ci-termtest-entry','ci-component-entry'],
-  FACULTY: ['ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','cc-list','cc-pending-evaluation','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
+  FACULTY: ['ci-sections','ci-evaluation','ci-class-progress','ci-pending','ci-audit','cc-list','cc-pending-evaluation','verification-status','ci-subject-detail','ci-entry','ci-component-entry','ci-section-view','ci-analytics','ci-termtest','ci-termtest-entry','ci-termtest-view','ci-labint','ci-labext','cc-roster','cc-review','cc-termtest-setup','faculty-empty'],
 };
 function isViewAllowedForRole(role, view){
   const allowed = ROLE_ALLOWED_VIEWS[role];
@@ -7379,7 +7379,7 @@ window.closeModal = closeModal;
 const FACULTY_ROLE_LABELS = { ci:'Course Instructor', cc:'Course Coordinator' };
 const FACULTY_VIEW_ROLE = {
   'ci-sections':'ci', 'ci-evaluation':'ci', 'ci-class-progress':'ci', 'ci-pending':'ci', 'ci-audit':'ci', 'ci-subject-detail':'ci', 'ci-entry':'ci',
-  'ci-component-entry':'ci', 'ci-section-view':'ci', 'ci-analytics':'ci', 'ci-termtest':'ci', 'ci-termtest-entry':'ci',
+  'ci-component-entry':'ci', 'ci-section-view':'ci', 'ci-analytics':'ci', 'ci-termtest':'ci', 'ci-termtest-entry':'ci', 'ci-termtest-view':'ci',
   'ci-labint':'ci', 'ci-labext':'ci',
   'cc-list':'cc', 'cc-pending-evaluation':'cc', 'cc-roster':'cc', 'cc-review':'cc', 'cc-termtest-setup':'cc',
 };
@@ -7761,7 +7761,7 @@ function renderSidebar(){
 // lightweight count/completion flags — these need App.ensureCourseStudentsLoaded
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
-const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-subject-detail':true, 'ci-termtest-entry':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'ci-class-progress':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
+const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-subject-detail':true, 'ci-termtest-entry':true, 'ci-termtest-view':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'ci-class-progress':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
 /* Defers a renderContent() rebuild to the next tick instead of running it
    synchronously inside an onchange handler. onchange fires the instant an
    input loses focus — i.e. mid-click, before the browser has finished
@@ -7831,6 +7831,7 @@ function renderContent(){
     'ci-analytics': renderCIAnalytics,
     'ci-termtest': renderCITermTestSections,
     'ci-termtest-entry': renderCITermTestEntry,
+    'ci-termtest-view': renderCITermTestView,
     'ci-labint': renderCILabInternalSections,
     'ci-labext': renderCILabExternalSections,
     'ci-pending': renderCIPending,
@@ -14100,20 +14101,20 @@ function renderCISubjectDetail(params){
         // entered only from the "Evaluation" tab, against the roll-number
         // slice an Administrator has assigned via Roster Assignment (see
         // renderCIEvaluation / itemEntryStudents' TERM_TEST_ITEM_KEYS gate).
-        // Here they stay a disabled button once verified they still show
-        // the green "Verified" state (still clickable, to view what was
-        // entered) — otherwise a permanently disabled button pointing to
-        // the Evaluation tab instead of the old active-cycle enter/disable
-        // logic.
+        // Once verified they show the green "Verified" state (clickable, to
+        // view what was entered, via the real entry page in its read-only
+        // state). Before that, instead of a dead disabled button, they open
+        // the dedicated read-only ci-termtest-view page — same full roster
+        // as SIA/MOOCs/Practical Internal/Regular Lab, no roster-override
+        // gate, and never an input box, so there's still no way to enter or
+        // change a mark from here.
         if(comp.key===tt1Key){
-          const onclick = `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`;
-          if(App.itemApproval(course.id,'tt1')?.stage==='done') return verifiedBtn('Term Test 1', onclick);
-          return disabledBtn('Enter Term Test 1', 'Term Test 1 marks are entered from the Evaluation tab, not here.');
+          if(App.itemApproval(course.id,'tt1')?.stage==='done') return verifiedBtn('Term Test 1', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT1'})`);
+          return viewBtn('View Term Test 1', `App.navigate('ci-termtest-view',{courseId:'${course.id}', cycle:'TT1'})`);
         }
         if(comp.key===tt2Key){
-          const onclick = `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`;
-          if(App.itemApproval(course.id,'tt2')?.stage==='done') return verifiedBtn('Term Test 2', onclick);
-          return disabledBtn('Enter Term Test 2', 'Term Test 2 marks are entered from the Evaluation tab, not here.');
+          if(App.itemApproval(course.id,'tt2')?.stage==='done') return verifiedBtn('Term Test 2', `App.navigate('ci-termtest-entry',{courseId:'${course.id}', cycle:'TT2'})`);
+          return viewBtn('View Term Test 2', `App.navigate('ci-termtest-view',{courseId:'${course.id}', cycle:'TT2'})`);
         }
         // SEE Theory is entered and evaluated separately by the
         // Examination Branch (see seeDisplayComponents) — it never opens
@@ -14894,6 +14895,60 @@ function itemStudentRemarkCell(course, itemKey, s, role){
    marks for either or both while deciding — and whichever side totals
    higher is the one that counts toward that pair's score; that cell is
    highlighted so it's clear which one won. */
+/* ---------- CI: read-only view of Term Test 1/2, reachable straight from
+   the Subject Detail "Marks Entry" column even before an Administrator has
+   uploaded a Roster Assignment for this cycle. The real entry page
+   (renderCITermTestEntry / itemEntryStudents) deliberately shows NO students
+   at all until that override exists — entry only ever happens from the
+   "Evaluation" tab, by whichever faculty member is assigned. This page has
+   no such gate and no input box anywhere: it always lists the FULL Course
+   Registration roster (dedupeStudentsByRoll(course.students)) — the same
+   students already visible on the SIA / MOOCs / Practical Internal / Regular
+   Lab Performance pages — alongside whatever Term Test total (if any) has
+   been entered for that cycle so far, purely for reference. */
+function renderCITermTestView(params){
+  const course = App.getCourse(params.courseId);
+  const backBtn = itemViewerBackBtnHtml(course, 'ci-subject-detail', {courseId:params.courseId}, `← Back to ${course ? course.name : 'subject'}`);
+  const wrap = el('<div></div>');
+  if(!course){ wrap.innerHTML = `<div class="page-head">${backBtn}</div>${emptyStateHtml('Subject not found','')}`; return wrap; }
+  const cycle = params.cycle==='TT2' ? 'TT2' : 'TT1';
+  const cycleLabel = TERM_TEST_LABELS[cycle];
+  const template = course.evalType ? getCourseTemplate(course) : null;
+  const compKey = template ? termTestComponentKey(template, cycle) : null;
+  if(!compKey){
+    wrap.innerHTML = `<div class="page-head">${backBtn}<h2>${escapeHtml(cycleLabel)} — view only</h2></div>${emptyStateHtml('Not applicable', !course.evalType ? 'The Course Coordinator hasn\'t fixed an Evaluation Type for this section yet.' : `${escapeHtml(cycleLabel)} has no matching component on this section's Evaluation Type template.`)}`;
+    return wrap;
+  }
+  const comp = template.cie.find(c=>c.key===compKey);
+  const students = dedupeStudentsByRoll(course.students || []);
+  const rows = students.map(s=>{
+    const absentHere = isAbsentForComponent(s, compKey);
+    const detail = (s.marks && s.marks.ttDetail && s.marks.ttDetail[cycle]) || {};
+    const calc = computeTermTestRaw(detail, course, cycle);
+    const entered = ttHasAnyEntry(detail);
+    const scaledVal = entered ? round1((Math.min(calc.total,50)/50)*comp.scaledMax) : null;
+    const rawCell = absentHere ? 'Absent' : (entered ? `<span style="${!calc.valid?'color:var(--seal-red);font-weight:600;':''}">${calc.total}</span>` : '—');
+    const scaledCell = absentHere ? 'Absent' : (scaledVal===null ? '—' : scaledVal);
+    return `<tr>
+      <td>${studentNameCell(s)}</td>
+      <td>${rawCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/50</span>`}</td>
+      <td>${scaledCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span>`}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `
+    <div class="page-head">
+      ${backBtn}
+      <div class="page-eyebrow">Course Instructor</div>
+      <h2>${escapeHtml(cycleLabel)} — view only</h2>
+      <p>${escapeHtml(course.name)} · Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${escapeHtml(String(course.section))}</p>
+    </div>
+    <div class="card">
+      <p class="section-meta" style="margin-bottom:10px;">Read-only — ${escapeHtml(cycleLabel)} marks are entered from the "Evaluation" tab by whichever faculty member an Administrator assigns via Roster Assignment. This just shows the class's current marks for reference, same roster as SIA, MOOCs, Practical Internal Test and Regular Lab Performance Assessment.</p>
+      ${students.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th><th>${escapeHtml(cycleLabel)} Raw</th><th>${escapeHtml(cycleLabel)} Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>` : emptyStateHtml('No students','No students registered for this section yet.')}
+    </div>
+  `;
+  return wrap;
+}
 function renderCITermTestEntry(params){
   const course = App.getCourse(params.courseId);
   if(!course) return el('<div></div>');
