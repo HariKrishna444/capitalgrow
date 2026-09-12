@@ -1659,8 +1659,32 @@ const CIE_MAX = 50;
    sorting here once is what keeps all of them roll-number-wise. Uses
    {numeric:true} so embedded numbers compare naturally (…09 before …10)
    instead of as plain text. */
+/* Specialization code embedded directly in a CSE roll number — checked
+   longest/most-specific first, since "CSE" is a literal substring of every
+   one of the others (CSEAI/CSECS/CSEDS/CSERP), so a specialization roll
+   number is never mistaken for core CSE. */
+const ROLL_BRANCH_DETECT_ORDER = ['CSEAI','CSECS','CSEDS','CSERP','CSE'];
+// Fixed display order the University wants rosters sorted in: core CSE
+// first, then each specialization in this order — NOT alphabetical, and
+// not just a plain numeric/alpha compare on the roll number, because core
+// CSE roll numbers use a differently-sized numeric prefix (e.g.
+// 2501100CSE0016) than the specialization ones (e.g. 25011CSEAI0374), so
+// comparing the two as plain numbers put every specialization roll number
+// before every core CSE one instead of the other way around.
+const ROLL_BRANCH_RANK = { CSE:0, CSEAI:1, CSECS:2, CSEDS:3, CSERP:4 };
+function rollNoBranchCode(rollNo){
+  const up = String(rollNo||'').toUpperCase();
+  for(const code of ROLL_BRANCH_DETECT_ORDER){ if(up.includes(code)) return code; }
+  return null;
+}
 function sortStudentsByRollNo(students){
-  (students||[]).sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||'', undefined, {numeric:true, sensitivity:'base'}));
+  (students||[]).sort((a,b)=>{
+    const ca = rollNoBranchCode(a.rollNo), cb = rollNoBranchCode(b.rollNo);
+    const ra = ca!=null ? ROLL_BRANCH_RANK[ca] : 99;
+    const rb = cb!=null ? ROLL_BRANCH_RANK[cb] : 99;
+    if(ra!==rb) return ra-rb;
+    return (a.rollNo||'').localeCompare(b.rollNo||'', undefined, {numeric:true, sensitivity:'base'});
+  });
   return students;
 }
 
