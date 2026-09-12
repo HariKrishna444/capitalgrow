@@ -4643,6 +4643,30 @@ const App = {
     return course;
   },
 
+  /* ---------- Forces a fresh re-fetch of one course's roster, bypassing
+     the "no-op once studentsLoaded" shortcut above. ensureCourseStudentsLoaded
+     is right to cache for most pages (a CI's own entry screen only ever
+     changes because of what THIS browser tab just saved, so the in-memory
+     copy is always current) — but a few pages exist specifically to show
+     marks another faculty member entered in a COMPLETELY SEPARATE session
+     (Class Progress, and the read-only Term Test 1/2 view reached from "My
+     Subjects"): a Term-Test-only assigned faculty member's own tab has no
+     way to know that section's roster changed after it was first loaded,
+     so those rows kept showing "—" even once the other faculty had
+     genuinely saved marks — the data was on the server, just not in this
+     tab's stale copy. See FORCE_REFRESH_STUDENT_ROUTES below for where
+     this gets called instead of the cached version. */
+  async refreshCourseStudents(courseId){
+    const course = this.getCourse(courseId);
+    if(!course) return course;
+    const { data, error } = await sb.from('students').select('*').eq('course_id', courseId);
+    if(error){ toast('Could not refresh this section\'s roster: ' + (error.message||error), 'err'); return course; }
+    course.students = dedupeStudentsByRoll((data||[]).map(s=>({ id:s.id, name:s.name, marks:s.marks||{}, rollNo:s.roll_no||'', email:s.email||'', dirId:s.dir_id||null, absent:!!s.absent })));
+    sortStudentsByRollNo(course.students);
+    course.studentsLoaded = true;
+    return course;
+  },
+
   /* ---------- auth ---------- */
   // Called by the login form's submit handler / button.
   submitLogin(){
@@ -7762,6 +7786,14 @@ function renderSidebar(){
 // before they render, since the initial login fetch deliberately skips the
 // full students table (see fetchStateFromSupabase).
 const ROUTES_NEEDING_STUDENTS = { 'ci-entry':true, 'ci-subject-detail':true, 'ci-termtest-entry':true, 'ci-termtest-view':true, 'ci-component-entry':true, 'ci-section-view':true, 'ci-analytics':true, 'ci-class-progress':true, 'cc-roster':true, 'cc-review':true, 'ea-review':true, 'hod-review':true, 'admin-roster-assignment':true };
+// Subset of the above that exist specifically to show marks entered by
+// OTHER faculty in their own separate session — a Term-Test-only assigned
+// faculty member's tab, or a section's owner CI who's handed everything
+// off, has no other signal that the roster changed since it was first
+// cached. These two always re-fetch from the server on every visit instead
+// of trusting the (possibly stale) in-memory copy — see
+// App.refreshCourseStudents' comment for the full story.
+const FORCE_REFRESH_STUDENT_ROUTES = { 'ci-class-progress':true, 'ci-termtest-view':true };
 /* Defers a renderContent() rebuild to the next tick instead of running it
    synchronously inside an onchange handler. onchange fires the instant an
    input loses focus — i.e. mid-click, before the browser has finished
@@ -7933,6 +7965,11 @@ function renderContent(){
   const courseId = App.ui.params && App.ui.params.courseId;
   if(ROUTES_NEEDING_STUDENTS[view] && courseId){
     const course = App.getCourse(courseId);
+    if(course && FORCE_REFRESH_STUDENT_ROUTES[view]){
+      c.innerHTML = emptyStateHtml('Loading roster…', 'Fetching this section\'s latest students and marks.');
+      App.refreshCourseStudents(courseId).then(build);
+      return;
+    }
     if(course && !course.studentsLoaded){
       c.innerHTML = emptyStateHtml('Loading roster…', 'Fetching this section\'s students and marks.');
       App.ensureCourseStudentsLoaded(courseId).then(build);
