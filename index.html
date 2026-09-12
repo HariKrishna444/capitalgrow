@@ -1659,32 +1659,8 @@ const CIE_MAX = 50;
    sorting here once is what keeps all of them roll-number-wise. Uses
    {numeric:true} so embedded numbers compare naturally (…09 before …10)
    instead of as plain text. */
-/* Specialization code embedded directly in a CSE roll number — checked
-   longest/most-specific first, since "CSE" is a literal substring of every
-   one of the others (CSEAI/CSECS/CSEDS/CSERP), so a specialization roll
-   number is never mistaken for core CSE. */
-const ROLL_BRANCH_DETECT_ORDER = ['CSEAI','CSECS','CSEDS','CSERP','CSE'];
-// Fixed display order the University wants rosters sorted in: core CSE
-// first, then each specialization in this order — NOT alphabetical, and
-// not just a plain numeric/alpha compare on the roll number, because core
-// CSE roll numbers use a differently-sized numeric prefix (e.g.
-// 2501100CSE0016) than the specialization ones (e.g. 25011CSEAI0374), so
-// comparing the two as plain numbers put every specialization roll number
-// before every core CSE one instead of the other way around.
-const ROLL_BRANCH_RANK = { CSE:0, CSEAI:1, CSECS:2, CSEDS:3, CSERP:4 };
-function rollNoBranchCode(rollNo){
-  const up = String(rollNo||'').toUpperCase();
-  for(const code of ROLL_BRANCH_DETECT_ORDER){ if(up.includes(code)) return code; }
-  return null;
-}
 function sortStudentsByRollNo(students){
-  (students||[]).sort((a,b)=>{
-    const ca = rollNoBranchCode(a.rollNo), cb = rollNoBranchCode(b.rollNo);
-    const ra = ca!=null ? ROLL_BRANCH_RANK[ca] : 99;
-    const rb = cb!=null ? ROLL_BRANCH_RANK[cb] : 99;
-    if(ra!==rb) return ra-rb;
-    return (a.rollNo||'').localeCompare(b.rollNo||'', undefined, {numeric:true, sensitivity:'base'});
-  });
+  (students||[]).sort((a,b)=>(a.rollNo||'').localeCompare(b.rollNo||'', undefined, {numeric:true, sensitivity:'base'}));
   return students;
 }
 
@@ -14580,7 +14556,7 @@ function renderCIEvaluation(){
     <div class="page-head">
       <div class="page-eyebrow">Course Instructor</div>
       <h2>Evaluation</h2>
-      <p>Every Term Test 1/2 roll-number slice an Administrator has currently assigned to you from Roster Assignment — across every section, including ones you aren't the registered Course Instructor for. Open one to enter marks for just your assigned roll numbers, or to check a submitted bundle's current status. Every other component (Practical Internal Test, SEE Practical, and the rest) is entered from "My Subjects" instead.</p>
+      <p>Every Term Test 1/2 roll-number slice an Administrator has currently assigned to you from Roster Assignment — across every section, including ones you aren't the registered Course Instructor for. Open one to enter marks for just your assigned roll numbers, or to check a submitted bundle's current status. Every other component (SIA, Practical Internal Test, SEE Practical, and the rest) is entered by that section's own Course Instructor from "My Subjects" — use "Full Class Progress" below to see everyone's marks for the section, read-only.</p>
     </div>
     ${statsHtml}
     ${itemsWithBundle.length===0 ? emptyStateHtml('Nothing assigned yet', 'An Administrator hasn\'t assigned you a roll-number slice for Term Test 1 or 2 yet — check with them under Roster Assignment. Practical Internal Test, SEE Practical, and every other component are entered from "My Subjects" instead.') :
@@ -14596,6 +14572,7 @@ function renderCIEvaluation(){
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
             ${itemStagePillHtml(it.stage)}
             <button class="btn btn-sm" onclick="${itemActionNavigateAttr(it.course, it.itemKey)}">${it.stage==='ci' ? 'Enter Marks' : 'View'}</button>
+            <button class="btn btn-outline btn-sm" onclick="App.navigate('ci-class-progress',{courseId:'${it.course.id}'})" title="See this section's SIA, Practical Internal, and every other component's marks — entered by whoever owns them — without being able to edit any of it.">👥 Full Class Progress (read-only)</button>
           </div>
         </div>
       </div>`).join('')}
