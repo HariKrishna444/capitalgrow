@@ -7967,7 +7967,14 @@ function renderContent(){
     const course = App.getCourse(courseId);
     if(course && FORCE_REFRESH_STUDENT_ROUTES[view]){
       c.innerHTML = emptyStateHtml('Loading roster…', 'Fetching this section\'s latest students and marks.');
-      App.refreshCourseStudents(courseId).then(build);
+      // ci-termtest-view spans every section of the subject (see
+      // sameSubjectCourseRows) — Section C1/C2/C3 etc. are each their own
+      // course row with their own Supabase students rows, so a fresh
+      // Term Test view needs all of them refreshed, not just the course
+      // this page happened to be opened from, or sibling sections' marks
+      // would keep showing stale/blank values.
+      const refreshTargets = view==='ci-termtest-view' ? sameSubjectCourseRows(course) : [course];
+      Promise.all(refreshTargets.map(c2=>App.refreshCourseStudents(c2.id))).then(build);
       return;
     }
     if(course && !course.studentsLoaded){
@@ -8235,6 +8242,21 @@ function deviationReportHtml(course){
    lagging Course Instructor is notified directly the moment they
    forward that cycle to their Course Coordinator.
    ============================================================ */
+/* Every registered course row for the same subject (course code) as
+   `course`, across every section — e.g. Section C1/C2/C3 of the same
+   24CSEJ612 subject are each their OWN row in `courses`, with their own
+   course_id and their own `students` rows in Supabase (not one shared
+   roster split by Roster Assignment overrides). Used to build a
+   combined, section-spanning Term Test 1/2 view (renderCITermTestView)
+   so a Course Instructor teaching just one section still sees the whole
+   subject's roll numbers with each section's real Supabase-entered
+   marks, not just whichever narrow roll range sits in this course's own
+   row. Deliberately not filtered on c.branch (unlike termTestSiblingAverages/
+   getDeviationReportForSubject) — this only reads rosters/marks, it
+   doesn't need a CI to be assigned yet. */
+function sameSubjectCourseRows(course){
+  return App.state.courses.filter(c=>normalizeCode(c.code)===normalizeCode(course.code));
+}
 /* Per-section average for one Term Test cycle, across every section of
    the same subject — { course, ci, avg, count, total } per section,
    only for sections that have that cycle's component on their template
@@ -14958,23 +14980,54 @@ function renderCITermTestView(params){
     return wrap;
   }
   const comp = template.cie.find(c=>c.key===compKey);
-  const students = sortStudentsByRollNo(dedupeStudentsByRoll(course.students || []));
   const rawScale = componentRawScale(comp);
-  const rows = students.map(s=>{
-    const absentHere = isAbsentForComponent(s, compKey);
+  // Section C1/C2/C3... of the same subject are each their own course row
+  // in Supabase (own course_id, own students rows) — a CI who only teaches
+  // one section still needs to see the WHOLE subject's roll numbers here,
+  // each with whichever section's row actually carries that student's real
+  // marks, not just the narrow roll range sitting in THIS course's own row
+  // (see sameSubjectCourseRows). Every sibling row is merged in below,
+  // keyed by roll number, tagging each with the section it came from.
+  const siblingCourses = sameSubjectCourseRows(course);
+  const byRoll = new Map();
+  siblingCourses.forEach(c=>{
+    const cTemplate = c.evalType ? getCourseTemplate(c) : null;
+    const cCompKey = cTemplate ? termTestComponentKey(cTemplate, cycle) : null;
+    dedupeStudentsByRoll(c.students || []).forEach(s=>{
+      const key = s.rollNo ? String(s.rollNo).trim().toUpperCase() : `__norollid_${c.id}_${s.id}`;
+      const v = cCompKey && s.marks ? s.marks[cCompKey] : undefined;
+      const hasMark = typeof v === 'number' || isAbsentForComponent(s, cCompKey||'');
+      const existing = byRoll.get(key);
+      // Prefer whichever section's row actually has this cycle's mark (or
+      // an absence flag) entered for that roll number; otherwise keep the
+      // first row seen for that roll so every known student still gets a
+      // row even before any section has entered anything.
+      if(!existing || (hasMark && !existing.hasMark)){
+        byRoll.set(key, { student:s, course:c, compKey:cCompKey, hasMark });
+      }
+    });
+  });
+  const merged = Array.from(byRoll.values()).sort((a,b)=>
+    (a.student.rollNo||'').localeCompare(b.student.rollNo||'', undefined, {numeric:true, sensitivity:'base'}));
+  const multiSection = siblingCourses.length > 1;
+  const rows = merged.map(r=>{
+    const s = r.student;
+    const rCompKey = r.compKey;
+    const absentHere = rCompKey ? isAbsentForComponent(s, rCompKey) : false;
     // Read the same canonical value every other read-only roll-up reads
     // (s.marks[comp.key] — see marksViewTable's cellHtml) instead of
     // recomputing from the Q-by-Q ttDetail breakdown, which is only ever
     // populated for whoever actually typed the marks in on the real entry
     // page — a mismatch there was showing "—" here even once another
     // faculty member had already entered and saved a student's Term Test.
-    const v = s.marks ? s.marks[compKey] : undefined;
+    const v = rCompKey && s.marks ? s.marks[rCompKey] : undefined;
     const overMax = typeof v==='number' && (v>rawScale || v<0);
     const scaledVal = typeof v==='number' ? round1((Math.min(v,rawScale)/rawScale)*comp.scaledMax) : null;
     const rawCell = absentHere ? 'Absent' : (v===undefined||v===null ? '—' : `<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`);
     const scaledCell = absentHere ? 'Absent' : (scaledVal===null ? '—' : scaledVal);
     return `<tr>
       <td>${studentNameCell(s)}</td>
+      ${multiSection ? `<td>${escapeHtml(String(r.course.section||'—'))}</td>` : ''}
       <td>${rawCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span>`}</td>
       <td>${scaledCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span>`}</td>
     </tr>`;
@@ -14984,11 +15037,11 @@ function renderCITermTestView(params){
       ${backBtn}
       <div class="page-eyebrow">Course Instructor</div>
       <h2>${escapeHtml(cycleLabel)} — view only</h2>
-      <p>${escapeHtml(course.name)} · Course Code: <strong>${escapeHtml(course.code)}</strong> · Section ${escapeHtml(String(course.section))}</p>
+      <p>${escapeHtml(course.name)} · Course Code: <strong>${escapeHtml(course.code)}</strong>${multiSection ? ` · Sections ${escapeHtml(siblingCourses.map(c=>c.section).join(', '))}` : ` · Section ${escapeHtml(String(course.section))}`}</p>
     </div>
     <div class="card">
-      <p class="section-meta" style="margin-bottom:10px;">Read-only — ${escapeHtml(cycleLabel)} marks are entered from the "Evaluation" tab by whichever faculty member an Administrator assigns via Roster Assignment. This just shows the class's current marks for reference, same roster as SIA, MOOCs, Practical Internal Test and Regular Lab Performance Assessment.</p>
-      ${students.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th><th>${escapeHtml(cycleLabel)} Raw</th><th>${escapeHtml(cycleLabel)} Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>` : emptyStateHtml('No students','No students registered for this section yet.')}
+      <p class="section-meta" style="margin-bottom:10px;">Read-only — ${escapeHtml(cycleLabel)} marks are entered from the "Evaluation" tab by whichever faculty member an Administrator assigns via Roster Assignment.${multiSection ? ' This subject is split across several registered sections, each entered by its own Course Instructor — every section\'s roll numbers and marks are combined here, tagged by section.' : ' This just shows the class\'s current marks for reference, same roster as SIA, MOOCs, Practical Internal Test and Regular Lab Performance Assessment.'}</p>
+      ${merged.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Student</th>${multiSection?'<th>Section</th>':''}<th>${escapeHtml(cycleLabel)} Raw</th><th>${escapeHtml(cycleLabel)} Scaled</th></tr></thead><tbody>${rows}</tbody></table></div>` : emptyStateHtml('No students','No students registered for this section yet.')}
     </div>
   `;
   return wrap;
