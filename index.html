@@ -15498,12 +15498,13 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
     },
   });
 
-  // Remarks table — same grid styling as the subjects table above
-  // (border/fill/font), separated from it by a two-line gap rather than
-  // sitting flush against it. A "Remarks" header spans both columns,
-  // then A/MP definitions side by side, then the discrepancy note spans
-  // both columns, left-aligned. The note row's mixed bold/normal text
-  // ("Note:" bold, the middle plain, the HOD phrase bold+caps) can't be
+  // Note table — same grid styling as the subjects table above (border/
+  // fill/font), separated from it by a two-line gap rather than sitting
+  // flush against it. A "Note" header spans both columns, then A/MP
+  // definitions side by side, then the discrepancy sentence spans both
+  // columns, left-aligned (no separate "Note:" label on that row — the
+  // header above already says "Note"). The bottom row's mixed normal/
+  // bold text (plain sentence, then the HOD phrase bold+caps) can't be
   // done with autoTable's own per-cell single style, so that cell is
   // left empty and drawn by hand in didDrawCell below.
   const halfW = (pageWidth - 72) / 2;
@@ -15527,18 +15528,15 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
       if(data.section !== 'body' || data.row.index !== 2 || data.column.index !== 0) return;
       const cell = data.cell;
       const lx0 = cell.x + 8;
-      // One line, left-aligned: bold "Note: " + plain middle sentence +
-      // the bold/caps HOD phrase, all run together. 8.5pt (smaller than
-      // the 9pt used elsewhere in this table) keeps the full sentence on
-      // a single line at this cell's width instead of wrapping to two.
+      // One line, left-aligned: plain sentence + the bold/caps HOD
+      // phrase, run together. 8.5pt (smaller than the 9pt used
+      // elsewhere in this table) keeps the full sentence on a single
+      // line at this cell's width instead of wrapping to two.
       doc.setFontSize(8.5);
       const ly = cell.y + cell.height / 2 + 3;
-      doc.setFont('helvetica', 'bold');
-      doc.text(noteBoldPrefix, lx0, ly);
-      let lx = lx0 + doc.getTextWidth(noteBoldPrefix);
       doc.setFont('helvetica', 'normal');
-      doc.text(noteNormalMiddle, lx, ly);
-      lx += doc.getTextWidth(noteNormalMiddle);
+      doc.text(noteNormalMiddle, lx0, ly);
+      const lx = lx0 + doc.getTextWidth(noteNormalMiddle);
       doc.setFont('helvetica', 'bold');
       doc.text(noteBoldSuffix, lx, ly);
     },
