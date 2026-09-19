@@ -15507,7 +15507,6 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
   // done with autoTable's own per-cell single style, so that cell is
   // left empty and drawn by hand in didDrawCell below.
   const halfW = (pageWidth - 72) / 2;
-  const noteBoldPrefix = 'Note: ';
   const noteNormalMiddle = 'If there are any discrepancies found in the Marks, please ';
   const noteBoldSuffix = 'MEET YOUR RESPECTIVE HOD WITHIN 3 WORKING DAYS.';
   doc.autoTable({
@@ -15516,30 +15515,32 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
     styles: { fontSize: 9, halign: 'center', cellPadding: 5, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
     columnStyles: { 0: { cellWidth: halfW }, 1: { cellWidth: halfW } },
     body: [
-      [{ content: 'Remarks', colSpan: 2, styles: { fontStyle: 'bold', fillColor: [230, 230, 230] } }],
+      [{ content: 'Note', colSpan: 2, styles: { fontStyle: 'bold', fillColor: [230, 230, 230] } }],
       [
         { content: 'A: Absent', styles: { fillColor: [230, 230, 230] } },
         { content: 'MP: Cancelled Due To Malpractice', styles: { fillColor: [230, 230, 230] } },
       ],
-      [{ content: '', colSpan: 2, styles: { minCellHeight: 30 } }],
+      [{ content: '', colSpan: 2, styles: { minCellHeight: 20 } }],
     ],
     margin: { left: 36, right: 36, bottom: 130 },
     didDrawCell: (data) => {
       if(data.section !== 'body' || data.row.index !== 2 || data.column.index !== 0) return;
       const cell = data.cell;
       const lx0 = cell.x + 8;
-      doc.setFontSize(9);
-      // Line 1: bold "Note: " immediately followed by the plain middle
-      // sentence, left-aligned starting at the cell's own left padding.
-      const ly1 = cell.y + cell.height / 2 - 5;
+      // One line, left-aligned: bold "Note: " + plain middle sentence +
+      // the bold/caps HOD phrase, all run together. 8.5pt (smaller than
+      // the 9pt used elsewhere in this table) keeps the full sentence on
+      // a single line at this cell's width instead of wrapping to two.
+      doc.setFontSize(8.5);
+      const ly = cell.y + cell.height / 2 + 3;
       doc.setFont('helvetica', 'bold');
-      doc.text(noteBoldPrefix, lx0, ly1);
-      const prefixW = doc.getTextWidth(noteBoldPrefix);
+      doc.text(noteBoldPrefix, lx0, ly);
+      let lx = lx0 + doc.getTextWidth(noteBoldPrefix);
       doc.setFont('helvetica', 'normal');
-      doc.text(noteNormalMiddle, lx0 + prefixW, ly1);
-      // Line 2: the HOD phrase, bold + caps, left-aligned under line 1.
+      doc.text(noteNormalMiddle, lx, ly);
+      lx += doc.getTextWidth(noteNormalMiddle);
       doc.setFont('helvetica', 'bold');
-      doc.text(noteBoldSuffix, lx0, ly1 + 13);
+      doc.text(noteBoldSuffix, lx, ly);
     },
   });
   const noteBottom = doc.lastAutoTable.finalY;
