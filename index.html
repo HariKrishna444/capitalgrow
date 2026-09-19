@@ -1297,6 +1297,22 @@ function reportCardBranchFromRoll(rollNo){
   if(r.indexOf('CSE')!==-1) return 'CSE';
   return '';
 }
+// "2026-2027" -> "2026-27" for the report card's ACADEMIC YEAR cell.
+// Leaves anything not matching that YYYY-YYYY shape untouched, rather
+// than guessing, since academicYear can come through in other shapes.
+function shortAcademicYear(y){
+  const s = String(y||'').trim();
+  const m = s.match(/^(\d{4})-(\d{4})$/);
+  return m ? `${m[1]}-${m[2].slice(2)}` : s;
+}
+// Plain semester number -> roman numeral for the report card's SEMESTER
+// cell (1-8 covers every B.Tech semester; anything outside that range
+// prints as-is rather than guessing).
+function semesterToRoman(n){
+  const romans = ['I','II','III','IV','V','VI','VII','VIII'];
+  const i = parseInt(n, 10);
+  return (i>=1 && i<=romans.length) ? romans[i-1] : String(n||'');
+}
 
 const ROLE_LABELS = { ADMIN:'Administrator', HOD:'Head of Department', TTI:'Timetable Incharge', EA:'Executive Assistant', EXAM:'Examination Branch', FACULTY:'Faculty', SCRUTINY:'Scrutiny' };
 /* Designation printed under a signer's name on every Award List PDF
@@ -15246,8 +15262,8 @@ async function buildAndDownloadReportCardsPdf(regRows, fileName, emptyMessage){
    instructor from registration data" means. */
 function termTest1SecondHeaderLine(regCode){
   const code = String(regCode||'').trim().toUpperCase();
-  if(code.indexOf('25')!==-1) return 'R25 II B. Tech III Semester Term Test I August/September - 2026';
-  if(code.indexOf('24')!==-1) return 'R24 III B. Tech V Semester Term Test I August/September - 2026';
+  if(code.indexOf('25')!==-1) return 'A25 II B. Tech III Semester Term Test I August/September - 2026';
+  if(code.indexOf('24')!==-1) return 'A24 III B. Tech V Semester Term Test I August/September - 2026';
   // Unknown/future regulation codes still get a sensible line instead of
   // silently guessing wrong — shows the raw code so it's obvious this
   // combination hasn't been mapped yet rather than looking like a bug.
@@ -15414,7 +15430,7 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
     body: [
       ['NAME', stu.name || '', 'URN', stu.rollNo || ''],
       ['BRANCH', reportCardBranchFromRoll(stu.rollNo), 'SCHOOL', 'SCHOOL OF ENGINEERING'],
-      ['ACADEMIC YEAR', academicYear || '', 'SEMESTER', String(stu.semester || '')],
+      ['ACADEMIC YEAR', shortAcademicYear(academicYear), 'SEMESTER', semesterToRoman(stu.semester)],
     ],
     startY: y,
     theme: 'grid',
