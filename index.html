@@ -15246,8 +15246,8 @@ async function buildAndDownloadReportCardsPdf(regRows, fileName, emptyMessage){
    instructor from registration data" means. */
 function termTest1SecondHeaderLine(regCode){
   const code = String(regCode||'').trim().toUpperCase();
-  if(code.indexOf('25')!==-1) return 'II B. Tech III Semester Term Test I August/September - 2026';
-  if(code.indexOf('24')!==-1) return 'III B. Tech V Semester Term Test I August/September - 2026';
+  if(code.indexOf('25')!==-1) return 'R25 II B. Tech III Semester Term Test I August/September - 2026';
+  if(code.indexOf('24')!==-1) return 'R24 III B. Tech V Semester Term Test I August/September - 2026';
   // Unknown/future regulation codes still get a sensible line instead of
   // silently guessing wrong — shows the raw code so it's obvious this
   // combination hasn't been mapped yet rather than looking like a bug.
@@ -15422,8 +15422,10 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
     columnStyles: {
       0: { fontStyle: 'bold', cellWidth: 95 },
       1: { cellWidth: (pageWidth - 72)/2 - 95 },
-      2: { fontStyle: 'bold', cellWidth: 130 },
-      3: { cellWidth: (pageWidth - 72)/2 - 130 },
+      // Narrowed from 130 — at 130 the value column was too tight for
+      // "SCHOOL OF ENGINEERING" to fit on one line and it wrapped.
+      2: { fontStyle: 'bold', cellWidth: 85 },
+      3: { cellWidth: (pageWidth - 72)/2 - 85 },
     },
     margin: { left: 36, right: 36 },
   });
@@ -15497,19 +15499,19 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
   });
 
   // Remarks table — same grid styling as the subjects table above
-  // (border/fill/font) so the two read as one continuous block, per the
-  // reference layout: a "Remarks" header spanning both columns, then
-  // A/MP definitions side by side, then the discrepancy note spanning
-  // both columns. The note row's mixed bold/normal text ("Note:" bold,
-  // the middle plain, the HOD phrase bold+caps) can't be done with
-  // autoTable's own per-cell single style, so that cell is left empty
-  // and drawn by hand in didDrawCell below.
+  // (border/fill/font), separated from it by a two-line gap rather than
+  // sitting flush against it. A "Remarks" header spans both columns,
+  // then A/MP definitions side by side, then the discrepancy note spans
+  // both columns, left-aligned. The note row's mixed bold/normal text
+  // ("Note:" bold, the middle plain, the HOD phrase bold+caps) can't be
+  // done with autoTable's own per-cell single style, so that cell is
+  // left empty and drawn by hand in didDrawCell below.
   const halfW = (pageWidth - 72) / 2;
   const noteBoldPrefix = 'Note: ';
   const noteNormalMiddle = 'If there are any discrepancies found in the Marks, please ';
   const noteBoldSuffix = 'MEET YOUR RESPECTIVE HOD WITHIN 3 WORKING DAYS.';
   doc.autoTable({
-    startY: doc.lastAutoTable.finalY,
+    startY: doc.lastAutoTable.finalY + 22,
     theme: 'grid',
     styles: { fontSize: 9, halign: 'center', cellPadding: 5, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
     columnStyles: { 0: { cellWidth: halfW }, 1: { cellWidth: halfW } },
@@ -15525,25 +15527,19 @@ function drawTermTest1ReportCardPage(doc, stu, loadedById, siblingIdsByCourseId,
     didDrawCell: (data) => {
       if(data.section !== 'body' || data.row.index !== 2 || data.column.index !== 0) return;
       const cell = data.cell;
-      const cx = cell.x + cell.width / 2;
+      const lx0 = cell.x + 8;
       doc.setFontSize(9);
       // Line 1: bold "Note: " immediately followed by the plain middle
-      // sentence, laid out as one centered line by measuring each part's
-      // width first.
-      doc.setFont('helvetica', 'bold');
-      const prefixW = doc.getTextWidth(noteBoldPrefix);
-      doc.setFont('helvetica', 'normal');
-      const middleW = doc.getTextWidth(noteNormalMiddle);
-      let lx = cx - (prefixW + middleW) / 2;
+      // sentence, left-aligned starting at the cell's own left padding.
       const ly1 = cell.y + cell.height / 2 - 5;
       doc.setFont('helvetica', 'bold');
-      doc.text(noteBoldPrefix, lx, ly1);
-      lx += prefixW;
+      doc.text(noteBoldPrefix, lx0, ly1);
+      const prefixW = doc.getTextWidth(noteBoldPrefix);
       doc.setFont('helvetica', 'normal');
-      doc.text(noteNormalMiddle, lx, ly1);
-      // Line 2: the HOD phrase, bold + caps, centered on its own line.
+      doc.text(noteNormalMiddle, lx0 + prefixW, ly1);
+      // Line 2: the HOD phrase, bold + caps, left-aligned under line 1.
       doc.setFont('helvetica', 'bold');
-      doc.text(noteBoldSuffix, cx, ly1 + 13, { align: 'center' });
+      doc.text(noteBoldSuffix, lx0, ly1 + 13);
     },
   });
   const noteBottom = doc.lastAutoTable.finalY;
