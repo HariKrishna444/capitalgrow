@@ -8978,10 +8978,13 @@ function renderContent(){
       // same convention as every other non-report view).
       App.refreshCourseStudents(courseId).then(freshCourse=>{
         if(view==='ci-termtest-view' && freshCourse){
+          // Force a fresh fetch of every sibling (not just the unloaded
+          // ones) — their marks are what fills in this section's blanks,
+          // and a cached copy could predate another faculty member's save.
           const sibs = (App.state.courses||[]).filter(x=>
-            x.code===freshCourse.code && String(x.semester||'')===String(freshCourse.semester||'') && x.id!==freshCourse.id && !x.studentsLoaded
+            x.code===freshCourse.code && String(x.semester||'')===String(freshCourse.semester||'') && x.id!==freshCourse.id
           );
-          if(sibs.length) return Promise.all(sibs.map(s=>App.ensureCourseStudentsLoaded(s.id))).then(build);
+          if(sibs.length) return Promise.all(sibs.map(s=>App.refreshCourseStudents(s.id))).then(build);
         }
         build();
       });
@@ -15224,14 +15227,14 @@ function awardListMetaRows(course, itemKey){
    `itemKey` is optional (falls back to no Scrutinizer/timestamps, just
    Name/Designation for CI/CC/HOD) so this stays a safe drop-in for any
    caller that hasn't been updated to pass it. */
-function drawAwardListSignatureFooter(doc, course, itemKey){
+function drawAwardListSignatureFooter(doc, course, itemKey, evaluatorUser){
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const labels = ['Course Evaluator', 'Course Coordinator', 'Scrutinizer', 'Head of the Department'];
   const ia = (course && itemKey) ? App.itemApproval(course.id, itemKey) : null;
   const scrutinyUser = ia && ia.scrutinyUserId ? App.getUserById(ia.scrutinyUserId) : null;
   const signers = course ? [
-    getCourseCIUser(course.id),
+    evaluatorUser || getCourseCIUser(course.id),
     getCourseCCUser(course.id),
     scrutinyUser,
     (hodUsersForDept(hodApprovalDept(course))||[])[0] || null,
@@ -15627,6 +15630,7 @@ function subjectAwardListCandidates(subjectName, cycle){
 }
 function applySubjectAwardListFilters(courses, f){
   return courses.filter(c=>
+    (!f.courseIds || f.courseIds.includes(c.id)) &&
     (!f.regulation || String(c.regulation||'')===f.regulation) &&
     (!f.branch     || String(c.branch||'')===f.branch) &&
     (!f.semester   || String(c.semester||'')===f.semester) &&
@@ -15641,12 +15645,22 @@ function coursesForSubjectCycle(subjectName, cycle, filters){
 // in the app) and splits them into ones ready to include (forwarded) vs
 // ones skipped (not forwarded yet) — shared by both the PDF/XLSX export
 // functions below and the admin page's on-screen preview list.
+/* A section's Award List is ready once its Question Paper Setup was
+   forwarded (isTTForwarded) OR its marks have moved past the CI stage in
+   the CI -> CC -> HOD chain — the latter is what the "Forwarded" pill on
+   the Subject-wise Award List page already keys off, so the pill and the
+   download can't disagree. */
+function ttAwardListReady(course, cycle){
+  if(isTTForwarded(course, cycle)) return true;
+  const ia = App.itemApproval(course.id, ttItemKey(cycle));
+  return !!(ia && ia.stage && ia.stage!=='ci');
+}
 async function loadForwardableSubjectSections(subjectName, cycle, filters){
   const matches = coursesForSubjectCycle(subjectName, cycle, filters);
   const forwardable = [], skipped = [];
   for(const c of matches){
     const loaded = await App.ensureCourseStudentsLoaded(c.id);
-    (isTTForwarded(loaded, cycle) ? forwardable : skipped).push(loaded);
+    (ttAwardListReady(loaded, cycle) ? forwardable : skipped).push(loaded);
   }
   return { matches, forwardable, skipped };
 }
@@ -15719,16 +15733,38 @@ function ttHasAnyMark(detail){
 function courseRegistrationInstructorMap(course){
   const norm = s=>String(s||'').trim().toLowerCase();
   const map = new Map();
+  const preferred = new Set(); // rolls already filled from a branch-matching row
   (App.state.courseRegistrations||[]).forEach(r=>{
     if(norm(r.subjectName)!==norm(course.name)) return;
-    if(course.branch && r.branch && r.branch!==course.branch) return;
-    if(course.section && r.sectionCode && r.sectionCode!==course.section) return;
     if(!r.instructorName) return;
-    map.set(String(r.rollNo||'').trim().toUpperCase(), r.instructorName);
+    if(course.semester && r.semester && zipSemesterKey(course.semester)!==zipSemesterKey(r.semester)) return;
+    const key = String(r.rollNo||'').trim().toUpperCase();
+    if(!key) return;
+    // Match on subject + semester, with the branch as a PREFERENCE only.
+    // A roll number registers for a given subject once per semester, so the
+    // roll number itself already pins down whose row this is — requiring the
+    // registration row's branch to equal this section's branch (or its CSE
+    // family) silently dropped students filed under another branch
+    // (e.g. a CSE-CS URN on a CSE section's roster), and those rows then
+    // fell back to the Course Evaluator's name, so the wrong person was
+    // printed as their Course Instructor. Rows on this section's own branch
+    // still win when a roll number has more than one.
+    if(zipRowMatchesBranch(r, course.branch)){ map.set(key, r.instructorName); preferred.add(key); return; }
+    if(!preferred.has(key) && !map.has(key)) map.set(key, r.instructorName);
   });
   return map;
 }
-function subjectAwardListTableData(course, cycle){
+/* opts (all optional, used by the Course Instructor's own Section Award List
+   download — see ciExportSectionAwardList):
+     fullRoster        — list every student on this section's Course
+                         Registration roster (same as the CI's read-only
+                         Term Test view) instead of only the Roster
+                         Assignment slice itemEntryStudents would return.
+     fillFromSiblings  — a student with no mark/Absent flag on THIS row
+                         takes the same roll number's mark from a sibling
+                         section's row, and the "Course Evaluator" cell
+                         for that row names the faculty who entered it. */
+function subjectAwardListTableData(course, cycle, opts){
   const template = getCourseTemplate(course);
   const compKey = termTestComponentKey(template, cycle);
   const comp = ((template && template.cie) || []).find(c=>c.key===compKey) || { rawMax: TT_TOTAL_MAX };
@@ -15755,9 +15791,25 @@ function subjectAwardListTableData(course, cycle){
     ...TT_SHORT_KEYS.map(k=>`${k.toUpperCase()} (/${TT_SHORT_EACH_MAX})`), 'part A',
     ...TT_ALL_LONG_QKEYS.map(qKey=>`${qKey.toUpperCase()} (/${getLongPairMax(qKey)})`), 'Part B',
     'Max marks', 'Total Marks'];
-  const rows = itemEntryStudents(course, itemKey).map((s, i)=>{
-    const instructorName = courseRegInstructors.get(String(s.rollNo||'').trim().toUpperCase()) || evaluatorName;
-    const base = [i + 1, s.rollNo || '', s.name || '', instructorName, evaluatorName, ccName];
+  const awardHasValue = ss=>isAbsentForComponent(ss, compKey) || ttHasAnyMark(ss.marks && ss.marks.ttDetail && ss.marks.ttDetail[cycle]);
+  const sibIndex = (opts && opts.fillFromSiblings) ? ttSiblingMarkIndex(course, awardHasValue) : null;
+  const evaluatorsSeen = new Map(); // distinct Course Evaluators across the rows, in roster order
+  const roster = (opts && opts.fullRoster) ? sortStudentsByRollNo(dedupeStudentsByRoll(course.students || [])) : itemEntryStudents(course, itemKey);
+  const rows = roster.map((row, i)=>{
+    let s = row;
+    let by = ttEnteredBy(course, row, itemKey);
+    if(sibIndex && row.rollNo && !awardHasValue(row)){
+      const borrowed = sibIndex.get(String(row.rollNo).trim().toUpperCase());
+      if(borrowed){ s = borrowed.student; by = ttEnteredBy(borrowed.course, row, itemKey); }
+    }
+    // Course Evaluator = whoever is actually responsible for THIS student's
+    // mark (their Roster Assignment slice's faculty, else the CI of the row
+    // the mark lives on) — not simply this section's CI for everyone.
+    const rowEvaluator = by.name || evaluatorName;
+    const evKey = by.user ? by.user.id : rowEvaluator;
+    if(!evaluatorsSeen.has(evKey)){ evaluatorsSeen.set(evKey, { name: rowEvaluator, user: by.user || null }); }
+    const instructorName = courseRegInstructors.get(String(row.rollNo||'').trim().toUpperCase()) || rowEvaluator;
+    const base = [i + 1, row.rollNo || '', row.name || '', instructorName, rowEvaluator, ccName];
     if(isAbsentForComponent(s, compKey)){
       const A = AWARD_LIST_ABSENT_MARK;
       return [...base,
@@ -15787,7 +15839,7 @@ function subjectAwardListTableData(course, cycle){
       ...TT_ALL_LONG_QKEYS.map(qKey=>ttQuestionMarkFor(detail, qKey, false)), calc.longRaw,
       comp.rawMax, total];
   });
-  return { header, rows, comp, cycleLabel: TERM_TEST_LABELS[cycle] || cycle };
+  return { header, rows, comp, cycleLabel: TERM_TEST_LABELS[cycle] || cycle, evaluators: Array.from(evaluatorsSeen.values()) };
 }
 /* The PDF keeps the Examination Branch's portrait letterhead + signature
    template, so the three name columns (Instructor / Evaluator /
@@ -15801,15 +15853,15 @@ function subjectAwardListTableData(course, cycle){
    wise") download, where one section's worth of rows has the width for
    it; the combined file spans every section of a subject and is read as
    a roll-up, so it carries only the identity columns and the totals. */
-function subjectAwardListCombinedPdfTableData(course, cycle){
-  const d = subjectAwardListTableData(course, cycle);
+function subjectAwardListCombinedPdfTableData(course, cycle, opts){
+  const d = subjectAwardListTableData(course, cycle, opts);
   const header = ['S.No', 'URN', 'Name', 'Max Marks', 'Total Marks'];
   // r[8] Max marks, r[9] Total Marks — the last two of the shared row.
   const rows = d.rows.map(r=>[r[0], r[1], r[2], r[r.length - 2], r[r.length - 1]]);
-  return { header, rows, comp: d.comp, cycleLabel: d.cycleLabel };
+  return { header, rows, comp: d.comp, cycleLabel: d.cycleLabel, evaluators: d.evaluators };
 }
-function subjectAwardListPdfTableData(course, cycle){
-  const d = subjectAwardListTableData(course, cycle);
+function subjectAwardListPdfTableData(course, cycle, opts){
+  const d = subjectAwardListTableData(course, cycle, opts);
   // Same Q1..Q11 breakdown as the Excel sheet, minus the three name
   // columns — Instructor / Evaluator / Coordinator already appear in the
   // meta block and the signature footer of this template, so repeating
@@ -15822,7 +15874,7 @@ function subjectAwardListPdfTableData(course, cycle){
     'Max\nMarks', 'Total\nMarks'];
   const nameCols = 6; // S.No, URN, Name + the 3 name columns we drop
   const rows = d.rows.map(r=>[r[0], r[1], r[2], ...r.slice(nameCols)]);
-  return { header, rows, comp: d.comp, cycleLabel: d.cycleLabel };
+  return { header, rows, comp: d.comp, cycleLabel: d.cycleLabel, evaluators: d.evaluators };
 }
 // Roman numeral shown for Semester on the Subject-wise Award List's meta
 // block — the Examination Branch's own paper prints "III", not the plain
@@ -15856,14 +15908,14 @@ function admittedBatchRegulationLabel(course){
    download was made under, so a printed copy records which Academic
    Year / Admitted Batch / Semester / exam it belongs to rather than
    leaving that to the file name alone. */
-function subjectAwardListMetaRows(course, cycle, f){
+function subjectAwardListMetaRows(course, cycle, f, evaluatorLabel){
   const ay = (f && f.academicYear) ? shortAcademicYear(f.academicYear) : '—';
   const ciUser = getCourseCIUser(course.id);
   const ccUser = getCourseCCUser(course.id);
   return [
     ['Course Code', course.code || '—', 'Bundle', course.section || '—'],
     ['Course Name', course.name || '—', 'Branch', course.branch || '—'],
-    ['Course Evaluator', ciUser ? ciUser.name : 'Unassigned', 'Course Coordinator', ccUser ? ccUser.name : 'Unassigned'],
+    ['Course Evaluator', evaluatorLabel || (ciUser ? ciUser.name : 'Unassigned'), 'Course Coordinator', ccUser ? ccUser.name : 'Unassigned'],
     ['Academic Year', ay, 'Admitted Batch/Regulation', admittedBatchRegulationLabel(course)],
     ['Semester', romanSemesterLabel(course.semester), 'Examination', TERM_TEST_LABELS[cycle] || cycle],
   ];
@@ -15901,9 +15953,17 @@ function drawOneAwardListSection(doc, course, cycle, f, opts){
   const itemKey = ttItemKey(cycle);
   // Combined = the 5-column roll-up under the report card's letterhead;
   // section = the full Q1..Q11 breakdown under the Award List letterhead.
-  const { header, rows, cycleLabel } = combined
-    ? subjectAwardListCombinedPdfTableData(course, cycle)
-    : subjectAwardListPdfTableData(course, cycle);
+  const { header, rows, cycleLabel, evaluators } = combined
+    ? subjectAwardListCombinedPdfTableData(course, cycle, opts)
+    : subjectAwardListPdfTableData(course, cycle, opts);
+  // The Course Evaluator(s) actually behind these rows — one name when a
+  // single faculty member evaluated the whole list (their signature goes in
+  // the footer's Course Evaluator column, even if they aren't this section's
+  // registered CI), or every distinct name when a Roster Assignment split
+  // the section between several faculty (the footer then keeps the
+  // section's own CI, since one column can only carry one signature).
+  const evaluatorLabel = (evaluators && evaluators.length) ? evaluators.map(e=>e.name).join(', ') : '';
+  const evaluatorUser = (evaluators && evaluators.length===1) ? evaluators[0].user : null;
   let metaStartY;
   if(combined){
     // Same letterhead the report cards use (logo with no baked-in address,
@@ -15918,7 +15978,7 @@ function drawOneAwardListSection(doc, course, cycle, f, opts){
     metaStartY = drawAwardListLetterhead(doc, subjectAwardListDocTitle(cycleLabel), { skipGenericHeader: true });
   }
   doc.autoTable({
-    body: subjectAwardListMetaRows(course, cycle, f),
+    body: subjectAwardListMetaRows(course, cycle, f, evaluatorLabel),
     startY: metaStartY,
     theme: 'grid',
     styles: { fontSize: 9.5, cellPadding: 3, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
@@ -15962,13 +16022,13 @@ function drawOneAwardListSection(doc, course, cycle, f, opts){
     // point (a signature image drawn above its line) can sit as high as
     // pageHeight - 108, and more if a signer's name wraps.
     margin: { left: 36, right: 36, bottom: 140 },
-    didDrawPage: ()=>drawAwardListSignatureFooter(doc, course, itemKey),
+    didDrawPage: ()=>drawAwardListSignatureFooter(doc, course, itemKey, evaluatorUser),
   });
 }
 // Per request: the Excel sheet is the bare template — header row plus data
 // rows, no letterhead/title block, no meta rows, no signature footer.
-function awardListSheetForCourse(course, cycle){
-  const { header, rows } = subjectAwardListTableData(course, cycle);
+function awardListSheetForCourse(course, cycle, opts){
+  const { header, rows } = subjectAwardListTableData(course, cycle, opts);
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
   // 0 S.No, 1 URN, 2 Name, 3-5 the three name columns, then the Q1..Q11
   // breakdown + part totals + Max/Total, which are all short numbers.
@@ -15996,7 +16056,7 @@ function awardListSheetName(course, used){
 }
 
 /* ---------------- Combined (subject-wide) downloads ---------------- */
-async function exportSubjectAwardListPdf(subjectName, cycle, filters){
+async function exportSubjectAwardListPdf(subjectName, cycle, filters, opts){
   const f = filters || subjectAwardListFilters;
   subjectName = subjectName || f.subject;
   cycle = cycle || f.cycle;
@@ -16010,14 +16070,14 @@ async function exportSubjectAwardListPdf(subjectName, cycle, filters){
   const doc = new jsPDF({ orientation:'portrait', unit:'pt', format:'a4' });
   forwardable.forEach((course, idx)=>{
     if(idx > 0) doc.addPage();
-    drawOneAwardListSection(doc, course, cycle, f, { combined: true });
+    drawOneAwardListSection(doc, course, cycle, f, Object.assign({}, opts, { combined: true }));
   });
   doc.save(`${awardListFileStem(subjectName || 'AllSubjects', cycle, f)}_AwardList_AllSections.pdf`);
   if(skipped.length) toast(`${skipped.length} section(s) skipped — ${TERM_TEST_LABELS[cycle]||cycle} not forwarded yet.`, 'err');
 }
 window.exportSubjectAwardListPdf = exportSubjectAwardListPdf;
 
-async function exportSubjectAwardListXlsx(subjectName, cycle, filters){
+async function exportSubjectAwardListXlsx(subjectName, cycle, filters, opts){
   const f = filters || subjectAwardListFilters;
   subjectName = subjectName || f.subject;
   cycle = cycle || f.cycle;
@@ -16029,7 +16089,7 @@ async function exportSubjectAwardListXlsx(subjectName, cycle, filters){
   const wb = XLSX.utils.book_new();
   const used = {};
   forwardable.forEach(course=>{
-    XLSX.utils.book_append_sheet(wb, awardListSheetForCourse(course, cycle), awardListSheetName(course, used));
+    XLSX.utils.book_append_sheet(wb, awardListSheetForCourse(course, cycle, opts), awardListSheetName(course, used));
   });
   writeAwardListWorkbook(wb, `${awardListFileStem(subjectName || 'AllSubjects', cycle, f)}_AwardList_AllSections.xlsx`);
   if(skipped.length) toast(`${skipped.length} section(s) skipped — ${TERM_TEST_LABELS[cycle]||cycle} not forwarded yet.`, 'err');
@@ -16182,12 +16242,13 @@ window.exportCombinedTermTestMarksXlsx = exportCombinedTermTestMarksXlsx;
    rather than the whole subject combined. Identical template to the
    combined download above (same columns, same "A" for absent, no scaled
    marks, Excel still bare header + rows with no header/footer). */
-async function exportSectionAwardListPdf(courseId, cycle, filters){
+async function exportSectionAwardListPdf(courseId, cycle, filters, opts){
   const f = filters || subjectAwardListFilters;
   cycle = cycle || f.cycle;
-  const course = await App.ensureCourseStudentsLoaded(courseId);
+  const course = (opts && opts.refresh) ? await App.refreshCourseStudents(courseId) : await App.ensureCourseStudentsLoaded(courseId);
   if(!course){ toast('Section not found.', 'err'); return; }
-  if(!isTTForwarded(course, cycle)){ toast(`This section's ${TERM_TEST_LABELS[cycle]||cycle} marks haven't been forwarded yet.`, 'err'); return; }
+  if(opts && opts.fillFromSiblings) await ttRefreshSiblings(course);
+  if(!ttAwardListReady(course, cycle)){ toast(`This section's ${TERM_TEST_LABELS[cycle]||cycle} marks haven't been forwarded yet.`, 'err'); return; }
   try{ await ensureJsPDFLoaded(); }
   catch(e){ toast('Could not load the PDF writer — check your connection and try again.', 'err'); return; }
   const { jsPDF } = window.jspdf;
@@ -16196,24 +16257,147 @@ async function exportSectionAwardListPdf(courseId, cycle, filters){
   // table both size themselves off the page dimensions at draw time, so
   // they follow the orientation without further changes.
   const doc = new jsPDF({ orientation:'landscape', unit:'pt', format:'a4' });
-  drawOneAwardListSection(doc, course, cycle, f, { combined: false });
+  drawOneAwardListSection(doc, course, cycle, f, Object.assign({}, opts, { combined: false }));
   doc.save(`${awardListFileStem(course.name, cycle, f, course)}_AwardList.pdf`);
 }
 window.exportSectionAwardListPdf = exportSectionAwardListPdf;
 
-async function exportSectionAwardListXlsx(courseId, cycle, filters){
+async function exportSectionAwardListXlsx(courseId, cycle, filters, opts){
   const f = filters || subjectAwardListFilters;
   cycle = cycle || f.cycle;
-  const course = await App.ensureCourseStudentsLoaded(courseId);
+  const course = (opts && opts.refresh) ? await App.refreshCourseStudents(courseId) : await App.ensureCourseStudentsLoaded(courseId);
   if(!course){ toast('Section not found.', 'err'); return; }
-  if(!isTTForwarded(course, cycle)){ toast(`This section's ${TERM_TEST_LABELS[cycle]||cycle} marks haven't been forwarded yet.`, 'err'); return; }
+  if(opts && opts.fillFromSiblings) await ttRefreshSiblings(course);
+  if(!ttAwardListReady(course, cycle)){ toast(`This section's ${TERM_TEST_LABELS[cycle]||cycle} marks haven't been forwarded yet.`, 'err'); return; }
   try{ await ensureXLSXLoaded(); }
   catch(e){ toast('Could not load the spreadsheet writer — check your connection and try again.', 'err'); return; }
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, awardListSheetForCourse(course, cycle), awardListSheetName(course, {}));
+  XLSX.utils.book_append_sheet(wb, awardListSheetForCourse(course, cycle, opts), awardListSheetName(course, {}));
   writeAwardListWorkbook(wb, `${awardListFileStem(course.name, cycle, f, course)}_AwardList.xlsx`);
 }
 window.exportSectionAwardListXlsx = exportSectionAwardListXlsx;
+
+/* ---------------- Course Instructor / Course Coordinator downloads ----------------
+   The same Award List documents the Administrator/HOD get on the
+   Subject-wise Award List page, offered from the CI's "My Courses" section
+   page (one section) and the CC's "Pending Evaluation" page (every section
+   of a subject they coordinate, combined). Both go through the exact same
+   export functions above, so the template can't drift — these wrappers
+   only add the one-time signature check every CI/CC Award List download
+   already has, and pin the filters so leftover state from the Admin page's
+   own dropdowns can't narrow the result. */
+function awardListFiltersFor(extra){
+  return Object.assign({}, subjectAwardListFilters, {
+    academicYear: (App.state.currentTermTest && App.state.currentTermTest.academicYear) || subjectAwardListFilters.academicYear || '',
+    subject:'', regulation:'', branch:'', semester:'', section:'', courseIds:null,
+  }, extra || {});
+}
+// CI: this section only. Lists the same full roster the read-only Term Test
+// view shows, with any student's mark that was entered against a sibling
+// section filled in (and that faculty member named as Course Evaluator on
+// that student's row of the Excel).
+async function ciExportSectionAwardList(courseId, cycle, kind){
+  if(!ensureSignatureForAwardListDownload()) return;
+  const f = awardListFiltersFor({ cycle });
+  const opts = { fullRoster:true, fillFromSiblings:true, refresh:true };
+  if(kind==='pdf') return exportSectionAwardListPdf(courseId, cycle, f, opts);
+  return exportSectionAwardListXlsx(courseId, cycle, f, opts);
+}
+window.ciExportSectionAwardList = ciExportSectionAwardList;
+function ciSectionAwardListHtml(course){
+  if(!course || !course.evalType) return '';
+  const cycles = ['TT1','TT2','TT3'].filter(cy=>awardListCycleApplicable(course, cy));
+  if(!cycles.length) return '';
+  return `<div class="card" style="margin-top:16px;">
+    <div class="section-title" style="font-size:15px;">Award List — Section ${escapeHtml(String(course.section||'—'))}</div>
+    <p class="section-meta" style="margin-top:4px;">Download this section's Term Test Award List in the same Examination Branch template as the Subject-wise Award List on the Administrator dashboard — PDF with the letterhead and signature block, or a bare Excel sheet. It covers every student on this section's roster, including marks another faculty member entered (their name appears as Course Evaluator in the Excel). Available once the marks have been forwarded.</p>
+    ${cycles.map(cy=>{
+      const ready = ttAwardListReady(course, cy);
+      return `<div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;flex-wrap:wrap;gap:10px;">
+        <div class="section-title" style="font-size:13.5px;">${escapeHtml(TERM_TEST_LABELS[cy]||cy)}</div>
+        ${ready ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="ciExportSectionAwardList('${course.id}','${cy}','pdf')">⬇ PDF</button>
+          <button class="btn btn-sm btn-outline" onclick="ciExportSectionAwardList('${course.id}','${cy}','xlsx')">⬇ Excel</button>
+        </div>` : '<span class="section-meta">Not forwarded yet</span>'}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+/* CC "Pending Evaluation" page: filter state + combined subject Award List.
+   Subject / Exam narrow both item lists on that page; "Award List exam"
+   picks which Term Test the combined download is for (kept in step with the
+   Exam filter whenever that is set to a Term Test). */
+const ccPendingFilters = { subject:'', exam:'', awardCycle:'TT1' };
+function setCCPendingFilter(field, value){
+  ccPendingFilters[field] = value;
+  if(field==='exam' && ['tt1','tt2','tt3'].includes(value)) ccPendingFilters.awardCycle = value.toUpperCase();
+  renderContent();
+}
+window.setCCPendingFilter = setCCPendingFilter;
+function resetCCPendingFilters(){
+  ccPendingFilters.subject = '';
+  ccPendingFilters.exam = '';
+  renderContent();
+}
+window.resetCCPendingFilters = resetCCPendingFilters;
+async function ccExportAwardList(scope, kind, courseId){
+  if(!ensureSignatureForAwardListDownload()) return;
+  const { ccCourses } = getFacultyCourses(App.currentUser().id);
+  const f = awardListFiltersFor({ subject: ccPendingFilters.subject, cycle: ccPendingFilters.awardCycle, courseIds: ccCourses.map(c=>c.id) });
+  if(scope==='section') return kind==='pdf' ? exportSectionAwardListPdf(courseId, f.cycle, f) : exportSectionAwardListXlsx(courseId, f.cycle, f);
+  return kind==='pdf' ? exportSubjectAwardListPdf(f.subject, f.cycle, f) : exportSubjectAwardListXlsx(f.subject, f.cycle, f);
+}
+window.ccExportAwardList = ccExportAwardList;
+function ccSubjectAwardListHtml(ccCourses){
+  const f = ccPendingFilters;
+  const cycles = ['TT1','TT2','TT3'].filter(cy=>ccCourses.some(c=>c.branch && c.evalType && awardListCycleApplicable(c, cy)));
+  if(!cycles.length) return '';
+  if(!cycles.includes(f.awardCycle)) f.awardCycle = cycles[0];
+  const cycle = f.awardCycle;
+  const cycleLabel = TERM_TEST_LABELS[cycle] || cycle;
+  const sections = sortCoursesByBranch(ccCourses.filter(c=>c.branch && c.evalType && awardListCycleApplicable(c, cycle) && (!f.subject || c.name===f.subject)));
+  const readyCount = sections.filter(c=>ttAwardListReady(c, cycle)).length;
+  return `<div class="card" style="margin-top:16px;">
+    <div class="section-title" style="font-size:15px;">Subject-wise Award List</div>
+    <p class="section-meta" style="margin-top:4px;">${f.subject ? `Combines every section of <strong>${escapeHtml(f.subject)}</strong> you coordinate` : 'Combines every section you coordinate — pick a Subject in the filters above to narrow it to one —'} into one Award List, in the same template as the Subject-wise Award List on the Administrator dashboard. Only sections whose marks have been forwarded are included.</p>
+    <div class="config-grid" style="margin-top:10px;">
+      <div class="config-field">
+        <label>Examination</label>
+        <select onchange="setCCPendingFilter('awardCycle', this.value)">
+          ${cycles.map(cy=>`<option value="${cy}" ${cy===cycle?'selected':''}>${escapeHtml(TERM_TEST_LABELS[cy]||cy)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    ${sections.length===0 ? `<p class="section-meta" style="margin-top:10px;">No section${f.subject?` of "${escapeHtml(f.subject)}"`:''} you coordinate has a ${escapeHtml(cycleLabel)} component.</p>` : `
+    <div class="table-scroll" style="margin-top:12px;">
+      <table class="data-table">
+        <thead><tr><th>Bundle</th><th>Subject</th><th>Branch</th><th>Course Code</th><th>Course Instructor</th><th>Status</th><th>Section Download</th></tr></thead>
+        <tbody>${sections.map(c=>{
+          const ci = getCourseCIUser(c.id);
+          const ready = ttAwardListReady(c, cycle);
+          return `<tr>
+            <td>${escapeHtml(c.section||'—')}</td>
+            <td>${escapeHtml(c.name||'—')}</td>
+            <td>${escapeHtml(branchLabel(c.branch))}</td>
+            <td>${escapeHtml(c.code||'—')}</td>
+            <td>${escapeHtml(ci?ci.name:'Unassigned')}</td>
+            <td>${ready ? '<span class="status-pill status-submitted">Forwarded</span>' : '<span class="status-pill status-draft">Not forwarded</span>'}</td>
+            <td>${ready ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn-sm" onclick="ccExportAwardList('section','pdf','${c.id}')">⬇ PDF</button>
+              <button class="btn btn-sm btn-outline" onclick="ccExportAwardList('section','xlsx','${c.id}')">⬇ Excel</button>
+            </div>` : '<span class="section-meta">Not forwarded yet</span>'}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <p class="section-meta" style="margin-top:8px;">${readyCount} of ${sections.length} section${sections.length===1?'':'s'} ready to include (marks forwarded).</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+      <button class="btn btn-sm" onclick="ccExportAwardList('subject','pdf')">⬇ Combined Award List (.pdf)</button>
+      <button class="btn btn-sm btn-outline" onclick="ccExportAwardList('subject','xlsx')">⬇ Workbook — one tab per section (.xlsx)</button>
+    </div>`}
+  </div>`;
+}
 
 /* ---------------- Report Cards — Term Test subjects only (Administrator) ----------------
    One PDF, one page per student, listing Term Test 1 / Term Test 2 scaled
@@ -16725,38 +16909,59 @@ async function resolveTermTest1ReportCardData(regRows){
   const students = Object.values(studentsByRoll).sort((a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true }));
   if(!students.length) return { students: [], studentsWithSubjects: [], loadedById: {}, siblingIdsByCourseId: {} };
 
+  const courseIdSet = new Set();
   const siblingIdsByCourseId = {};
   const siblingCoursesFor = (c) => (App.state.courses||[]).filter(x=>
     x.code===c.code && String(x.semester||'')===String(c.semester||'') && x.id!==c.id
   ).sort((a,b)=> (a.branch===c.branch?0:1) - (b.branch===c.branch?0:1));
 
-  /* CHANGED: a student's report-card subjects are now read straight off
-     each live course's own roster — the same "Subject-wise Award List"
-     data an Admin sees — instead of being matched against the separate
-     Course Registration import row by row. The two are supposed to
-     agree (a course's roster is normally auto-loaded FROM Course
-     Registration once a Course Instructor is assigned), but the import
-     is a hand-maintained spreadsheet and a single blank/missing cell for
-     one student used to make that subject vanish from just their report
-     card even while their marks sat right there in the award list (e.g.
-     BADDAM HASYA / Computer Organization and Architecture — no Course
-     Registration row at all, but present with 42 marks on the roster).
-     Trusting the roster directly means a subject with real marks on the
-     award list can never again silently disappear from the report card
-     because of a gap in the registration sheet.
-     Course Registration rows are still consulted for the printed
-     "Course Instructor" column text (courseRegistrationInstructorMap),
-     since that's the registrar's own record of who was assigned — but
-     they no longer decide WHICH subjects appear. */
-  const semesterCourses = (App.state.courses||[]).filter(c=>
-    c.evalType && itemFlowApplicable(getCourseTemplate(c), 'tt1'));
-  const coursesForStudent = (stu) => semesterCourses.filter(c=>
-    zipRowMatchesBranch({ branch: stu.branch, rollNo: stu.rollNo }, c.branch) &&
-    zipSemesterKey(c.semester)===zipSemesterKey(stu.semester));
+  /* FIX: a student can have a registration row that matches a subject's
+     name/branch/semester perfectly but was typed against the WRONG
+     section/bundle string (e.g. their marks actually live under Bundle B7
+     but their own registration row says a different bundle) — a data-entry
+     mistake on the registration sheet, not on the course, the marks, or
+     the approval chain. matchedCourseForRegistration() requires an exact
+     section match, so that one row silently failed and the whole subject
+     dropped off just THIS student's report card, even while every other
+     student correctly registered under that same course saw it fine.
+     candidateCoursesFor finds every live course that teaches this exact
+     subject/branch(-family)/semester with a Term Test 1 component, section
+     aside, so pass 2 below can check whether the student's own roll number
+     actually shows up in one of those rosters before giving up on them. */
+  const candidateCoursesFor = (r) => (App.state.courses||[]).filter(c=>
+    c.evalType && norm(c.name)===norm(r.subjectName) &&
+    zipRowMatchesBranch(r, c.branch) && zipSemesterKey(c.semester)===zipSemesterKey(r.semester) &&
+    itemFlowApplicable(getCourseTemplate(c), 'tt1'));
 
-  const courseIdSet = new Set();
+  // Pass 1: normal, section-matched resolution (unchanged). A row that
+  // doesn't resolve here is kept as "pending" along with its candidate
+  // courses (if any), and every candidate is queued for a roster fetch so
+  // pass 2 can check it for this student's own roll number.
+  const pending = [];
   students.forEach(stu=>{
-    coursesForStudent(stu).forEach(c=>courseIdSet.add(c.id));
+    stu.courses = [];
+    stu.instructorByCourseId = {};
+    stu.regRows.forEach(r=>{
+      const c = matchedCourseForRegistration(r);
+      if(c && c.evalType && itemFlowApplicable(getCourseTemplate(c), 'tt1')){
+        if(!stu.courses.some(x=>x.id===c.id)){
+          stu.courses.push(c);
+          stu.instructorByCourseId[c.id] = r.instructorName || '';
+          courseIdSet.add(c.id);
+          if(!siblingIdsByCourseId[c.id]){
+            const sibs = siblingCoursesFor(c);
+            siblingIdsByCourseId[c.id] = sibs.map(s=>s.id);
+            sibs.forEach(s=>courseIdSet.add(s.id));
+          }
+        }
+        return;
+      }
+      const candidates = candidateCoursesFor(r);
+      if(candidates.length){
+        candidates.forEach(cc=>courseIdSet.add(cc.id));
+        pending.push({ stu, candidates });
+      }
+    });
   });
 
   const loadedById = {};
@@ -16765,26 +16970,32 @@ async function resolveTermTest1ReportCardData(regRows){
     loaded.forEach(c=>{ if(c) loadedById[c.id] = c; });
   }
 
-  // A subject makes it onto the report card only if the student's own
-  // roll number is genuinely present on that course's freshly-loaded
-  // roster — the award list itself, not an inference from registration.
-  students.forEach(stu=>{
-    stu.courses = [];
-    stu.instructorByCourseId = {};
-    coursesForStudent(stu).forEach(c=>{
-      const loaded = loadedById[c.id] || c;
-      const onRoster = (loaded.students||[]).some(s=>norm(s.rollNo)===norm(stu.rollNo));
-      if(!onRoster) return;
-      stu.courses.push(loaded);
-      const regMap = courseRegistrationInstructorMap(loaded);
-      const ciUser = getCourseCIUser(loaded.id);
-      stu.instructorByCourseId[loaded.id] =
-        regMap.get(String(stu.rollNo||'').trim().toUpperCase()) || (ciUser ? ciUser.name : '');
-      if(!siblingIdsByCourseId[loaded.id]){
-        siblingIdsByCourseId[loaded.id] = siblingCoursesFor(loaded).map(s=>s.id);
-      }
+  // Pass 2: for each (student, subject) the normal lookup missed, check
+  // whether the student's own roll number actually appears in one of the
+  // candidate courses' now-loaded rosters. Only resolves when exactly one
+  // candidate has them — an ambiguous case (roll appears in two different
+  // sections) is left unresolved rather than guessed at.
+  const newSiblingIds = new Set();
+  pending.forEach(({ stu, candidates })=>{
+    const hits = candidates.filter(c=>{
+      const loaded = loadedById[c.id];
+      return loaded && (loaded.students||[]).some(s=>norm(s.rollNo)===norm(stu.rollNo));
     });
+    if(hits.length!==1) return;
+    const c = hits[0];
+    if(stu.courses.some(x=>x.id===c.id)) return;
+    stu.courses.push(c);
+    if(!stu.instructorByCourseId[c.id]) stu.instructorByCourseId[c.id] = '';
+    if(!siblingIdsByCourseId[c.id]){
+      const sibs = siblingCoursesFor(c);
+      siblingIdsByCourseId[c.id] = sibs.map(s=>s.id);
+      sibs.forEach(s=>{ if(!loadedById[s.id]) newSiblingIds.add(s.id); });
+    }
   });
+  if(newSiblingIds.size){
+    const loadedExtra = await Promise.all(Array.from(newSiblingIds).map(id=>App.refreshCourseStudents(id)));
+    loadedExtra.forEach(c=>{ if(c) loadedById[c.id] = c; });
+  }
 
   const studentsWithSubjects = students.filter(s=>s.courses.length>0);
   return { students, studentsWithSubjects, loadedById, siblingIdsByCourseId };
@@ -18186,6 +18397,7 @@ function renderCISubjectDetail(params){
         ${link('overall','Overall Analytics')}
       </div>`;
     })() : ''}
+    ${ciSectionAwardListHtml(course)}
   `;
   return wrap;
 }
@@ -19641,6 +19853,62 @@ function itemStudentRemarkCell(course, itemKey, s, role){
    marks for either or both while deciding — and whichever side totals
    higher is the one that counts toward that pair's score; that cell is
    highlighted so it's clear which one won. */
+/* ---------- Cross-section mark lookup (shared by the CI's read-only Term
+   Test view and the CI's own Section Award List download) ----------
+   A Term Test mark for a roll number on THIS section's roster is often
+   saved against a sibling section's course row (same subject code +
+   semester) — whoever an Administrator assigned via Roster Assignment saves
+   against the row their slice belongs to. These helpers let a blank on this
+   row fall back to the same roll number's value on a sibling row, and say
+   WHO entered it (the faculty member whose Roster Assignment slice covers
+   that roll number on the sibling row, else that sibling's Course
+   Instructor), instead of only naming a section. */
+function ttSiblingCourses(course){
+  return (App.state.courses||[]).filter(x=>
+    x.code===course.code && String(x.semester||'')===String(course.semester||'') && x.id!==course.id
+  ).sort((a,b)=> (a.branch===course.branch?0:1) - (b.branch===course.branch?0:1));
+}
+// roll number -> { student, course } for the first sibling row (same-branch
+// first) whose student record passes hasValue(student).
+function ttSiblingMarkIndex(course, hasValue){
+  const idx = new Map();
+  ttSiblingCourses(course).forEach(sc=>{
+    (sc.students||[]).forEach(ss=>{
+      const k = String(ss.rollNo||'').trim().toUpperCase();
+      if(!k || idx.has(k)) return;
+      if(hasValue(ss)) idx.set(k, { student: ss, course: sc });
+    });
+  });
+  return idx;
+}
+/* Who actually entered (or is assigned to enter) this student's mark on
+   srcCourse's row: the faculty member whose Roster Assignment slice covers
+   the roll number, else that row's registered Course Instructor. Returns
+   { name, user } — user is null when only a stored name is known (or
+   nobody is assigned at all, name ''). This is the "Course Evaluator" on
+   the Award List: a Roster Assignment slice can hand any student to a
+   different faculty member than the section's own CI, so the section-level
+   CI alone is not who evaluated that student. */
+function ttEnteredBy(srcCourse, student, itemKey){
+  const roll = String((student && student.rollNo) || '').trim().toUpperCase();
+  if(!srcCourse) return { name:'', user:null };
+  if(roll){
+    const slice = getItemRosterOverrides(srcCourse, itemKey).find(o=>(o.rollNos||[]).some(r=>String(r||'').trim().toUpperCase()===roll));
+    if(slice){
+      const u = slice.facultyUserId ? App.getUserById(slice.facultyUserId) : null;
+      const n = (u && u.name) || slice.facultyName;
+      if(n) return { name:n, user:u || null };
+    }
+  }
+  const ci = getCourseCIUser(srcCourse.id);
+  return ci ? { name:ci.name, user:ci } : { name:'', user:null };
+}
+function ttEnteredByName(srcCourse, student, itemKey){ return ttEnteredBy(srcCourse, student, itemKey).name; }
+// Freshly re-fetches every sibling section's roster so a mark another
+// faculty member saved moments ago is included, not a stale cached copy.
+async function ttRefreshSiblings(course){
+  await Promise.all(ttSiblingCourses(course).map(c=>App.refreshCourseStudents(c.id)));
+}
 /* ---------- CI: read-only view of Term Test 1/2, reachable straight from
    the Subject Detail "Marks Entry" column even before an Administrator has
    uploaded a Roster Assignment for this cycle. The real entry page
@@ -19676,41 +19944,46 @@ function renderCITermTestView(params){
   const students = sortStudentsByRollNo(dedupeStudentsByRoll(course.students || []));
   const rawScale = componentRawScale(comp);
   // Sibling course records for this same subject (same code + semester,
-  // same-branch tried first) — kept ONLY for the diagnostic coverage
-  // check further down (so the console.warn can still tell "assigned to
-  // someone but not typed in yet" apart from "nobody assigned at all").
-  // This used to also be read as a MARKS VALUE fallback right below —
-  // i.e. if this course's own row had nothing for a student, it would
-  // silently pull the mark from a different section's/coordination shell's
-  // row for the same subject (the same pattern as the Report Card's
-  // cellFor()). That meant "View Term Test 1/2" here in My Subjects could
-  // show a mark that was actually entered elsewhere — e.g. via the
-  // Roster-Assignment-driven "Evaluation" tab against a different course
-  // row — rather than this section's own Course Registration record.
-  // Removed: this view now only ever shows what's actually saved on
-  // THIS course row, so a blank stays a blank ("—") until this section's
-  // own record has it, instead of borrowing a value from somewhere else.
-  const siblingCourses = (App.state.courses||[]).filter(x=>
-    x.code===course.code && String(x.semester||'')===String(course.semester||'') && x.id!==course.id
-  ).sort((a,b)=> (a.branch===course.branch?0:1) - (b.branch===course.branch?0:1));
+  // same-branch tried first). A Term Test mark is often entered against a
+  // DIFFERENT section's / branch's course row than the one this student is
+  // registered under here (Roster Assignment hands slices to other
+  // faculty, who save against whichever row their slice belongs to) — so
+  // if this course's own row has nothing for a student, the CI would see
+  // "—" for every such student even though the mark exists. To show the
+  // whole class's marks, a blank on THIS row falls back to the same roll
+  // number's value on a sibling row (own row always wins when it has a
+  // value; a borrowed row is tagged with the faculty member who entered
+  // it, so it's clear the value wasn't saved on this section itself).
+  const siblingCourses = ttSiblingCourses(course);
+  const normRollView = r => String(r||'').trim().toUpperCase();
+  const itemKeyView = cycle==='TT1' ? 'tt1' : 'tt2';
+  const siblingByRoll = ttSiblingMarkIndex(course, ss=>(ss.marks && typeof ss.marks[compKey]==='number') || isAbsentForComponent(ss, compKey));
   const rows = students.map(s=>{
-    const absentHere = isAbsentForComponent(s, compKey);
+    // Own row first; only when it has neither a mark nor an Absent flag
+    // for this cycle, borrow the same roll number's value from a sibling
+    // section (see siblingByRoll above).
+    const ownHasValue = (s.marks && typeof s.marks[compKey]==='number') || isAbsentForComponent(s, compKey);
+    const borrowed = (!ownHasValue && s.rollNo) ? siblingByRoll.get(normRollView(s.rollNo)) : null;
+    const src = borrowed ? borrowed.student : s;
+    const absentHere = isAbsentForComponent(src, compKey);
     // Read the same canonical value every other read-only roll-up reads
     // (s.marks[comp.key] — see marksViewTable's cellHtml) instead of
     // recomputing from the Q-by-Q ttDetail breakdown, which is only ever
     // populated for whoever actually typed the marks in on the real entry
     // page — a mismatch there was showing "—" here even once another
     // faculty member had already entered and saved a student's Term Test.
-    // Deliberately NOT falling back to a sibling course's row anymore —
-    // see the note above the siblingCourses declaration.
-    const v = s.marks ? s.marks[compKey] : undefined;
+    // Falls back to a sibling section's row only when this row has nothing
+    // (see the note above the siblingCourses declaration).
+    const v = src.marks ? src.marks[compKey] : undefined;
     const overMax = typeof v==='number' && (v>rawScale || v<0);
     const scaledVal = typeof v==='number' ? round1((Math.min(v,rawScale)/rawScale)*comp.scaledMax) : null;
     const rawCell = absentHere ? 'Absent' : (v===undefined||v===null ? '—' : `<span style="${overMax?'color:var(--seal-red);font-weight:600;':''}">${v}</span>`);
     const scaledCell = absentHere ? 'Absent' : (scaledVal===null ? '—' : scaledVal);
     if(v===undefined && !absentHere) s.__ttStillMissing = true;
+    const borrowedBy = borrowed ? ttEnteredByName(borrowed.course, s, itemKeyView) : '';
+    const borrowedTag = borrowed ? ` <span class="mono" style="color:var(--text-soft);font-size:11px;font-weight:400;">· ${borrowedBy ? `entered by ${escapeHtml(borrowedBy)}` : `entered in Section ${escapeHtml(String(borrowed.course.section||'?'))}`}</span>` : '';
     return `<tr>
-      <td>${studentNameCell(s)}</td>
+      <td>${studentNameCell(s)}${borrowedTag}</td>
       <td>${rawCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${rawScale}</span>`}</td>
       <td>${scaledCell}${absentHere?'':` <span class="mono" style="color:var(--text-soft);font-size:11px;">/${comp.scaledMax}</span>`}</td>
     </tr>`;
@@ -20980,6 +21253,18 @@ function renderCCPendingEvaluation(){
       allItems.push({ course:c, itemKey:key, ia });
     });
   });
+  // Subject / Exam filters (ccPendingFilters) — options only offer values this
+  // CC actually has, and a stale selection is cleared rather than left
+  // pointing at something no longer on screen.
+  const pf = ccPendingFilters;
+  const pfSubjects = Array.from(new Set(ccCourses.filter(c=>c.evalType).map(c=>c.name))).sort((a,b)=>a.localeCompare(b));
+  if(pf.subject && !pfSubjects.includes(pf.subject)) pf.subject = '';
+  const pfExams = ITEM_FLOW_KEYS.filter(k=>ccCourses.some(c=>c.evalType && itemFlowApplicable(getCourseTemplate(c), k)));
+  if(pf.exam && !pfExams.includes(pf.exam)) pf.exam = '';
+  const pfActive = !!(pf.subject || pf.exam);
+  const passesPF = (course, itemKey) => (!pf.subject || course.name===pf.subject) && (!pf.exam || itemKey===pf.exam);
+  const visibleActions = pendingCCActions.filter(a=>passesPF(a.course, a.itemKey));
+  const visibleItems = allItems.filter(i=>passesPF(i.course, i.itemKey));
   const wrap = el('<div></div>');
   wrap.innerHTML = `
     <div class="page-head">
@@ -20987,10 +21272,30 @@ function renderCCPendingEvaluation(){
       <h2>Pending Evaluation</h2>
       <p>Term Test / Practical Internal Test / SEE Practical scripts your Course Instructors have entered and forwarded. Verify the marks, add a CC Remark on any student who needs a second look, then forward to the HOD — or send the item straight back to the Course Instructor if you've flagged a remark.</p>
     </div>
-    ${pendingCCActions.length ? `
-      <div class="card" style="border-left:3px solid var(--brass);">
+    ${(pfSubjects.length || pfExams.length) ? `
+      <div class="card">
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Subject</label>
+            <select onchange="setCCPendingFilter('subject', this.value)">
+              <option value="" ${pf.subject===''?'selected':''}>All</option>
+              ${pfSubjects.map(n=>`<option value="${escapeHtml(n)}" ${n===pf.subject?'selected':''}>${escapeHtml(n)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Exam</label>
+            <select onchange="setCCPendingFilter('exam', this.value)">
+              <option value="" ${pf.exam===''?'selected':''}>All</option>
+              ${pfExams.map(k=>`<option value="${k}" ${k===pf.exam?'selected':''}>${escapeHtml(ITEM_FLOW_LABELS[k]||k)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        ${pfActive ? `<p class="section-meta" style="margin-top:10px;">Filtering the lists below. <button class="btn btn-sm btn-outline" style="margin-left:8px;" onclick="resetCCPendingFilters()">Clear filters</button></p>` : ''}
+      </div>` : ''}
+    ${visibleActions.length ? `
+      <div class="card" style="border-left:3px solid var(--brass);${(pfSubjects.length || pfExams.length) ? 'margin-top:16px;' : ''}">
         <div class="section-title" style="font-size:15px;">Action needed from you</div>
-        ${pendingCCActions.map(a=>{
+        ${visibleActions.map(a=>{
           // "Verify & Forward to HOD" only appears once the CC has actually
           // opened the marks at least once this round (ia.ccOpened, set by
           // App.markItemOpenedByCC) — before that, forwarding sight unseen
@@ -21015,11 +21320,13 @@ function renderCCPendingEvaluation(){
             </div>
           </div>`;
         }).join('')}
-      </div>` : emptyStateHtml('Nothing needs your verification right now', 'Once a Course Instructor forwards Term Test / Practical Internal / SEE Practical marks for a section you coordinate, it will show up here.')}
-    ${allItems.length ? `
+      </div>` : (pfActive && pendingCCActions.length
+        ? emptyStateHtml('Nothing matches these filters', 'Nothing needing your verification matches the Subject / Exam selected above.')
+        : emptyStateHtml('Nothing needs your verification right now', 'Once a Course Instructor forwards Term Test / Practical Internal / SEE Practical marks for a section you coordinate, it will show up here.'))}
+    ${visibleItems.length ? `
       <div class="card" style="margin-top:16px;">
         <div class="section-title" style="font-size:15px;">Everything you're tracking</div>
-        ${allItems.map(({course:c, itemKey, ia})=>`
+        ${visibleItems.map(({course:c, itemKey, ia})=>`
           <div class="card-row" style="border-top:1px solid var(--rule-light);padding-top:10px;margin-top:10px;">
             <div>
               <div class="section-title" style="font-size:13.5px;">${escapeHtml(c.name)} — ${escapeHtml(ITEM_FLOW_LABELS[itemKey])}</div>
@@ -21030,7 +21337,8 @@ function renderCCPendingEvaluation(){
               <button class="btn btn-outline btn-sm" onclick="${itemActionNavigateAttr(c, itemKey)}">View</button>
             </div>
           </div>`).join('')}
-      </div>` : ''}
+      </div>` : (pfActive && allItems.length ? emptyStateHtml('Nothing matches these filters', 'No tracked item matches the Subject / Exam selected above.') : '')}
+    ${ccSubjectAwardListHtml(ccCourses)}
   `;
   return wrap;
 }
